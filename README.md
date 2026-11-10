@@ -2,160 +2,136 @@
 
 ![Swift 5.9+](https://img.shields.io/badge/Swift-5.9+-F05138?logo=swift&logoColor=white)
 ![Platform macOS 14+](https://img.shields.io/badge/macOS-14.0+-000000?logo=apple&logoColor=white)
+![Architecture Universal Binary](https://img.shields.io/badge/Arch-arm64%20%7C%20x86__64-informational)
 ![SPM](https://img.shields.io/badge/SPM-Pure_Package-blue)
+![License MIT](https://img.shields.io/badge/License-MIT-green)
 ![Tests](https://img.shields.io/badge/Tests-42_Passing-brightgreen)
 
-**ConCopy** è un clipboard manager nativo ad alte prestazioni per macOS 14+, ispirato all'ergonomia di *Copy 'Em* e all'estetica minimale di *Raycast* e *Linear*. È implementato con una rigorosa architettura modulare a tre target in **Swift 5.9+**, **AppKit** e **SwiftUI**.
+**ConCopy** è un clipboard e snippet manager nativo per macOS (Sonoma 14+), leggero, fulmineo e minimale, progettato per operare interamente in background come utility di sistema.
 
-Garantisce **zero focus-stealing**, ricerca full-text istantanea con **SQLite FTS5**, deduplicazione crittografica **SHA-256**, incollaggio batch multi-clip, navigazione schede/liste rapida da tastiera, monitoraggio automatico degli screenshot e sincronizzazione **CloudKit** (`CKSyncEngine`).
+Grazie alla configurazione `LSUIElement = true`, ConCopy **non compare nel Dock**, eliminando qualsiasi ingombro visivo. Risiede discretamente nella menubar e si attiva istantaneamente sotto il puntatore del mouse tramite scorciatoia globale, garantendo **zero focus-stealing**: l'applicazione in cui stai lavorando non perde mai il focus.
 
 ---
 
 ## Caratteristiche Principali
 
-* **Type-to-Search Istantaneo**: All'apertura della finestra flottante, il campo di ricerca riceve automaticamente il focus della tastiera (`@FocusState` + `NSWindow.didBecomeKeyNotification`). L'utente può digitare immediatamente senza scorciatoie aggiuntive.
-* **Incolla Rapido (`Cmd + Valore`) & Mappatura Hardware**:
-  - Incolla le prime 10 clip visibili con `Cmd + 1 ... 9` e `Cmd + 0`, e da `Cmd + a ... z` per le righe successive (quando non si digita nella ricerca).
+- **Gestione Cronologia Appunti & Preferiti**:
+  - Cattura automatica di testo semplice, RTF, HTML, URL, file Finder (`fileURL`) e immagini (`NSImage` / PNG / TIFF).
+  - Organizzazione delle clip in **Liste personalizzate** e contrassegno dei **Preferiti (★)**.
+  - Ricerca full-text universale e istantanea (**Type-to-Search**) con case-insensitivity nativa.
+  - Anteprima **QuickLook** integrata per esaminare testi estesi, metadati file e immagini ad alta risoluzione, navigabile con le frecce della tastiera (`↑` / `↓` per scorrere i record, `→` o `Esc` per chiudere).
+
+- **Modulo Snippet e Testo Espandibile**:
+  - Scheda dedicata per salvare ed espandere frammenti di testo frequenti (es. `;email`, `;indirizzo`, firme).
+  - Incollaggio diretto sia con click sia da tastiera (premendo `Invio` o tramite scorciatoie rapide `⌘1..9`).
+
+- **Incolla Rapido & Navigazione Tastiera**:
+  - Incolla le prime 10 clip al volo con `⌘1 ... ⌘0` o `⌘a ... ⌘z`.
   - Mappatura hardware dei tasti (`keyCode`) indipendente dal layout di tastiera (IT, US, FR, DE, tastierino numerico).
-  - Badge visivi fedeli sulle righe dell'elenco (`⌘1`, `⌘2`, ..., `⌘0`).
-* **Navigazione Liste & Modale Sposta in Lista (`Option + Valore`)**:
-  - `Option + 1` seleziona la scheda "Tutte", `Option + 2` "Preferiti", `Option + 3 ... 9` le liste utente create, senza interferire con l'input di ricerca.
-  - Modale di spostamento rapido (`Cmd + M` / `MoveToListSheetView`) con scorciatoie dedicate `Option + 1 ... 9` tramite monitor locale di eventi AppKit (`NSEvent.addLocalMonitorForEvents`).
-* **Incolla Singolo e Multi-Clip (Batch Paste)**:
-  - Selezione multipla (`Shift + ↑ / ↓` o click selettivo).
-  - **Incolla Insieme**: Concatena più clip selezionate con separatore configurabile (A capo, Spazio, Virgola, Punto e virgola, Tab o Nessuno).
-  - **Tab Modulo (Sequential Fields)**: Simula l'inserimento consecutivo nei moduli web/desktop premendo automaticamente il tasto `Tab` tra un frammento e il successivo (con ritardo regolabile a 60ms).
-* **Storage Ibrido ad Alte Prestazioni (SQLite + File System Blobs)**:
-  - Metadati, testi e indici memorizzati tramite `GRDB.swift` con tabella virtuale **FTS5** sincronizzata via trigger SQLite (`clips_ai`, `clips_au`, `clips_ad`). Sanitizzazione token e fallback `LIKE` per frammenti di codice.
-  - Deduplicazione crittografica tramite hash **SHA-256**. I payload binari > 4 KB vengono salvati su disco come blob isolati (`~/Library/Application Support/ConCopy/Blobs/`) e rimossi automaticamente al pruning/eliminazione della clip.
-* **Architettura Non-Attivante (Zero Focus-Stealing)**:
-  - Finestra HUD basata su `NSPanel` (`.nonactivatingPanel`, livello `.floating`). L'applicazione attiva sottostante non perde mai il focus di sistema.
-  - Chiusura automatica istantanea alla perdita del focus o al cambio di applicazione (`NSWindow.didResignKeyNotification`, `NSWorkspace.didActivateApplicationNotification`).
-* **Iniezione Paste & Loop Prevention (`PasteInjector`)**:
-  - Iniezione sintetica di `Cmd+V` tramite `CGEvent` con buffer di stabilizzazione (60ms) e ripristino dell'app precedente.
-  - Marcatore interno `com.local.ConCopy.internalPaste` per impedire la ri-cattura ricorsiva della clip nel `ClipboardMonitor`.
-  - Fallback automatico a sola copia negli appunti se i permessi di Accessibilità non sono concessi.
-* **Privacy & Sicurezza by Design**:
-  - Scarto automatico di dati sensibili da password manager (`org.nspasteboard.ConcealedType`, `org.nspasteboard.TransientType`, `org.nspasteboard.AutoGeneratedType`, `com.agilebits.onepassword`).
-  - Blacklist per bundle ID e modalità di sospensione temporanea del monitoraggio.
-* **Servizi in Background & Sincronizzazione**:
-  - **Screenshot Watcher**: Cattura automatica di nuovi screenshot macOS (`~/Desktop`) tramite `DispatchSourceFileSystemObject` con debounce e gestione sicura dei file descriptor.
-  - **Link Metadata Fetcher**: Parsing asincrono in background di tag `<title>` e favicon per gli URL copiati.
-  - **CloudKit Sync Engine**: Sincronizzazione crittografata nella zona privata `ConCopyZone` con `CKSyncEngine`.
-  - **Backup JSON**: Esportazione e importazione completa con payload Base64 e batching in `autoreleasepool`.
+  - Navigazione immediata tra le schede con `⌥1` (Tutte), `⌥2` (Preferiti), `⌥3` (Snippet) e `⌥4..9` (Liste personali).
+  - Incollaggio multi-clip batch (concatenato o consecutivo nei moduli tramite `Tab` automatico).
+
+- **Salvataggio Locale Sicuro (SQLite + GRDB)**:
+  - Database SQLite locale indicizzato con **FTS5** (`GRDB.swift`), nessun dato inviato a server esterni non autorizzati.
+  - Deduplicazione crittografica tramite hash **SHA-256** per evitare duplicati identici.
+  - Gestione sicura della privacy con scarto automatico dei dati sensibili provenienti dai password manager (`1Password`, `org.nspasteboard.ConcealedType`, `TransientType`, `AutoGeneratedType`).
+
+- **Supporto Universal Binary Nativo**:
+  - Binario universale compilato sia per architetture **Apple Silicon** (M1/M2/M3/M4, `arm64`) che **Intel** (`x86_64`), garantendo consumi minimi di batteria e tempi di risposta istantanei.
 
 ---
 
-## Architettura del Repository
-
-Il repository è strutturato come pacchetto **Swift Package Manager (SPM)** puro suddiviso in tre moduli principali:
-
-```text
-concopy/
-├── Package.swift
-├── project.yml                      # Specifica XcodeGen per generare ConCopy.xcodeproj
-├── Sources/
-│   ├── ConCopyCore/                 # Modulo logica di dominio & storage (Zero dipendenze UI)
-│   │   ├── Backup/                  # ArchiveManager (Import/Export JSON + Base64)
-│   │   ├── Clipboard/               # ClipboardMonitor, CapturedClip, ClipboardItem
-│   │   ├── Metadata/                # LinkMetadataFetcher (HTML title & OpenGraph)
-│   │   ├── Paste/                   # PasteInjector, FilePasteExporter, QuickPasteShortcutMapper, BatchPasteTypes
-│   │   ├── Screenshot/              # ScreenshotWatcher (DispatchSource con close(fd) in cancel handler)
-│   │   ├── Settings/                # AppSettingsManager (Blacklist, pause, retention policy)
-│   │   ├── Storage/                 # DatabaseManager (GRDB SQLite + FTS5), BlobStorageManager, Models
-│   │   ├── Sync/                    # CloudKitSyncEngine, CloudKitRecordMapper
-│   │   └── Transformations/         # TextTransformer (Uppercase, Lowercase, Plain Text, Slugify, ecc.)
-│   │
-│   ├── ConCopyUI/                   # Modulo AppKit & SwiftUI HUD
-│   │   ├── Panel/                   # FloatingPanel (NSPanel non-attivante), StatusItemController
-│   │   ├── Preview/                 # QuickLookPopoverView (anteprima testo esteso, immagini e metadati)
-│   │   ├── Settings/                # PreferencesWindowController, PreferencesView
-│   │   ├── Shortcuts/               # GlobalShortcuts (registrazione KeyboardShortcuts)
-│   │   ├── ViewModels/              # ClipboardViewModel (@MainActor, caricamento ed eventi)
-│   │   └── Views/                   # ClipboardListView, ClipRowView, MoveToListSheetView
-│   │
-│   └── ConCopyApp/                  # Entry point eseguibile macOS
-│       ├── AppDelegate.swift        # Gestione ciclo di vita, status item, autorizzazioni
-│       ├── Info.plist               # Configurazione LSUIElement = true (agente di sfondo)
-│       └── main.swift               # NSApplicationMain bootstrap
-│
-└── Tests/
-    └── ConCopyCoreTests/            # 42 Test unitari e di integrazione end-to-end
-```
-
----
-
-## Scorciatoie da Tastiera
+## Scorciatoie da Tastiera Predefinite
 
 | Scorciatoia | Contesto | Azione |
 | :--- | :--- | :--- |
-| `Cmd + Shift + V` | Globale macOS | Apre o chiude il pannello HUD di ConCopy |
-| *Digitazione libera* | Pannello aperto | **Type-to-Search**: filtra istantaneamente l'elenco delle clip |
-| `Cmd + 1 ... 9`, `Cmd + 0` | Pannello aperto | Incolla direttamente la clip corrispondente al badge visivo (`⌘1`...`⌘0`) |
-| `Cmd + a ... z` | Pannello aperto (ricerca inattiva) | Incolla le clip successive (da indice 10 a 35, esclusi tasti riservati) |
-| `Option + 1 ... 9` | Pannello aperto | Seleziona rapidamente la scheda/lista (`⌥1` Tutte, `⌥2` Preferiti, `⌥3..9` Liste) |
-| `Invio` (`↵`) / Doppio Click | Clip selezionata | Incolla la clip selezionata nell'applicazione precedente |
-| `Option + Invio` / `Option + Click` | Clip selezionata | Incolla forzando la conversione in **Solo Testo (Plain Text)** |
-| `↑` / `↓` | Pannello aperto | Sposta la selezione nella lista (anche con campo di ricerca attivo) |
+| `Cmd + Shift + V` | Globale macOS | Apre o chiude il pannello HUD di ConCopy (personalizzabile in Preferenze) |
+| *Digitazione libera* | Pannello aperto | **Type-to-Search**: filtra istantaneamente clip e snippet |
+| `Cmd + 1 ... 9`, `Cmd + 0` | Pannello aperto | Incolla direttamente la clip o lo snippet corrispondente al badge (`⌘1`...`⌘0`) |
+| `Cmd + a ... z` | Pannello aperto | Incolla le clip successive (quando la ricerca non è attiva) |
+| `Option + 1 ... 9` | Pannello aperto | Seleziona rapidamente la scheda (`⌥1` Tutte, `⌥2` Preferiti, `⌥3` Snippet, `⌥4..9` Liste) |
+| `Invio` (`↵`) | Selezione attiva | Incolla la clip o lo snippet selezionato nell'app attiva |
+| `Option + Invio` | Clip selezionata | Incolla forzando la conversione in **Solo Testo (Plain Text)** |
+| `↑` / `↓` | Pannello / Anteprima | Sposta la selezione nell'elenco o naviga tra i record in anteprima |
 | `Shift + ↑` / `Shift + ↓` | Pannello aperto | Espande la selezione per l'incollaggio multiplo (Batch Paste) |
-| `Cmd + D` | Clip selezionata | Aggiunge o rimuove dai Preferiti (Auto-Star) |
-| `Cmd + M` | Clip selezionata | Apre il modale "Sposta nella Lista" |
-| `Option + 1 ... 9` | Modale "Sposta nella Lista" | Assegna istantaneamente alla lista corrispondente (`⌥1` = Nessuna Lista) e chiude |
-| `Cmd + C` | Clip selezionata | Copia la clip selezionata negli appunti di sistema |
-| `Spazio` o `←` | Clip selezionata | Mostra l'anteprima QuickLook |
-| `Esc` | Pannello / Modale | Svuota la ricerca (se presente), chiude il modale o chiude il pannello |
+| `Spazio` o `←` | Clip selezionata | Apre l'anteprima QuickLook |
+| `→` o `Esc` | Anteprima QuickLook | Chiude l'anteprima e torna alla lista |
+| `Cmd + D` | Clip selezionata | Aggiunge o rimuove dai Preferiti (★) |
+| `Cmd + M` | Clip selezionata | Apre il foglio modale "Sposta nella Lista" |
 | `Cmd + ,` | Pannello aperto | Apre la finestra delle Preferenze |
+| `Esc` | Pannello aperto | Svuota la ricerca o chiude la finestra |
 
 ---
 
-## Requisiti di Sistema e Installazione
+## Installazione
 
-* **macOS**: 14.0 (Sonoma) o versioni successive
-* **Swift**: 5.9 o successivo
-* **Xcode**: 15.0+ Command Line Tools
+1. Scarica l'ultima versione di ConCopy dal file `.dmg` disponibile nella sezione [Releases](https://github.com/francescoconoscenti/concopy/releases).
+2. Apri il file `.dmg` e trascina **ConCopy.app** nella cartella **Applicazioni** di macOS.
+3. Avvia ConCopy dalla cartella Applicazioni o da Spotlight.
 
-### Compilazione da Riga di Comando
+### Permessi di Accessibilità Richiesti
 
-1. Clona il repository:
-   ```bash
-   git clone https://github.com/francescoconoscenti/concopy.git
-   cd concopy
-   ```
+Per consentire a ConCopy di simulare la combinazione di tasti di incollaggio (`Cmd+V`) nell'applicazione attiva, macOS richiede i permessi di **Accessibilità**:
 
-2. Compilazione in modalità Debug:
-   ```bash
-   swift build
-   ```
-
-3. Compilazione ottimizzata per il rilascio (Release):
-   ```bash
-   swift build -c release
-   ```
-
-4. Esecuzione diretta dell'applicazione menubar:
-   ```bash
-   swift run ConCopyApp
-   ```
-
-5. Esecuzione della suite di test:
-   ```bash
-   swift test
-   ```
+1. All'avvio, o quando richiesto dal sistema, apri **Impostazioni di Sistema** → **Privacy e Sicurezza** → **Accessibilità**.
+2. Attiva l'interruttore accanto a **ConCopy**.
+3. Se i permessi non sono abilitati, ConCopy notificherà l'utente tramite un banner e copierà il contenuto negli appunti, pronto per essere incollato manualmente.
 
 ---
 
-## Permessi di Accessibilità & Esecuzione CLI vs Bundle App
+## Guida allo Sviluppo e Compilazione Locale
 
-1. **Permessi di Accessibilità (`AXIsProcessTrusted`)**:
-   - Per iniettare la combinazione di tasti sintetica `Cmd+V` nell'applicazione bersaglio, il processo deve essere abilitato in *Impostazioni di Sistema → Privacy e Sicurezza → Accessibilità*.
-   - Se eseguito tramite `swift run ConCopyApp`, macOS richiede l'autorizzazione per l'applicazione terminale host (Terminale, iTerm, Ghostty). Se non autorizzato, ConCopy notifica l'utente tramite un banner e ricade sulla copia negli appunti.
-2. **CloudKit & Login Item (`SMAppService`)**:
-   - In modalità sviluppo da riga di comando (`swift run`), priva di firma codice e bundle containerizzato, i moduli CloudKit e `SMAppService` intercettano la mancanza degli entitlements e degradano in modalità locale senza sollevare eccezioni.
+### Requisiti
+- **macOS**: 14.0 (Sonoma) o successivo
+- **Xcode**: 15.0+ Command Line Tools
+- **Swift**: 5.9 o successivo
+
+### 1. Clonazione del Repository
+```bash
+git clone https://github.com/francescoconoscenti/concopy.git
+cd concopy
+```
+
+### 2. Compilazione con Swift Package Manager (SPM)
+Per compilare l'eseguibile standalone in modalità ottimizzata per il rilascio:
+```bash
+swift build -c release
+```
+
+Per eseguire i test unitari e di integrazione (42 test):
+```bash
+swift test
+```
+
+### 3. Script di Automazione (`scripts/`)
+
+La directory `scripts/` contiene gli strumenti per generare il bundle `.app` nativo e il pacchetto `.dmg` distribuibile:
+
+- **Creazione Bundle `.app` Universale (Apple Silicon + Intel)**:
+  Compila per `arm64` e `x86_64`, unisce i binari tramite `lipo` e genera `ConCopy.app` con risorse e `Info.plist`:
+  ```bash
+  ./scripts/build-app.sh
+  ```
+
+- **Creazione del file `.dmg` per il Rilascio**:
+  Esegue la compilazione del bundle e impacchetta `ConCopy.app` in un'immagine disco compressa con collegamento simbolico ad `/Applications`:
+  ```bash
+  ./scripts/build-dmg.sh
+  ```
+  Il file generato (es. `ConCopy-1.0.0.dmg`) sarà disponibile nella root del repository.
 
 ---
 
-## Percorsi di Memorizzazione Dati
+## Architettura del Progetto
 
-* **Database SQLite (`concopy.sqlite`)**: `~/Library/Application Support/ConCopy/concopy.sqlite`
-* **Storage Payload Binari (Immagini/File)**: `~/Library/Application Support/ConCopy/Blobs/`
-* **Preferenze Utente**: `UserDefaults` standard (`com.concopy.ConCopyApp`)
+Il progetto rispetta una rigorosa architettura a tre target:
+
+- **`ConCopyCore`**: Libreria statica Swift pura (zero dipendenze UI). Gestisce SQLite/GRDB, FTS5, monitoraggio `NSPasteboard`, deduplicazione crittografica SHA-256, I/O dei blob, iniezione `CGEvent`, watcher del filesystem e sincronizzazione CloudKit.
+- **`ConCopyUI`**: Componenti grafici AppKit/SwiftUI. Contiene la finestra flottante non-attivante `FloatingPanel`, il controller `ClipboardViewModel`, le viste SwiftUI `ClipboardListView`, `SnippetsListView`, l'anteprima `QuickLookPopoverView` e il pannello `PreferencesView`.
+- **`ConCopyApp`**: Eseguibile macOS snello (`LSUIElement = true`). Inizializza `AppDelegate`, gestisce lo stato nella menubar (`NSStatusItem`) e la registrazione della scorciatoia globale di sistema.
+
+---
+
+## Licenza
+
+Questo progetto è distribuito sotto licenza **MIT**. Consulta il file `LICENSE` per ulteriori dettagli.
