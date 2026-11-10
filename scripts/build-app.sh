@@ -36,8 +36,8 @@ cp "$UNIVERSAL_BIN_DIR/$APP_NAME" "$BUNDLE_DIR/Contents/MacOS/$APP_NAME"
 
 echo "==> Copia dei bundle di risorse delle dipendenze..."
 find "$BUILD_DIR_ARM64" -maxdepth 1 -name "*.bundle" -exec cp -R {} "$BUNDLE_DIR/Contents/Resources/" \; 2>/dev/null || true
-# Copia i bundle anche nella root del bundle app per soddisfare KeyboardShortcuts
-find "$BUILD_DIR_ARM64" -maxdepth 1 -name "*.bundle" -exec cp -R {} "$BUNDLE_DIR/" \; 2>/dev/null || true
+# Copia i bundle in Contents/MacOS/ per soddisfare KeyboardShortcuts senza violare il sealing di codesign
+find "$BUILD_DIR_ARM64" -maxdepth 1 -name "*.bundle" -exec cp -R {} "$BUNDLE_DIR/Contents/MacOS/" \; 2>/dev/null || true
 
 echo "==> Generazione del file Info.plist..."
 cat << EOF > "$BUNDLE_DIR/Contents/Info.plist"
@@ -45,26 +45,26 @@ cat << EOF > "$BUNDLE_DIR/Contents/Info.plist"
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-<key>CFBundleExecutable</key>
-<string>$APP_NAME</string>
-<key>CFBundleIdentifier</key>
-<string>com.conoscenti.concopy</string>
-<key>CFBundleInfoDictionaryVersion</key>
-<string>6.0</string>
-<key>CFBundleName</key>
-<string>$APP_NAME</string>
-<key>CFBundlePackageType</key>
-<string>APPL</string>
-<key>CFBundleShortVersionString</key>
-<string>1.0.0</string>
-<key>CFBundleVersion</key>
-<string>1</string>
-<key>LSMinimumSystemVersion</key>
-<string>14.0</string>
-<key>LSUIElement</key>
-<true/>
-<key>NSHighResolutionCapable</key>
-<true/>
+    <key>CFBundleExecutable</key>
+    <string>$APP_NAME</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.conoscenti.concopy</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>$APP_NAME</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.0</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSHighResolutionCapable</key>
+    <true/>
 </dict>
 </plist>
 EOF
