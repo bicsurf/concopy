@@ -3,6 +3,7 @@ import ApplicationServices
 import Combine
 import ConCopyCore
 import Foundation
+import UniformTypeIdentifiers
 
 @MainActor
 public final class ClipboardViewModel: ObservableObject {
@@ -29,6 +30,13 @@ public final class ClipboardViewModel: ObservableObject {
     @Published public var pastingClipId: UUID? = nil
     @Published public var isAccessibilityTrusted: Bool = true
     @Published public var toastMessage: String? = nil
+    @Published public var snippets: [SnippetRecord] = []
+    @Published public var selectedSnippetIndex: Int = 0
+    @Published public var isSnippetsOnly: Bool = false
+    @Published public var isSnippetEditorPresented: Bool = false
+    @Published public var editingSnippet: SnippetRecord? = nil
+
+    private var thumbnailCache = NSCache<NSUUID, NSImage>()
 
     public let databaseManager: DatabaseManager
     public let pasteInjector: PasteInjector
@@ -46,6 +54,7 @@ public final class ClipboardViewModel: ObservableObject {
         checkAccessibilityPermissions()
         loadLists()
         loadClips()
+        loadSnippets()
     }
 
     public convenience init(
@@ -131,18 +140,28 @@ public final class ClipboardViewModel: ObservableObject {
     public func selectAllClips() {
         selectedListId = nil
         isFavoritesOnly = false
+        isSnippetsOnly = false
         loadClips()
     }
 
     public func selectFavorites() {
         selectedListId = nil
         isFavoritesOnly = true
+        isSnippetsOnly = false
         loadClips()
+    }
+
+    public func selectSnippets() {
+        selectedListId = nil
+        isFavoritesOnly = false
+        isSnippetsOnly = true
+        loadSnippets()
     }
 
     public func selectList(_ listId: UUID) {
         selectedListId = listId
         isFavoritesOnly = false
+        isSnippetsOnly = false
         if let list = lists.first(where: { $0.id == listId }) {
             currentSortMode = list.sortMode
         }
@@ -187,6 +206,12 @@ public final class ClipboardViewModel: ObservableObject {
     }
 
     public func moveSelectionUp(expandSelection: Bool = false) {
+        if isSnippetsOnly {
+            if selectedSnippetIndex > 0 {
+                selectedSnippetIndex -= 1
+            }
+            return
+        }
         if selectedIndex > 0 {
             selectedIndex -= 1
             if expandSelection, selectedIndex < clips.count {
@@ -198,6 +223,12 @@ public final class ClipboardViewModel: ObservableObject {
     }
 
     public func moveSelectionDown(expandSelection: Bool = false) {
+        if isSnippetsOnly {
+            if selectedSnippetIndex < snippets.count - 1 {
+                selectedSnippetIndex += 1
+            }
+            return
+        }
         if selectedIndex < clips.count - 1 {
             selectedIndex += 1
             if expandSelection, selectedIndex < clips.count {
@@ -227,6 +258,12 @@ public final class ClipboardViewModel: ObservableObject {
     }
 
     public func pasteSelected(optionHeld: Bool = false) {
+        if isSnippetsOnly {
+            if selectedSnippetIndex >= 0 && selectedSnippetIndex < snippets.count {
+                pasteSnippet(snippets[selectedSnippetIndex])
+            }
+            return
+        }
         if selectedClipIds.count >= 2 {
             pasteSelectedBatch(mode: .concatenated(separator: batchSeparator))
         } else if let singleId = selectedClipIds.first, let clip = clips.first(where: { $0.id == singleId }) {
@@ -243,6 +280,7 @@ public final class ClipboardViewModel: ObservableObject {
     }
 
     public func paste(clip: ClipRecord, optionHeld: Bool = false) {
+        guard pastingClipId == nil else { return }
         if let index = clips.firstIndex(where: { $0.id == clip.id }) {
             selectedIndex = index
         }
@@ -458,5 +496,99 @@ public final class ClipboardViewModel: ObservableObject {
         } catch {
             print("[ConCopy] Failed to delete clip: \(error)")
         }
+    }
+
+    // MARK: - Snippets Management
+    public func loadSnippets() {
+        do {
+            snippets = try databaseManager.fetchSnippets()
+        } catch {
+            print("[ConCopy] Failed to load snippets: \(error)")
+        }
+    }
+
+    public func saveSnippet(shortcut: String, content: String, title: String? = nil, existingId: UUID? = nil) {
+        let trimmedShortcut = shortcut.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedShortcut.isEmpty, !content.isEmpty else { return }
+        let snippet = SnippetRecord(
+            id: existingId ?? UUID(),
+            shortcut: trimmedShortcut,
+            content: content,
+            title: title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? title : nil,
+            createdAt: Date(),
+            updatedAt: Date()
+        )
+        do {
+            try databaseManager.saveSnippet(snippet)
+            loadSnippets()
+            showToast("Snippet salvato: \(snippet.shortcut)")
+        } catch {
+            print("[ConCopy] Failed to save snippet: \(error)")
+            showToast("Errore nel salvataggio dello snippet")
+        }
+    }
+
+    public func deleteSnippet(_ snippet: SnippetRecord) {
+        do {
+            try databaseManager.deleteSnippet(id: snippet.id)
+            loadSnippets()
+            showToast("Snippet eliminato")
+        } catch {
+            print("[ConCopy] Failed to delete snippet: \(error)")
+        }
+    }
+
+    public func pasteSnippet(_ snippet: SnippetRecord) {
+        let isTrusted = pasteInjector.eventPoster.isProcessTrusted()
+        Task { @MainActor [weak self] in
+            guard let self = self else { return }
+            do {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(snippet.content, forType: .string)
+                NSPasteboard.general.setString("1", forType: PasteInjector.internalPasteMarker)
+                self.onClosePanel?()
+                try await Task.sleep(nanoseconds: 80_000_000)
+                if isTrusted {
+                    _ = self.pasteInjector.eventPoster.postCommandV()
+                }
+            } catch {
+                print("[ConCopy] Failed to paste snippet: \(error)")
+            }
+        }
+    }
+
+    // MARK: - Image / File Thumbnail Helper
+    public func imageThumbnail(for clip: ClipRecord) -> NSImage? {
+        if let cached = thumbnailCache.object(forKey: clip.id as NSUUID) {
+            return cached
+        }
+        guard clip.primaryType == .image else { return nil }
+        guard let payloads = try? databaseManager.fetchPayloads(forClipId: clip.id),
+              let imgPayload = payloads.first(where: { $0.utiType == "public.png" || $0.utiType == "public.tiff" }),
+              let data = try? databaseManager.loadPayloadData(for: imgPayload),
+              let image = NSImage(data: data) else {
+            return nil
+        }
+        thumbnailCache.setObject(image, forKey: clip.id as NSUUID)
+        return image
+    }
+
+    public func fileIcon(for clip: ClipRecord) -> NSImage? {
+        guard clip.primaryType == .file else { return nil }
+        guard let payloads = try? databaseManager.fetchPayloads(forClipId: clip.id),
+              let filePayload = payloads.first(where: { $0.utiType == "public.file-url" }),
+              let data = try? databaseManager.loadPayloadData(for: filePayload),
+              let urlString = String(data: data, encoding: .utf8),
+              let fileURL = URL(string: urlString) else {
+            if let text = clip.plainText, text.hasPrefix("/") {
+                return NSWorkspace.shared.icon(forFile: text)
+            }
+            if #available(macOS 12.0, *), let utType = UTType(filenameExtension: "txt") {
+                return NSWorkspace.shared.icon(for: utType)
+            } else {
+                return NSImage(systemSymbolName: "doc.text", accessibilityDescription: nil)
+            }
+        }
+        return NSWorkspace.shared.icon(forFile: fileURL.path)
     }
 }

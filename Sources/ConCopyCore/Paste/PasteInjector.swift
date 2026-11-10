@@ -99,7 +99,27 @@ public struct PasteInjector: Sendable {
             let text = clip.plainText ?? ""
             pasteboard.setString(text, forType: .string)
         } else {
-            if payloads.isEmpty {
+            if clip.primaryType == .file {
+                if let filePayload = payloads.first(where: { $0.utiType == "public.file-url" }),
+                   let data = try? databaseManager.loadPayloadData(for: filePayload),
+                   let urlString = String(data: data, encoding: .utf8),
+                   let fileURL = URL(string: urlString) {
+                    pasteboard.writeObjects([fileURL as NSURL])
+                } else if let text = clip.plainText {
+                    pasteboard.setString(text, forType: .string)
+                }
+            } else if clip.primaryType == .image {
+                if let imgPayload = payloads.first(where: { $0.utiType == "public.png" || $0.utiType == "public.tiff" }),
+                   let data = try? databaseManager.loadPayloadData(for: imgPayload),
+                   let image = NSImage(data: data) {
+                    pasteboard.writeObjects([image])
+                } else {
+                    for payload in payloads {
+                        let data = try databaseManager.loadPayloadData(for: payload)
+                        pasteboard.setData(data, forType: NSPasteboard.PasteboardType(payload.utiType))
+                    }
+                }
+            } else if payloads.isEmpty {
                 if let text = clip.plainText {
                     pasteboard.setString(text, forType: .string)
                 }
@@ -110,6 +130,8 @@ public struct PasteInjector: Sendable {
                 }
             }
         }
+        // Assicura che il marcatore anti-loopback interno sia sempre presente
+        pasteboard.setData(Data(), forType: Self.internalPasteMarker)
     }
 
     @MainActor

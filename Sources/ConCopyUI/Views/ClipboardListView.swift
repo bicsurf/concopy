@@ -52,45 +52,6 @@ public struct ClipboardListView: View {
                     .buttonStyle(.plain)
                 }
 
-                // Plain Text Mode Toggle ("T")
-                Button(action: {
-                    viewModel.isPlainTextModeEnabled.toggle()
-                }) {
-                    Text("T")
-                        .font(.system(size: 10, weight: .bold, design: .monospaced))
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 2)
-                        .background(
-                            RoundedRectangle(cornerRadius: 4, style: .continuous)
-                                .fill(viewModel.isPlainTextModeEnabled ? ConCopyTheme.Accents.primary : ConCopyTheme.Surfaces.pillBackground)
-                        )
-                        .foregroundColor(viewModel.isPlainTextModeEnabled ? .white : .secondary)
-                }
-                .buttonStyle(.plain)
-                .help("Modalità Solo Testo (Plain Text)")
-
-                // Transformation Menu
-                Menu {
-                    ForEach(TextTransformation.allCases, id: \.self) { trans in
-                        Button(action: {
-                            viewModel.activeTransformation = trans
-                        }) {
-                            HStack {
-                                Text(trans.displayName)
-                                if viewModel.activeTransformation == trans {
-                                    Image(systemName: "checkmark")
-                                }
-                            }
-                        }
-                    }
-                } label: {
-                    Image(systemName: viewModel.activeTransformation == .none ? "textformat" : "textformat.size")
-                        .foregroundColor(viewModel.activeTransformation == .none ? .secondary : .accentColor)
-                }
-                .menuStyle(.borderlessButton)
-                .frame(width: 22)
-                .help("Trasformazione Testo")
-
                 // Sort Mode Menu
                 Menu {
                     ForEach(ClipSortMode.allCases, id: \.self) { mode in
@@ -108,10 +69,11 @@ public struct ClipboardListView: View {
                     }
                 } label: {
                     Image(systemName: "arrow.up.arrow.down")
+                        .font(.system(size: 11, weight: .medium))
                         .foregroundColor(.secondary)
                 }
-                .menuStyle(.borderlessButton)
-                .frame(width: 22)
+                .menuIndicator(.hidden)
+                .buttonStyle(.plain)
                 .help("Ordinamento")
 
                 // Auto-Star toggle for selected list
@@ -190,11 +152,11 @@ public struct ClipboardListView: View {
 
             // Horizontal Lists Bar
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 5) {
+                HStack(spacing: 6) {
                     ListTabButton(
                         title: "Tutte",
                         icon: "tray.full",
-                        isSelected: viewModel.selectedListId == nil && !viewModel.isFavoritesOnly,
+                        isSelected: viewModel.selectedListId == nil && !viewModel.isFavoritesOnly && !viewModel.isSnippetsOnly,
                         shortcutHint: "⌥1"
                     ) {
                         viewModel.selectAllClips()
@@ -203,18 +165,27 @@ public struct ClipboardListView: View {
                     ListTabButton(
                         title: "Preferiti",
                         icon: "star.fill",
-                        isSelected: viewModel.isFavoritesOnly,
+                        isSelected: viewModel.selectedListId == nil && viewModel.isFavoritesOnly && !viewModel.isSnippetsOnly,
                         shortcutHint: "⌥2"
                     ) {
                         viewModel.selectFavorites()
+                    }
+
+                    ListTabButton(
+                        title: "Snippet",
+                        icon: "text.badge.plus",
+                        isSelected: viewModel.isSnippetsOnly,
+                        shortcutHint: "⌥3"
+                    ) {
+                        viewModel.selectSnippets()
                     }
 
                     ForEach(Array(viewModel.lists.enumerated()), id: \.element.id) { index, list in
                         ListTabButton(
                             title: list.name,
                             icon: list.isAutoStarActive ? "star.circle.fill" : "folder",
-                            isSelected: viewModel.selectedListId == list.id,
-                            shortcutHint: index + 3 <= 9 ? "⌥\(index + 3)" : nil
+                            isSelected: !viewModel.isSnippetsOnly && viewModel.selectedListId == list.id,
+                            shortcutHint: index + 4 <= 9 ? "⌥\(index + 4)" : nil
                         ) {
                             viewModel.selectList(list.id)
                         }
@@ -241,15 +212,20 @@ public struct ClipboardListView: View {
                     Button(action: promptCreateNewList) {
                         Image(systemName: "plus")
                             .font(.system(size: 10, weight: .bold))
-                            .padding(.horizontal, 7)
+                            .padding(.horizontal, 8)
                             .padding(.vertical, 5)
                             .background(
                                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                    .fill(Color.primary.opacity(0.05))
+                                    .fill(ConCopyTheme.Surfaces.pillBackground)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    .stroke(ConCopyTheme.Surfaces.pillBorder, lineWidth: 0.5)
                             )
                             .foregroundColor(.secondary)
                     }
                     .buttonStyle(.plain)
+                    .help("Crea nuova lista")
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
@@ -258,8 +234,10 @@ public struct ClipboardListView: View {
 
             Divider().opacity(0.3)
 
-            // Main List
-            if viewModel.clips.isEmpty {
+            // Main Content: Snippets or Clips
+            if viewModel.isSnippetsOnly {
+                SnippetsListView(viewModel: viewModel)
+            } else if viewModel.clips.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "doc.on.clipboard")
                         .font(.system(size: 28, weight: .light))
@@ -287,6 +265,8 @@ public struct ClipboardListView: View {
                                     isChecked: viewModel.selectedClipIds.contains(clip.id),
                                     isPasting: viewModel.pastingClipId == clip.id,
                                     shortcutLabel: QuickPasteShortcutMapper.label(forIndex: index),
+                                    thumbnailImage: clip.primaryType == .image ? viewModel.imageThumbnail(for: clip) : nil,
+                                    fileIconImage: clip.primaryType == .file ? viewModel.fileIcon(for: clip) : nil,
                                     onToggleCheck: {
                                         viewModel.toggleSelection(clipId: clip.id)
                                     }
@@ -296,9 +276,6 @@ public struct ClipboardListView: View {
                                 .contentShape(Rectangle())
                                 .contextMenu {
                                     rowContextMenu(for: clip)
-                                }
-                                .onTapGesture(count: 2) {
-                                    viewModel.paste(clip: clip)
                                 }
                                 .onTapGesture {
                                     viewModel.selectedIndex = index
@@ -354,7 +331,10 @@ public struct ClipboardListView: View {
         }
         .frame(minWidth: 360, minHeight: 480)
         .background(
-            VisualEffectBackground(material: .hudWindow, blendingMode: .behindWindow)
+            ZStack {
+                VisualEffectBackground(material: .hudWindow, blendingMode: .behindWindow)
+                ConCopyTheme.Surfaces.windowBackgroundTint
+            }
         )
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(
@@ -410,6 +390,12 @@ public struct ClipboardListView: View {
                 QuickLookPopoverView(
                     clip: currentClip,
                     databaseManager: viewModel.databaseManager,
+                    onPrevious: {
+                        viewModel.moveSelectionUp()
+                    },
+                    onNext: {
+                        viewModel.moveSelectionDown()
+                    },
                     onClose: {
                         viewModel.isQuickLookVisible = false
                     }
@@ -477,6 +463,26 @@ public struct ClipboardListView: View {
         // Move to List sheet
         .sheet(item: $viewModel.movingClip) { clip in
             MoveToListSheetView(viewModel: viewModel, clip: clip)
+        }
+        // Snippet Editor sheet
+        .sheet(isPresented: $viewModel.isSnippetEditorPresented) {
+            SnippetEditorSheetView(
+                snippet: viewModel.editingSnippet,
+                onSave: { shortcut, content, title in
+                    viewModel.saveSnippet(
+                        shortcut: shortcut,
+                        content: content,
+                        title: title,
+                        existingId: viewModel.editingSnippet?.id
+                    )
+                    viewModel.isSnippetEditorPresented = false
+                    viewModel.editingSnippet = nil
+                },
+                onCancel: {
+                    viewModel.isSnippetEditorPresented = false
+                    viewModel.editingSnippet = nil
+                }
+            )
         }
     }
 
@@ -663,6 +669,8 @@ struct ClipRowView: View, Equatable {
     let isChecked: Bool
     let isPasting: Bool
     let shortcutLabel: String?
+    var thumbnailImage: NSImage? = nil
+    var fileIconImage: NSImage? = nil
     let onToggleCheck: () -> Void
 
     static func == (lhs: ClipRowView, rhs: ClipRowView) -> Bool {
@@ -684,14 +692,31 @@ struct ClipRowView: View, Equatable {
             }
             .buttonStyle(.plain)
 
-            // Type Icon Badge
-            ZStack {
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(typeBadgeBackground)
+            // Type Icon Badge or Preview
+            if let thumb = thumbnailImage {
+                Image(nsImage: thumb)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 26, height: 26)
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .stroke(Color.primary.opacity(0.12), lineWidth: 0.5)
+                    )
+            } else if let icon = fileIconImage {
+                Image(nsImage: icon)
+                    .resizable()
+                    .scaledToFit()
                     .frame(width: 24, height: 24)
-                typeIcon
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(typeBadgeForeground)
+            } else {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(typeBadgeBackground)
+                        .frame(width: 24, height: 24)
+                    typeIcon
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(typeBadgeForeground)
+                }
             }
 
             // Title and Preview
@@ -947,6 +972,223 @@ struct MoveToListSheetView: View {
             if let monitor = eventMonitor {
                 NSEvent.removeMonitor(monitor)
                 eventMonitor = nil
+            }
+        }
+    }
+}
+
+// MARK: - Snippets List View
+struct SnippetsListView: View {
+    @ObservedObject var viewModel: ClipboardViewModel
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Snippet Espandibili (\(viewModel.snippets.count))")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.secondary)
+                Spacer()
+                Button(action: {
+                    viewModel.editingSnippet = nil
+                    viewModel.isSnippetEditorPresented = true
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "plus")
+                        Text("Nuovo Snippet")
+                    }
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(ConCopyTheme.Accents.primary)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(Color.primary.opacity(0.02))
+
+            Divider().opacity(0.3)
+
+            if viewModel.snippets.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "text.badge.plus")
+                        .font(.system(size: 28, weight: .light))
+                        .foregroundColor(.secondary.opacity(0.6))
+                        .padding(.bottom, 4)
+                    Text("Nessuno snippet salvato")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(.secondary)
+                    Text("Crea scorciatoie come ';email' o ';indirizzo' per espandere testi frequenti.")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary.opacity(0.6))
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 24)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(WindowDragGestureArea())
+                .padding(.vertical, 40)
+            } else {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(spacing: 4) {
+                            ForEach(Array(viewModel.snippets.enumerated()), id: \.element.id) { index, snippet in
+                                let isSelected = viewModel.selectedSnippetIndex == index
+                                let shortcutBadge = QuickPasteShortcutMapper.label(forIndex: index)
+
+                                HStack(spacing: 10) {
+                                    Text(snippet.shortcut)
+                                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                        .foregroundColor(ConCopyTheme.Accents.primary)
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 3)
+                                        .background(
+                                            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                                .fill(ConCopyTheme.Rows.selectedBackground)
+                                        )
+
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        if let title = snippet.title, !title.isEmpty {
+                                            Text(title)
+                                                .font(.system(size: 12.5, weight: .semibold))
+                                                .foregroundColor(.primary)
+                                        }
+                                        Text(snippet.content)
+                                            .font(.system(size: 11.5))
+                                            .foregroundColor(.secondary)
+                                            .lineLimit(2)
+                                    }
+
+                                    Spacer()
+
+                                    if let badge = shortcutBadge {
+                                        HStack(spacing: 2) {
+                                            Image(systemName: "command")
+                                                .font(.system(size: 8.5, weight: .medium))
+                                            Text(badge)
+                                                .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                                        }
+                                        .foregroundColor(ConCopyTheme.Badges.quickPasteForeground(isSelected: isSelected))
+                                        .padding(.horizontal, 4.5)
+                                        .padding(.vertical, 2.5)
+                                        .background(
+                                            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                                .fill(ConCopyTheme.Badges.quickPasteBackground(isSelected: isSelected))
+                                        )
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                                .stroke(ConCopyTheme.Badges.quickPasteBorder(isSelected: isSelected), lineWidth: 0.5)
+                                        )
+                                    }
+
+                                    Button("Incolla") {
+                                        viewModel.selectedSnippetIndex = index
+                                        viewModel.pasteSnippet(snippet)
+                                    }
+                                    .buttonStyle(.borderedProminent)
+                                    .controlSize(.small)
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .fill(isSelected ? ConCopyTheme.Rows.selectedBackground : ConCopyTheme.Surfaces.pillBackground)
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .stroke(isSelected ? ConCopyTheme.Rows.selectedBorder : Color.clear, lineWidth: 1)
+                                )
+                                .contentShape(Rectangle())
+                                .id(snippet.id)
+                                .onTapGesture {
+                                    viewModel.selectedSnippetIndex = index
+                                }
+                                .contextMenu {
+                                    Button("Modifica") {
+                                        viewModel.editingSnippet = snippet
+                                        viewModel.isSnippetEditorPresented = true
+                                    }
+                                    Button("Incolla") {
+                                        viewModel.pasteSnippet(snippet)
+                                    }
+                                    Divider()
+                                    Button("Elimina", role: .destructive) {
+                                        viewModel.deleteSnippet(snippet)
+                                    }
+                                }
+                            }
+                        }
+                        .padding(8)
+                    }
+                    .onChange(of: viewModel.selectedSnippetIndex) { _, newIndex in
+                        if newIndex >= 0 && newIndex < viewModel.snippets.count {
+                            withAnimation(.easeInOut(duration: 0.1)) {
+                                proxy.scrollTo(viewModel.snippets[newIndex].id, anchor: .center)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Snippet Editor Sheet
+struct SnippetEditorSheetView: View {
+    let snippet: SnippetRecord?
+    let onSave: (String, String, String?) -> Void
+    let onCancel: () -> Void
+
+    @State private var shortcut: String = ""
+    @State private var content: String = ""
+    @State private var title: String = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(snippet == nil ? "Nuovo Snippet" : "Modifica Snippet")
+                .font(.headline)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Scorciatoia (es. ;email o :firma)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                TextField(";shortcut", text: $shortcut)
+                    .textFieldStyle(.roundedBorder)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Etichetta / Titolo (opzionale)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                TextField("es. Email Personale", text: $title)
+                    .textFieldStyle(.roundedBorder)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Contenuto di Testo")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                TextEditor(text: $content)
+                    .font(.system(size: 12))
+                    .frame(height: 100)
+                    .padding(4)
+                    .background(RoundedRectangle(cornerRadius: 6).stroke(Color.primary.opacity(0.15)))
+            }
+
+            HStack {
+                Spacer()
+                Button("Annulla", action: onCancel)
+                Button("Salva") {
+                    onSave(shortcut, content, title.isEmpty ? nil : title)
+                }
+                .disabled(shortcut.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || content.isEmpty)
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(18)
+        .frame(minWidth: 320)
+        .onAppear {
+            if let s = snippet {
+                shortcut = s.shortcut
+                content = s.content
+                title = s.title ?? ""
             }
         }
     }

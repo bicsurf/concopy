@@ -128,14 +128,40 @@ public final class ClipboardMonitor {
         var rawText: String?
 
         autoreleasepool {
-            rawText = pasteboard.string(forType: .string)
+            // Check for file URLs from Finder / file managers
+            if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [NSPasteboard.ReadingOptionKey.urlReadingFileURLsOnly: true]) as? [URL],
+               let firstFileURL = urls.first {
+                let filePath = firstFileURL.path
+                let fileName = firstFileURL.lastPathComponent
+                rawText = fileName
+                representations["public.file-url"] = Data(firstFileURL.absoluteString.utf8)
+                representations["public.utf8-plain-text"] = Data(filePath.utf8)
+            } else {
+                rawText = pasteboard.string(forType: .string)
+                if let text = rawText, !text.isEmpty {
+                    representations["public.utf8-plain-text"] = Data(text.utf8)
+                }
+            }
 
-            if let text = rawText, !text.isEmpty {
-                representations["public.utf8-plain-text"] = Data(text.utf8)
+            // Check for images
+            if representations["public.png"] == nil && representations["public.tiff"] == nil {
+                if let image = NSImage(pasteboard: pasteboard) {
+                    if let tiff = image.tiffRepresentation {
+                        representations["public.tiff"] = tiff
+                        if let bitmap = NSBitmapImageRep(data: tiff),
+                           let png = bitmap.representation(using: .png, properties: [:]) {
+                            representations["public.png"] = png
+                        }
+                    }
+                    if rawText == nil || rawText!.isEmpty {
+                        let size = image.size
+                        rawText = "Immagine (\(Int(size.width))x\(Int(size.height)))"
+                    }
+                }
             }
 
             for uti in Self.targetUTIs {
-                if uti == "public.utf8-plain-text" && representations[uti] != nil {
+                if representations[uti] != nil {
                     continue
                 }
                 if let data = pasteboard.data(forType: NSPasteboard.PasteboardType(uti)), !data.isEmpty {
@@ -179,7 +205,7 @@ public final class ClipboardMonitor {
             return .file
         }
 
-        if hasImage && !hasText {
+        if hasImage && (!hasText || plainText?.hasPrefix("Immagine") == true) {
             return .image
         }
 
@@ -194,7 +220,7 @@ public final class ClipboardMonitor {
                 return .html
             }
             if hasImage {
-                return .richText
+                return .image
             }
             return .text
         }

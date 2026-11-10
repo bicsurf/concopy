@@ -137,6 +137,20 @@ public final class DatabaseManager: Sendable {
             """)
         }
 
+        migrator.registerMigration("v3_snippets_schema") { db in
+            try db.execute(sql: """
+            CREATE TABLE IF NOT EXISTS snippets (
+                id TEXT PRIMARY KEY NOT NULL,
+                shortcut TEXT NOT NULL UNIQUE,
+                content TEXT NOT NULL,
+                title TEXT,
+                createdAt DATETIME NOT NULL,
+                updatedAt DATETIME NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS index_snippets_on_shortcut ON snippets(shortcut);
+            """)
+        }
+
         return migrator
     }
 
@@ -686,5 +700,30 @@ public final class DatabaseManager: Sendable {
         }
 
         return clipsToDelete.count
+    }
+
+    // MARK: - Snippets Management
+    public func saveSnippet(_ snippet: SnippetRecord) throws {
+        try dbWriter.write { db in
+            try snippet.save(db)
+        }
+    }
+
+    public func fetchSnippets() throws -> [SnippetRecord] {
+        try dbWriter.read { db in
+            try SnippetRecord.order(Column("createdAt").desc).fetchAll(db)
+        }
+    }
+
+    public func fetchSnippet(byShortcut shortcut: String) throws -> SnippetRecord? {
+        try dbWriter.read { db in
+            try SnippetRecord.filter(Column("shortcut") == shortcut).fetchOne(db)
+        }
+    }
+
+    public func deleteSnippet(id: UUID) throws {
+        try dbWriter.write { db in
+            _ = try SnippetRecord.filter(Column("id") == id).deleteAll(db)
+        }
     }
 }

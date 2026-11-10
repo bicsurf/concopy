@@ -1,5 +1,6 @@
 import AppKit
 import ConCopyCore
+import KeyboardShortcuts
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -82,6 +83,17 @@ public struct PreferencesView: View {
     // MARK: - General Tab
     private var generalTabView: some View {
         Form {
+            Section(header: Text("Scorciatoia Globale")) {
+                HStack {
+                    Text("Apri/Chiudi ConCopy:")
+                    Spacer()
+                    KeyboardShortcuts.Recorder(for: .toggleConCopyPanel)
+                }
+                Text("Scorciatoia globale di sistema per mostrare o nascondere la finestra flottante di ConCopy (predefinito: ⇧⌘V).")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
             Section(header: Text("Monitoraggio Appunti")) {
                 Toggle("Pausa registrazione appunti", isOn: $settingsManager.isMonitoringPaused)
                 Text("Quando attiva, ConCopy non registrerà nuovi elementi copiati negli appunti.")
@@ -155,19 +167,6 @@ public struct PreferencesView: View {
                 Text("Replicazione crittografata e privata delle clip testuali e delle liste tra i tuoi dispositivi Apple.")
                     .font(.caption)
                     .foregroundColor(.secondary)
-            }
-
-            Section(header: Text("Scorciatoia Globale")) {
-                HStack {
-                    Text("Pannello principale")
-                    Spacer()
-                    Text("⌘⇧V")
-                        .font(.system(.body, design: .monospaced))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.secondary.opacity(0.12))
-                        .cornerRadius(4)
-                }
             }
         }
         .formStyle(.grouped)

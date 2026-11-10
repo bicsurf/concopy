@@ -5,21 +5,32 @@ import SwiftUI
 public struct QuickLookPopoverView: View {
     public let clip: ClipRecord
     public let databaseManager: DatabaseManager
+    public var onPrevious: (() -> Void)? = nil
+    public var onNext: (() -> Void)? = nil
     public let onClose: () -> Void
 
     @State private var imageData: Data?
     @State private var imageResolution: String = ""
     @State private var imageSizeKB: String = ""
     @State private var zoomScale: CGFloat = 1.0
+    @State private var eventMonitor: Any? = nil
 
     public init(
         clip: ClipRecord,
         databaseManager: DatabaseManager,
+        onPrevious: (() -> Void)? = nil,
+        onNext: (() -> Void)? = nil,
         onClose: @escaping () -> Void
     ) {
         self.clip = clip
         self.databaseManager = databaseManager
+        self.onPrevious = onPrevious
+        self.onNext = onNext
         self.onClose = onClose
+        self._imageData = State(initialValue: nil)
+        self._imageResolution = State(initialValue: "")
+        self._imageSizeKB = State(initialValue: "")
+        self._zoomScale = State(initialValue: 1.0)
     }
 
     public var body: some View {
@@ -64,6 +75,30 @@ public struct QuickLookPopoverView: View {
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear {
             loadImageDataIfNeeded()
+            eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                // Up arrow (126): previous clip
+                if event.keyCode == 126 {
+                    onPrevious?()
+                    return nil
+                }
+                // Down arrow (125): next clip
+                if event.keyCode == 125 {
+                    onNext?()
+                    return nil
+                }
+                // Right arrow (124) or Escape (53): close QuickLook
+                if event.keyCode == 124 || event.keyCode == 53 {
+                    onClose()
+                    return nil
+                }
+                return event
+            }
+        }
+        .onDisappear {
+            if let monitor = eventMonitor {
+                NSEvent.removeMonitor(monitor)
+                eventMonitor = nil
+            }
         }
         .onChange(of: clip.id) { _, _ in
             imageData = nil

@@ -215,20 +215,20 @@ public final class FloatingPanel: NSPanel {
             }
         }
 
-        // Spacebar: toggle QuickLook preview when not searching
-        if event.keyCode == 49 && !viewModel.isSearchFocused {
+        // Spacebar: toggle QuickLook preview when query is empty or search is not focused
+        if event.keyCode == 49 && (!viewModel.isSearchFocused || viewModel.searchQuery.isEmpty) {
             viewModel.toggleQuickLook()
             return true
         }
 
-        // Left Arrow (123): open QuickLook
-        if event.keyCode == 123 && !viewModel.isSearchFocused {
+        // Left Arrow (123): open QuickLook (allowed if query is empty or not in search)
+        if event.keyCode == 123 && (!viewModel.isSearchFocused || viewModel.searchQuery.isEmpty) {
             viewModel.isQuickLookVisible = true
             return true
         }
 
         // Right Arrow (124): close QuickLook
-        if event.keyCode == 124 && !viewModel.isSearchFocused && viewModel.isQuickLookVisible {
+        if event.keyCode == 124 && viewModel.isQuickLookVisible {
             viewModel.isQuickLookVisible = false
             return true
         }
@@ -316,8 +316,11 @@ public final class FloatingPanel: NSPanel {
                 } else if digit == 2 {
                     viewModel.selectFavorites()
                     return true
+                } else if digit == 3 {
+                    viewModel.selectSnippets()
+                    return true
                 } else {
-                    let listIndex = digit - 3
+                    let listIndex = digit - 4
                     if listIndex >= 0 && listIndex < viewModel.lists.count {
                         let list = viewModel.lists[listIndex]
                         viewModel.selectList(list.id)
@@ -353,8 +356,16 @@ public final class FloatingPanel: NSPanel {
 
             if let index = targetIndex {
                 let optionHeld = event.modifierFlags.contains(.option)
-                viewModel.paste(at: index, optionHeld: optionHeld)
-                return true
+                if viewModel.isSnippetsOnly {
+                    if index >= 0 && index < viewModel.snippets.count {
+                        viewModel.selectedSnippetIndex = index
+                        viewModel.pasteSnippet(viewModel.snippets[index])
+                        return true
+                    }
+                } else {
+                    viewModel.paste(at: index, optionHeld: optionHeld)
+                    return true
+                }
             }
         }
 

@@ -23,39 +23,45 @@ public enum ConCopyTheme {
 
     // MARK: - Superfici e Bordi (Surfaces & Borders)
     public enum Surfaces {
+        /// Tinta di fondo della finestra HUD (grigio ardesia/grafite calibrato per staccare su sfondi bianchi)
+        public static let windowBackgroundTint = ConCopyTheme.dynamicColor(
+            light: NSColor(white: 0.88, alpha: 0.94),
+            dark: NSColor(white: 0.11, alpha: 0.90)
+        )
+
         /// Bordo perimetrale della finestra HUD (più definito in light mode per staccare su sfondi chiari)
         public static let windowBorder = ConCopyTheme.dynamicColor(
-            light: NSColor.black.withAlphaComponent(0.20),
-            dark: NSColor.white.withAlphaComponent(0.13)
+            light: NSColor.black.withAlphaComponent(0.24),
+            dark: NSColor.white.withAlphaComponent(0.14)
         )
 
         /// Maniglia di trascinamento superiore
         public static let dragHandle = ConCopyTheme.dynamicColor(
-            light: NSColor.black.withAlphaComponent(0.32),
+            light: NSColor.black.withAlphaComponent(0.38),
             dark: NSColor.white.withAlphaComponent(0.24)
         )
 
-        /// Sfondo pill e selettori secondari
+        /// Sfondo pill e selettori secondari (più scuro in light mode per maggiore contrasto)
         public static let pillBackground = ConCopyTheme.dynamicColor(
-            light: NSColor.black.withAlphaComponent(0.06),
+            light: NSColor.black.withAlphaComponent(0.09),
             dark: NSColor.white.withAlphaComponent(0.07)
         )
 
         /// Bordo pill e divisori interni
         public static let pillBorder = ConCopyTheme.dynamicColor(
-            light: NSColor.black.withAlphaComponent(0.14),
+            light: NSColor.black.withAlphaComponent(0.18),
             dark: NSColor.white.withAlphaComponent(0.10)
         )
 
         /// Separatore orizzontale/verticale
         public static let divider = ConCopyTheme.dynamicColor(
-            light: NSColor.black.withAlphaComponent(0.16),
+            light: NSColor.black.withAlphaComponent(0.20),
             dark: NSColor.white.withAlphaComponent(0.12)
         )
 
         /// Sfondo barra batch / footer
         public static let footerBackground = ConCopyTheme.dynamicColor(
-            light: NSColor(white: 0.95, alpha: 0.85),
+            light: NSColor(white: 0.84, alpha: 0.95),
             dark: NSColor(white: 0.12, alpha: 0.70)
         )
     }
