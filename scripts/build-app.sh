@@ -4,27 +4,14 @@ set -e
 APP_NAME="ConCopy"
 BUNDLE_DIR="$APP_NAME.app"
 
-echo "==> Compilazione per Apple Silicon (arm64)..."
-swift build -c release --arch arm64
-BUILD_DIR_ARM64=$(swift build --show-bin-path -c release --arch arm64)
-BIN_ARM64="$BUILD_DIR_ARM64/ConCopyApp"
-if [ ! -f "$BIN_ARM64" ]; then
-    BIN_ARM64=$(find "$BUILD_DIR_ARM64" -maxdepth 1 -type f -perm +111 ! -name "*.swiftmodule" ! -name "*.build" ! -name "*.json" ! -name "*.a" ! -name "*.dylib" ! -name "*.swiftsourceinfo" ! -name "*.txt" | head -n 1)
-fi
+echo "==> Compilazione Universal Binary nativa (arm64 + x86_64)..."
+swift build -c release --arch arm64 --arch x86_64
+BUILD_DIR=$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)
+BIN_PATH="$BUILD_DIR/ConCopyApp"
 
-echo "==> Compilazione per Intel (x86_64)..."
-swift build -c release --arch x86_64
-BUILD_DIR_X86=$(swift build --show-bin-path -c release --arch x86_64)
-BIN_X86="$BUILD_DIR_X86/ConCopyApp"
-if [ ! -f "$BIN_X86" ]; then
-    BIN_X86=$(find "$BUILD_DIR_X86" -maxdepth 1 -type f -perm +111 ! -name "*.swiftmodule" ! -name "*.build" ! -name "*.json" ! -name "*.a" ! -name "*.dylib" ! -name "*.swiftsourceinfo" ! -name "*.txt" | head -n 1)
+if [ ! -f "$BIN_PATH" ]; then
+    BIN_PATH=$(find "$BUILD_DIR" -maxdepth 1 -type f -perm +111 ! -name "*.swiftmodule" ! -name "*.build" ! -name "*.json" ! -name "*.a" ! -name "*.dylib" ! -name "*.swiftsourceinfo" ! -name "*.txt" | head -n 1)
 fi
-
-echo "==> Unione dei binari in un unico Universal Binary (arm64 + x86_64)..."
-UNIVERSAL_BIN_DIR=".build/universal-release"
-mkdir -p "$UNIVERSAL_BIN_DIR"
-lipo -create -output "$UNIVERSAL_BIN_DIR/$APP_NAME" "$BIN_ARM64" "$BIN_X86"
-chmod +x "$UNIVERSAL_BIN_DIR/$APP_NAME"
 
 echo "==> Creazione della struttura del bundle macOS ($BUNDLE_DIR)..."
 rm -rf "$BUNDLE_DIR"
@@ -32,12 +19,11 @@ mkdir -p "$BUNDLE_DIR/Contents/MacOS"
 mkdir -p "$BUNDLE_DIR/Contents/Resources"
 
 echo "==> Copia dell'eseguibile universale..."
-cp "$UNIVERSAL_BIN_DIR/$APP_NAME" "$BUNDLE_DIR/Contents/MacOS/$APP_NAME"
+cp "$BIN_PATH" "$BUNDLE_DIR/Contents/MacOS/$APP_NAME"
+chmod +x "$BUNDLE_DIR/Contents/MacOS/$APP_NAME"
 
-echo "==> Copia dei bundle di risorse delle dipendenze..."
-find "$BUILD_DIR_ARM64" -maxdepth 1 -name "*.bundle" -exec cp -R {} "$BUNDLE_DIR/Contents/Resources/" \; 2>/dev/null || true
-# Copia i bundle in Contents/MacOS/ per soddisfare KeyboardShortcuts senza violare il sealing di codesign
-find "$BUILD_DIR_ARM64" -maxdepth 1 -name "*.bundle" -exec cp -R {} "$BUNDLE_DIR/Contents/MacOS/" \; 2>/dev/null || true
+echo "==> Copia dei bundle di risorse delle dipendenze in Contents/Resources..."
+find "$BUILD_DIR" -maxdepth 1 -name "*.bundle" -exec cp -R {} "$BUNDLE_DIR/Contents/Resources/" \; 2>/dev/null || true
 
 echo "==> Generazione del file Info.plist..."
 cat << EOF > "$BUNDLE_DIR/Contents/Info.plist"
@@ -70,6 +56,7 @@ cat << EOF > "$BUNDLE_DIR/Contents/Info.plist"
 EOF
 
 echo "==> Applicazione della firma ad-hoc..."
+chmod -R u+w "$BUNDLE_DIR"
 codesign --force --deep --sign - "$BUNDLE_DIR"
 
 echo "==> Fatto! Bundle .app universale generato correttamente."
