@@ -51,25 +51,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let monitor = ClipboardMonitor()
         monitor.onNewCapturedClip = { [weak self] captured in
-            do {
-                let saved = try self?.databaseManager?.ingestCapturedClip(captured)
-                if let clip = saved {
-                    self?.syncCoordinator?.queueUpload(for: clip)
-                    if clip.primaryType == .url,
-                       let plain = clip.plainText,
-                       let url = URL(string: plain) {
-                        Task { [weak self] in
-                            guard let db = self?.databaseManager else { return }
-                            await self?.linkMetadataFetcher.fetchAndUpdateMetadata(clipId: clip.id, url: url, databaseManager: db)
-                            await MainActor.run {
-                                self?.viewModel?.loadClips()
+            guard let self else { return }
+            let db = self.databaseManager
+            let fetcher = self.linkMetadataFetcher
+            let sync = self.syncCoordinator
+            let vm = self.viewModel
+
+            Task.detached(priority: .utility) {
+                do {
+                    let saved = try db?.ingestCapturedClip(captured)
+                    if let clip = saved {
+                        sync?.queueUpload(for: clip)
+                        if clip.primaryType == .url,
+                           let plain = clip.plainText,
+                           let url = URL(string: plain),
+                           let db {
+                            Task {
+                                await fetcher.fetchAndUpdateMetadata(clipId: clip.id, url: url, databaseManager: db)
+                                await MainActor.run {
+                                    vm?.loadClips()
+                                }
                             }
                         }
                     }
+                    await MainActor.run {
+                        vm?.loadClips()
+                    }
+                } catch {
+                    print("[ConCopy] Error ingesting captured clip: \(error)")
                 }
-                self?.viewModel?.loadClips()
-            } catch {
-                print("[ConCopy] Error ingesting captured clip: \(error)")
             }
         }
         monitor.start()
@@ -77,17 +87,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Setup ScreenshotWatcher
         let watcher = ScreenshotWatcher()
-        watcher.onScreenshotCaptured = { [weak self] clip, fileURL in
+        watcher.onScreenshotCaptured = { [weak self] clip, _ in
             Task { @MainActor [weak self] in
+                guard let self else { return }
                 guard AppSettingsManager.shared.autoCaptureScreenshots else { return }
-                do {
-                    let saved = try self?.databaseManager?.ingestCapturedClip(clip)
-                    if let clip = saved {
-                        self?.syncCoordinator?.queueUpload(for: clip)
+                let db = self.databaseManager
+                let sync = self.syncCoordinator
+                let vm = self.viewModel
+
+                Task.detached(priority: .utility) {
+                    do {
+                        let saved = try db?.ingestCapturedClip(clip)
+                        if let clip = saved {
+                            sync?.queueUpload(for: clip)
+                        }
+                        await MainActor.run {
+                            vm?.loadClips()
+                        }
+                    } catch {
+                        print("[ConCopy] Error ingesting screenshot: \(error)")
                     }
-                    self?.viewModel?.loadClips()
-                } catch {
-                    print("[ConCopy] Error ingesting screenshot: \(error)")
                 }
             }
         }

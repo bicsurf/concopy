@@ -113,6 +113,59 @@ public struct PasteInjector: Sendable {
     }
 
     @MainActor
+    public func copyToPasteboard(
+        clip: ClipRecord,
+        databaseManager: DatabaseManager,
+        pasteboard: NSPasteboard = .general,
+        forcePlainText: Bool = false,
+        transformation: TextTransformation = .none
+    ) throws {
+        let payloads = try databaseManager.fetchPayloads(forClipId: clip.id)
+        try preparePasteboard(
+            for: clip,
+            payloads: payloads,
+            databaseManager: databaseManager,
+            pasteboard: pasteboard,
+            forcePlainText: forcePlainText,
+            transformation: transformation
+        )
+        _ = try databaseManager.recordPasteUsage(clipId: clip.id)
+    }
+
+    @MainActor
+    public func copyBatchToPasteboard(
+        clips: [ClipRecord],
+        mode: BatchPasteMode,
+        transformation: TextTransformation = .none,
+        databaseManager: DatabaseManager,
+        pasteboard: NSPasteboard = .general
+    ) throws {
+        guard !clips.isEmpty else { return }
+
+        let separatorString: String
+        switch mode {
+        case .concatenated(let separator):
+            separatorString = separator.rawValue
+        case .sequentialFormFields:
+            separatorString = "\t"
+        }
+
+        let processedStrings = clips.map { clip -> String in
+            let text = clip.plainText ?? ""
+            return TextTransformer.apply(transformation, to: text)
+        }
+        let joinedText = processedStrings.joined(separator: separatorString)
+
+        pasteboard.clearContents()
+        pasteboard.setData(Data(), forType: Self.internalPasteMarker)
+        pasteboard.setString(joinedText, forType: .string)
+
+        for clip in clips {
+            _ = try databaseManager.recordPasteUsage(clipId: clip.id)
+        }
+    }
+
+    @MainActor
     public func paste(
         clip: ClipRecord,
         databaseManager: DatabaseManager,

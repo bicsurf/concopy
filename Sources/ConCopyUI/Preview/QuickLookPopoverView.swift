@@ -228,19 +228,24 @@ public struct QuickLookPopoverView: View {
 
     private func loadImageDataIfNeeded() {
         guard clip.primaryType == .image else { return }
-        Task {
+        Task.detached(priority: .userInitiated) {
             do {
                 let payloads = try databaseManager.fetchPayloads(forClipId: clip.id)
                 if let payload = payloads.first(where: { $0.utiType == "public.png" || $0.utiType == "public.tiff" }) {
                     let data = try databaseManager.loadPayloadData(for: payload)
+                    let kb = Double(data.count) / 1024.0
+                    let sizeStr = String(format: "%.1f KB", kb)
+                    let resStr: String
+                    if let rep = NSBitmapImageRep(data: data) {
+                        resStr = "\(rep.pixelsWide) × \(rep.pixelsHigh)"
+                    } else {
+                        resStr = ""
+                    }
+
                     await MainActor.run {
                         self.imageData = data
-                        let kb = Double(data.count) / 1024.0
-                        self.imageSizeKB = String(format: "%.1f KB", kb)
-
-                        if let rep = NSBitmapImageRep(data: data) {
-                            self.imageResolution = "\(rep.pixelsWide) × \(rep.pixelsHigh)"
-                        }
+                        self.imageSizeKB = sizeStr
+                        self.imageResolution = resStr
                     }
                 }
             } catch {

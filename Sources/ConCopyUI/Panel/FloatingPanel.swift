@@ -45,10 +45,66 @@ public final class FloatingPanel: NSPanel {
         }
 
         self.contentView = NSHostingView(rootView: ClipboardListView(viewModel: viewModel))
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleWindowDidResignKey(_:)),
+            name: NSWindow.didResignKeyNotification,
+            object: self
+        )
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAppResignActive),
+            name: NSApplication.didResignActiveNotification,
+            object: nil
+        )
+
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(handleWorkspaceDidActivateApp(_:)),
+            name: NSWorkspace.didActivateApplicationNotification,
+            object: nil
+        )
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+        NSWorkspace.shared.notificationCenter.removeObserver(self)
+    }
+
+    public override func resignKey() {
+        super.resignKey()
+        if isVisible && attachedSheet == nil {
+            orderOut(nil)
+        }
+    }
+
+    @objc private func handleWindowDidResignKey(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow, window === self else { return }
+        if isVisible && attachedSheet == nil {
+            orderOut(nil)
+        }
+    }
+
+    @objc private func handleAppResignActive() {
+        if isVisible && attachedSheet == nil {
+            orderOut(nil)
+        }
+    }
+
+    @objc private func handleWorkspaceDidActivateApp(_ notification: Notification) {
+        guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
+        if app.bundleIdentifier != Bundle.main.bundleIdentifier {
+            if isVisible && attachedSheet == nil {
+                orderOut(nil)
+            }
+        }
     }
 
     public override func orderOut(_ sender: Any?) {
         saveFrame(usingName: "ConCopyFloatingPanelFrame")
+        viewModel.isSearchFocused = false
         super.orderOut(sender)
     }
 
@@ -85,6 +141,9 @@ public final class FloatingPanel: NSPanel {
 
     public override func sendEvent(_ event: NSEvent) {
         if attachedSheet != nil {
+            if event.type == .keyDown && handleSheetKeyDown(event) {
+                return
+            }
             super.sendEvent(event)
             return
         }
@@ -94,6 +153,38 @@ public final class FloatingPanel: NSPanel {
             }
         }
         super.sendEvent(event)
+    }
+
+    private func handleSheetKeyDown(_ event: NSEvent) -> Bool {
+        if viewModel.movingClip != nil {
+            if event.keyCode == 53 {
+                viewModel.movingClip = nil
+                return true
+            }
+            if event.modifierFlags.contains(.option) && !event.modifierFlags.contains(.command) && !event.modifierFlags.contains(.control) {
+                var tabDigit: Int? = nil
+                if let idx = digitIndex(forKeyCode: event.keyCode), idx >= 0 && idx <= 8 {
+                    tabDigit = idx + 1
+                } else if let chars = event.charactersIgnoringModifiers,
+                          let char = chars.first,
+                          let d = char.wholeNumberValue, d >= 1 && d <= 9 {
+                    tabDigit = d
+                }
+
+                if let digit = tabDigit {
+                    viewModel.assignMovingClip(toOptionIndex: digit)
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    public override func keyDown(with event: NSEvent) {
+        if handleKeyDown(event) {
+            return
+        }
+        super.keyDown(with: event)
     }
 
     private func handleKeyDown(_ event: NSEvent) -> Bool {
@@ -111,10 +202,12 @@ public final class FloatingPanel: NSPanel {
                 viewModel.renamingClip = nil
                 return true
             }
-            if viewModel.isSearchFocused || !viewModel.searchQuery.isEmpty {
+            if viewModel.movingClip != nil {
+                viewModel.movingClip = nil
+                return true
+            }
+            if !viewModel.searchQuery.isEmpty {
                 viewModel.searchQuery = ""
-                viewModel.isSearchFocused = false
-                makeFirstResponder(nil)
                 return true
             } else {
                 orderOut(nil)
@@ -175,32 +268,113 @@ public final class FloatingPanel: NSPanel {
             return true
         }
 
-        // Cmd+1..9: quick paste matching item index even if search is focused
+        // Cmd+D: toggle favorite on selected clip
+        if event.modifierFlags.contains(.command) && !event.modifierFlags.contains(.shift) && !event.modifierFlags.contains(.control) && (event.charactersIgnoringModifiers == "d" || event.charactersIgnoringModifiers == "D") {
+            viewModel.toggleFavoriteSelected()
+            return true
+        }
+
+        // Cmd+M: move selected clip to list
+        if event.modifierFlags.contains(.command) && !event.modifierFlags.contains(.shift) && !event.modifierFlags.contains(.control) && (event.charactersIgnoringModifiers == "m" || event.charactersIgnoringModifiers == "M") {
+            viewModel.promptMoveSelectedClipToList()
+            return true
+        }
+
+        // Cmd+C: copy selected clip to clipboard when not actively editing search
         if event.modifierFlags.contains(.command) && !event.modifierFlags.contains(.control) && !event.modifierFlags.contains(.shift) {
-            if let chars = event.charactersIgnoringModifiers,
-               let char = chars.first,
-               char >= "1" && char <= "9",
-               let digit = Int(String(char)) {
-                let index = digit - 1
+            if event.charactersIgnoringModifiers?.lowercased() == "c" && (!viewModel.isSearchFocused || viewModel.searchQuery.isEmpty) {
+                if viewModel.selectedIndex >= 0 && viewModel.selectedIndex < viewModel.clips.count {
+                    let clip = viewModel.clips[viewModel.selectedIndex]
+                    try? viewModel.pasteInjector.copyToPasteboard(
+                        clip: clip,
+                        databaseManager: viewModel.databaseManager
+                    )
+                    viewModel.showToast("Copiato negli appunti!")
+                    return true
+                }
+            }
+        }
+
+        // Option + 1..9: switch list tabs (Tutte, Preferiti, and custom lists)
+        if event.modifierFlags.contains(.option) && !event.modifierFlags.contains(.command) && !event.modifierFlags.contains(.control) {
+            var tabDigit: Int? = nil
+
+            if let idx = digitIndex(forKeyCode: event.keyCode) {
+                if idx >= 0 && idx <= 8 {
+                    tabDigit = idx + 1
+                }
+            } else if let chars = event.charactersIgnoringModifiers,
+                      let char = chars.first,
+                      let d = char.wholeNumberValue, d >= 1 && d <= 9 {
+                tabDigit = d
+            }
+
+            if let digit = tabDigit {
+                if digit == 1 {
+                    viewModel.selectAllClips()
+                    return true
+                } else if digit == 2 {
+                    viewModel.selectFavorites()
+                    return true
+                } else {
+                    let listIndex = digit - 3
+                    if listIndex >= 0 && listIndex < viewModel.lists.count {
+                        let list = viewModel.lists[listIndex]
+                        viewModel.selectList(list.id)
+                        return true
+                    }
+                }
+            }
+        }
+
+        // Cmd + Valore: quick paste matching item index (without Shift)
+        if event.modifierFlags.contains(.command) && !event.modifierFlags.contains(.shift) && !event.modifierFlags.contains(.control) {
+            // Check hardware keyCode first to support universal keyboard layouts (US, IT, FR, DE, etc.)
+            var targetIndex = digitIndex(forKeyCode: event.keyCode)
+
+            let charString = event.charactersIgnoringModifiers?.lowercased()
+            let firstChar = charString?.first
+
+            if targetIndex == nil, let char = firstChar {
+                if char >= "1" && char <= "9", let digit = Int(String(char)) {
+                    targetIndex = digit - 1
+                } else if char == "0" {
+                    targetIndex = 9
+                }
+            }
+
+            // Letters a-z (when search is not actively focused), excluding reserved shortcuts (c, d, m, f)
+            if targetIndex == nil && !viewModel.isSearchFocused, let char = firstChar {
+                if char >= "a" && char <= "z",
+                   char != "c" && char != "d" && char != "m" && char != "f" {
+                    targetIndex = QuickPasteShortcutMapper.index(forCharacter: String(char))
+                }
+            }
+
+            if let index = targetIndex {
                 let optionHeld = event.modifierFlags.contains(.option)
                 viewModel.paste(at: index, optionHeld: optionHeld)
                 return true
             }
         }
 
-        // Quick paste with 0-9 and a-z when search is not actively focused
-        if !viewModel.isSearchFocused {
-            if !event.modifierFlags.contains(.command) && !event.modifierFlags.contains(.control) {
-                if let char = event.charactersIgnoringModifiers,
-                   let index = QuickPasteShortcutMapper.index(forCharacter: char) {
-                    let optionHeld = event.modifierFlags.contains(.option)
-                    viewModel.paste(at: index, optionHeld: optionHeld)
-                    return true
-                }
-            }
-        }
-
         return false
+    }
+
+    private func digitIndex(forKeyCode keyCode: UInt16) -> Int? {
+        switch keyCode {
+        case 18, 83: return 0 // 1 or numpad 1
+        case 19, 84: return 1 // 2 or numpad 2
+        case 20, 85: return 2 // 3 or numpad 3
+        case 21, 86: return 3 // 4 or numpad 4
+        case 23, 87: return 4 // 5 or numpad 5
+        case 22, 88: return 5 // 6 or numpad 6
+        case 26, 89: return 6 // 7 or numpad 7
+        case 28, 91: return 7 // 8 or numpad 8
+        case 25, 92: return 8 // 9 or numpad 9
+        case 29, 82: return 9 // 0 or numpad 0
+        default: return nil
+        }
     }
 
     public func togglePanel() {
@@ -211,22 +385,22 @@ public final class FloatingPanel: NSPanel {
             if let frontApp, frontApp.bundleIdentifier != Bundle.main.bundleIdentifier {
                 self.previousApp = frontApp
             }
-            viewModel.isSearchFocused = false
             viewModel.searchQuery = ""
             viewModel.checkAccessibilityPermissions()
             viewModel.loadClips()
-            if !setFrameUsingName("ConCopyFloatingPanelFrame") {
-                positionNearMouse()
-            }
+            positionNearMouse()
             orderFrontRegardless()
-            makeKey()
-            makeFirstResponder(nil)
+            makeKeyAndOrderFront(nil)
+            NSApp.activate()
+            DispatchQueue.main.async { [weak self] in
+                self?.viewModel.isSearchFocused = true
+            }
         }
     }
 
     public func positionNearMouse() {
         let mouseLocation = NSEvent.mouseLocation
-        let targetScreen = NSScreen.screens.first { $0.frame.contains(mouseLocation) }
+        let targetScreen = NSScreen.screens.first { NSMouseInRect(mouseLocation, $0.frame, false) }
             ?? NSScreen.main
             ?? NSScreen.screens.first
 
@@ -234,11 +408,11 @@ public final class FloatingPanel: NSPanel {
         let panelSize = frame.size
 
         var originX = mouseLocation.x - (panelSize.width / 2)
-        var originY = mouseLocation.y - panelSize.height - 10
+        var originY = mouseLocation.y - panelSize.height - 12
 
         originX = max(screenFrame.minX + 8, min(originX, screenFrame.maxX - panelSize.width - 8))
         if originY < screenFrame.minY + 8 {
-            originY = mouseLocation.y + 10
+            originY = mouseLocation.y + 12
         }
         originY = max(screenFrame.minY + 8, min(originY, screenFrame.maxY - panelSize.height - 8))
 

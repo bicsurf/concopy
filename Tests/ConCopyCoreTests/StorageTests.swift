@@ -302,4 +302,34 @@ final class StorageTests: XCTestCase {
         XCTAssertEqual(remaining.first?.id, fav.id)
         XCTAssertNil(try databaseManager.fetchClip(id: normal.id))
     }
+
+    func testToggleFavoriteAndAssignToList() throws {
+        let clip = try databaseManager.ingestCapturedClip(CapturedClip(plainText: "Favorite & List test"))
+        XCTAssertFalse(clip.isFavorite)
+        XCTAssertNil(clip.listId)
+
+        // 1. Toggle favorite
+        let updatedFav = try databaseManager.toggleFavorite(clipId: clip.id)
+        XCTAssertTrue(updatedFav.isFavorite)
+
+        let reloadedFav = try databaseManager.fetchClip(id: clip.id)
+        XCTAssertEqual(reloadedFav?.isFavorite, true)
+
+        // 2. Create list and assign
+        let list = try databaseManager.createList(name: "Work Project")
+        try databaseManager.assignClip(clipId: clip.id, toListId: list.id)
+
+        let reloadedInList = try databaseManager.fetchClip(id: clip.id)
+        XCTAssertEqual(reloadedInList?.listId, list.id)
+
+        // 3. Search in list
+        let listClips = try databaseManager.searchClips(listId: list.id)
+        XCTAssertEqual(listClips.count, 1)
+        XCTAssertEqual(listClips.first?.id, clip.id)
+
+        // 4. Remove from list
+        try databaseManager.assignClip(clipId: clip.id, toListId: nil)
+        let unassigned = try databaseManager.fetchClip(id: clip.id)
+        XCTAssertNil(unassigned?.listId)
+    }
 }

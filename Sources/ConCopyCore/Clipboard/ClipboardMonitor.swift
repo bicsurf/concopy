@@ -125,18 +125,22 @@ public final class ClipboardMonitor {
         }
 
         var representations: [String: Data] = [:]
-        let rawText = pasteboard.string(forType: .string)
+        var rawText: String?
 
-        if let text = rawText, !text.isEmpty {
-            representations["public.utf8-plain-text"] = Data(text.utf8)
-        }
+        autoreleasepool {
+            rawText = pasteboard.string(forType: .string)
 
-        for uti in Self.targetUTIs {
-            if uti == "public.utf8-plain-text" && representations[uti] != nil {
-                continue
+            if let text = rawText, !text.isEmpty {
+                representations["public.utf8-plain-text"] = Data(text.utf8)
             }
-            if let data = pasteboard.data(forType: NSPasteboard.PasteboardType(uti)), !data.isEmpty {
-                representations[uti] = data
+
+            for uti in Self.targetUTIs {
+                if uti == "public.utf8-plain-text" && representations[uti] != nil {
+                    continue
+                }
+                if let data = pasteboard.data(forType: NSPasteboard.PasteboardType(uti)), !data.isEmpty {
+                    representations[uti] = data
+                }
             }
         }
 

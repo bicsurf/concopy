@@ -105,4 +105,25 @@ final class PreferencesTests: XCTestCase {
         XCTAssertNotNil(resultFromAllowed, "ClipboardMonitor must capture clips copied from allowed apps")
         XCTAssertEqual(resultFromAllowed?.content, "https://developer.apple.com")
     }
+
+    @MainActor
+    func testDirectPastePreferenceDefaultAndPersistence() {
+        let settings = AppSettingsManager(userDefaults: testDefaults)
+        // Default must be true
+        XCTAssertTrue(settings.isDirectPasteEnabled)
+
+        // Toggle to false and verify persistence
+        settings.isDirectPasteEnabled = false
+        XCTAssertFalse(settings.isDirectPasteEnabled)
+        XCTAssertFalse(testDefaults.bool(forKey: AppSettingsManager.isDirectPasteEnabledKey))
+
+        // Recreate manager with same defaults
+        let reloaded = AppSettingsManager(userDefaults: testDefaults)
+        XCTAssertFalse(reloaded.isDirectPasteEnabled)
+
+        // Reset to true
+        reloaded.isDirectPasteEnabled = true
+        XCTAssertTrue(reloaded.isDirectPasteEnabled)
+        XCTAssertTrue(testDefaults.bool(forKey: AppSettingsManager.isDirectPasteEnabledKey))
+    }
 }

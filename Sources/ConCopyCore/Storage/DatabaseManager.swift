@@ -142,67 +142,69 @@ public final class DatabaseManager: Sendable {
 
     @discardableResult
     public func ingestCapturedClip(_ captured: CapturedClip) throws -> ClipRecord {
-        let contentHash = captured.computeContentHash()
+        try autoreleasepool {
+            let contentHash = captured.computeContentHash()
 
-        return try dbWriter.write { db in
-            let activeAutoStarList = try ClipListRecord.filter(Column("isAutoStarActive") == true).fetchOne(db)
+            return try dbWriter.write { db in
+                let activeAutoStarList = try ClipListRecord.filter(Column("isAutoStarActive") == true).fetchOne(db)
 
-            if var existing = try ClipRecord.filter(Column("contentHash") == contentHash).fetchOne(db) {
-                existing.updatedAt = Date()
-                if let activeList = activeAutoStarList {
-                    existing.isFavorite = true
-                    existing.listId = activeList.id
+                if var existing = try ClipRecord.filter(Column("contentHash") == contentHash).fetchOne(db) {
+                    existing.updatedAt = Date()
+                    if let activeList = activeAutoStarList {
+                        existing.isFavorite = true
+                        existing.listId = activeList.id
+                    }
+                    try existing.update(db)
+                    return existing
                 }
-                try existing.update(db)
-                return existing
-            }
 
-            let isFavorite = activeAutoStarList != nil
-            let listId = activeAutoStarList?.id
-            let newClip = ClipRecord(
-                contentHash: contentHash,
-                plainText: captured.plainText,
-                customName: nil,
-                primaryType: captured.primaryType,
-                sourceAppBundleId: captured.sourceAppBundleId,
-                isFavorite: isFavorite,
-                listId: listId,
-                pasteCount: 0,
-                manualSortIndex: 0,
-                createdAt: Date(),
-                updatedAt: Date()
-            )
-            try newClip.insert(db)
+                let isFavorite = activeAutoStarList != nil
+                let listId = activeAutoStarList?.id
+                let newClip = ClipRecord(
+                    contentHash: contentHash,
+                    plainText: captured.plainText,
+                    customName: nil,
+                    primaryType: captured.primaryType,
+                    sourceAppBundleId: captured.sourceAppBundleId,
+                    isFavorite: isFavorite,
+                    listId: listId,
+                    pasteCount: 0,
+                    manualSortIndex: 0,
+                    createdAt: Date(),
+                    updatedAt: Date()
+                )
+                try newClip.insert(db)
 
-            var representations = captured.representations
-            if let text = captured.plainText, representations["public.utf8-plain-text"] == nil {
-                representations["public.utf8-plain-text"] = Data(text.utf8)
-            }
-
-            for (uti, data) in representations {
-                let payload: ClipPayloadRecord
-                if data.count > 4096 {
-                    let filename = try self.blobStorage.storeBlob(data: data)
-                    payload = ClipPayloadRecord(
-                        clipId: newClip.id,
-                        utiType: uti,
-                        inlineData: nil,
-                        blobFilename: filename,
-                        byteSize: data.count
-                    )
-                } else {
-                    payload = ClipPayloadRecord(
-                        clipId: newClip.id,
-                        utiType: uti,
-                        inlineData: data,
-                        blobFilename: nil,
-                        byteSize: data.count
-                    )
+                var representations = captured.representations
+                if let text = captured.plainText, representations["public.utf8-plain-text"] == nil {
+                    representations["public.utf8-plain-text"] = Data(text.utf8)
                 }
-                try payload.insert(db)
-            }
 
-            return newClip
+                for (uti, data) in representations {
+                    let payload: ClipPayloadRecord
+                    if data.count > 4096 {
+                        let filename = try self.blobStorage.storeBlob(data: data)
+                        payload = ClipPayloadRecord(
+                            clipId: newClip.id,
+                            utiType: uti,
+                            inlineData: nil,
+                            blobFilename: filename,
+                            byteSize: data.count
+                        )
+                    } else {
+                        payload = ClipPayloadRecord(
+                            clipId: newClip.id,
+                            utiType: uti,
+                            inlineData: data,
+                            blobFilename: nil,
+                            byteSize: data.count
+                        )
+                    }
+                    try payload.insert(db)
+                }
+
+                return newClip
+            }
         }
     }
 
@@ -215,9 +217,10 @@ public final class DatabaseManager: Sendable {
         sortMode: ClipSortMode = .updatedAtDesc,
         limit: Int = 100
     ) throws -> [ClipRecord] {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        try autoreleasepool {
+            let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        return try dbWriter.read { db in
+            return try dbWriter.read { db in
             var effectiveSortMode = sortMode
             if let listId, sortMode == .updatedAtDesc {
                 if let list = try ClipListRecord.filter(Column("id") == listId.uuidString.lowercased()).fetchOne(db) {
@@ -357,6 +360,7 @@ public final class DatabaseManager: Sendable {
                 return try ClipRecord.fetchAll(db, sql: fallbackSql, arguments: StatementArguments(fallbackArgs))
             }
         }
+    }
     }
 
     public func updateTextContent(clipId: UUID, newPlainText: String) throws {

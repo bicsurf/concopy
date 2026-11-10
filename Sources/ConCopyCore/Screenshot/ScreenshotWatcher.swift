@@ -61,11 +61,13 @@ public final class ScreenshotWatcher: @unchecked Sendable {
             self?.checkForNewScreenshots()
         }
 
+        let fd = fileDescriptor
         src.setCancelHandler { [weak self] in
-            guard let self = self else { return }
-            if self.fileDescriptor >= 0 {
-                close(self.fileDescriptor)
+            close(fd)
+            if let self {
+                self.lock.lock()
                 self.fileDescriptor = -1
+                self.lock.unlock()
             }
         }
 
@@ -84,6 +86,9 @@ public final class ScreenshotWatcher: @unchecked Sendable {
         if let src = source {
             src.cancel()
             self.source = nil
+        } else if fileDescriptor >= 0 {
+            close(fileDescriptor)
+            fileDescriptor = -1
         }
     }
 
@@ -132,40 +137,42 @@ public final class ScreenshotWatcher: @unchecked Sendable {
     public func processFile(at fileURL: URL) -> CapturedClip? {
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return nil }
 
-        // Ensure file is readable and non-empty
-        guard let data = try? Data(contentsOf: fileURL), !data.isEmpty else {
-            return nil
+        return autoreleasepool {
+            // Ensure file is readable and non-empty
+            guard let data = try? Data(contentsOf: fileURL), !data.isEmpty else {
+                return nil
+            }
+
+            // Verify valid image representation
+            guard let image = NSImage(data: data) else {
+                return nil
+            }
+
+            var representations: [String: Data] = [:]
+
+            // Store standard PNG representation
+            if fileURL.pathExtension.lowercased() == "png" {
+                representations["public.png"] = data
+            } else if let tiffData = image.tiffRepresentation,
+                      let bitmap = NSBitmapImageRep(data: tiffData),
+                      let png = bitmap.representation(using: .png, properties: [:]) {
+                representations["public.png"] = png
+            } else {
+                representations["public.png"] = data
+            }
+
+            // Store file-url representation
+            representations["public.file-url"] = fileURL.dataRepresentation
+
+            let clip = CapturedClip(
+                plainText: fileURL.lastPathComponent,
+                primaryType: .image,
+                sourceAppBundleId: "com.apple.screencapture",
+                representations: representations
+            )
+
+            return clip
         }
-
-        // Verify valid image representation
-        guard let image = NSImage(data: data) else {
-            return nil
-        }
-
-        var representations: [String: Data] = [:]
-
-        // Store standard PNG representation
-        if fileURL.pathExtension.lowercased() == "png" {
-            representations["public.png"] = data
-        } else if let tiffData = image.tiffRepresentation,
-                  let bitmap = NSBitmapImageRep(data: tiffData),
-                  let png = bitmap.representation(using: .png, properties: [:]) {
-            representations["public.png"] = png
-        } else {
-            representations["public.png"] = data
-        }
-
-        // Store file-url representation
-        representations["public.file-url"] = fileURL.dataRepresentation
-
-        let clip = CapturedClip(
-            plainText: fileURL.lastPathComponent,
-            primaryType: .image,
-            sourceAppBundleId: "com.apple.screencapture",
-            representations: representations
-        )
-
-        return clip
     }
 
     public func isScreenshotFile(fileURL: URL) -> Bool {

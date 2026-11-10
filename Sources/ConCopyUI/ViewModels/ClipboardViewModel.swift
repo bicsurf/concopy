@@ -25,23 +25,38 @@ public final class ClipboardViewModel: ObservableObject {
     @Published public var isQuickLookVisible: Bool = false
     @Published public var editingClip: ClipRecord? = nil
     @Published public var renamingClip: ClipRecord? = nil
+    @Published public var movingClip: ClipRecord? = nil
     @Published public var pastingClipId: UUID? = nil
     @Published public var isAccessibilityTrusted: Bool = true
     @Published public var toastMessage: String? = nil
 
     public let databaseManager: DatabaseManager
     public let pasteInjector: PasteInjector
+    public let appSettings: AppSettingsManager
     public var onClosePanel: (() -> Void)?
 
     public init(
         databaseManager: DatabaseManager,
-        pasteInjector: PasteInjector = PasteInjector()
+        pasteInjector: PasteInjector = PasteInjector(),
+        appSettings: AppSettingsManager
     ) {
         self.databaseManager = databaseManager
         self.pasteInjector = pasteInjector
+        self.appSettings = appSettings
         checkAccessibilityPermissions()
         loadLists()
         loadClips()
+    }
+
+    public convenience init(
+        databaseManager: DatabaseManager,
+        pasteInjector: PasteInjector = PasteInjector()
+    ) {
+        self.init(
+            databaseManager: databaseManager,
+            pasteInjector: pasteInjector,
+            appSettings: .shared
+        )
     }
 
     public func checkAccessibilityPermissions() {
@@ -236,6 +251,31 @@ public final class ClipboardViewModel: ObservableObject {
         let transformation = activeTransformation
         let isTrusted = pasteInjector.eventPoster.isProcessTrusted()
 
+        if !appSettings.isDirectPasteEnabled {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                do {
+                    try self.pasteInjector.copyToPasteboard(
+                        clip: clip,
+                        databaseManager: self.databaseManager,
+                        forcePlainText: forcePlainText,
+                        transformation: transformation
+                    )
+                    self.showToast("Copiato negli appunti!")
+                    self.loadClips()
+                    Task { @MainActor [weak self] in
+                        try? await Task.sleep(nanoseconds: 600_000_000)
+                        self?.onClosePanel?()
+                        self?.pastingClipId = nil
+                    }
+                } catch {
+                    self.pastingClipId = nil
+                    print("[ConCopy] Failed to copy clip: \(error)")
+                }
+            }
+            return
+        }
+
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
@@ -279,6 +319,29 @@ public final class ClipboardViewModel: ObservableObject {
 
         let transformation = activeTransformation
         let isTrusted = pasteInjector.eventPoster.isProcessTrusted()
+
+        if !appSettings.isDirectPasteEnabled {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                do {
+                    try self.pasteInjector.copyBatchToPasteboard(
+                        clips: orderedClips,
+                        mode: mode,
+                        transformation: transformation,
+                        databaseManager: self.databaseManager
+                    )
+                    self.showToast("Testo copiato negli appunti!")
+                    self.loadClips()
+                    Task { @MainActor [weak self] in
+                        try? await Task.sleep(nanoseconds: 600_000_000)
+                        self?.onClosePanel?()
+                    }
+                } catch {
+                    print("[ConCopy] Failed to batch copy clips: \(error)")
+                }
+            }
+            return
+        }
 
         Task { @MainActor [weak self] in
             guard let self else { return }
@@ -337,12 +400,53 @@ public final class ClipboardViewModel: ObservableObject {
         }
     }
 
+    public func toggleFavoriteSelected() {
+        if !selectedClipIds.isEmpty {
+            for clipId in selectedClipIds {
+                _ = try? databaseManager.toggleFavorite(clipId: clipId)
+            }
+            loadClips()
+            showToast("Preferiti aggiornati ★")
+        } else if selectedIndex >= 0 && selectedIndex < clips.count {
+            let clip = clips[selectedIndex]
+            toggleFavorite(clip: clip)
+            showToast(clip.isFavorite ? "Rimosso dai Preferiti" : "Aggiunto ai Preferiti ★")
+        }
+    }
+
+    public func promptMoveSelectedClipToList() {
+        guard selectedIndex >= 0 && selectedIndex < clips.count else { return }
+        let clip = clips[selectedIndex]
+        if lists.isEmpty {
+            showToast("Nessuna lista creata")
+            return
+        }
+        self.movingClip = clip
+    }
+
     public func assignClipToList(clip: ClipRecord, listId: UUID?) {
         do {
             _ = try databaseManager.assignClip(clipId: clip.id, toListId: listId)
             loadClips()
         } catch {
             print("[ConCopy] Failed to assign clip to list: \(error)")
+        }
+    }
+
+    public func assignMovingClip(toOptionIndex digit: Int) {
+        guard let clip = movingClip else { return }
+        if digit == 1 {
+            assignClipToList(clip: clip, listId: nil)
+            movingClip = nil
+            showToast("Rimosso da tutte le liste")
+        } else {
+            let listIndex = digit - 2
+            if listIndex >= 0 && listIndex < lists.count {
+                let list = lists[listIndex]
+                assignClipToList(clip: clip, listId: list.id)
+                movingClip = nil
+                showToast("Spostato in \"\(list.name)\"")
+            }
         }
     }
 

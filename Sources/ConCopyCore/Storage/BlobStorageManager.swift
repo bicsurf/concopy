@@ -27,7 +27,9 @@ public struct BlobStorageManager: Sendable {
         let fileURL = baseDirectoryURL.appendingPathComponent(filename)
 
         if !fileManager.fileExists(atPath: fileURL.path) {
-            try data.write(to: fileURL, options: .atomic)
+            try autoreleasepool {
+                try data.write(to: fileURL, options: .atomic)
+            }
         }
 
         return filename
@@ -35,7 +37,9 @@ public struct BlobStorageManager: Sendable {
 
     public func loadBlob(filename: String) throws -> Data {
         let fileURL = baseDirectoryURL.appendingPathComponent(filename)
-        return try Data(contentsOf: fileURL)
+        return try autoreleasepool {
+            try Data(contentsOf: fileURL, options: .mappedIfSafe)
+        }
     }
 
     public func deleteBlobIfExists(filename: String) throws {

@@ -13,6 +13,7 @@ public final class AppSettingsManager: ObservableObject {
     public static let maxHistoryCountKey = "ConCopy.Settings.maxHistoryCount"
     public static let autoCaptureScreenshotsKey = "ConCopy.Settings.autoCaptureScreenshots"
     public static let iCloudSyncEnabledKey = "ConCopy.Settings.iCloudSyncEnabled"
+    public static let isDirectPasteEnabledKey = "ConCopy.Settings.isDirectPasteEnabled"
 
     public static let defaultExcludedAppBundleIds: [String] = [
         "com.agilebits.onepassword",
@@ -70,6 +71,12 @@ public final class AppSettingsManager: ObservableObject {
         }
     }
 
+    @Published public var isDirectPasteEnabled: Bool {
+        didSet {
+            defaults.set(isDirectPasteEnabled, forKey: Self.isDirectPasteEnabledKey)
+        }
+    }
+
     public init(userDefaults: UserDefaults = .standard) {
         self.defaults = userDefaults
 
@@ -110,6 +117,12 @@ public final class AppSettingsManager: ObservableObject {
         }
 
         self.iCloudSyncEnabled = userDefaults.bool(forKey: Self.iCloudSyncEnabledKey)
+
+        if userDefaults.object(forKey: Self.isDirectPasteEnabledKey) != nil {
+            self.isDirectPasteEnabled = userDefaults.bool(forKey: Self.isDirectPasteEnabledKey)
+        } else {
+            self.isDirectPasteEnabled = true
+        }
     }
 
     public func isAppExcluded(bundleId: String?) -> Bool {

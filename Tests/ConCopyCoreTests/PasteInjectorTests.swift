@@ -193,18 +193,72 @@ final class PasteInjectorTests: XCTestCase {
         XCTAssertEqual(untrustedPoster.postCommandVCalledCount, 0, "No CGEvent should be posted when untrusted")
     }
 
+    @MainActor
+    func testCopyToPasteboardWithoutCommandV() throws {
+        let clip = try databaseManager.ingestCapturedClip(CapturedClip(plainText: "Copy without auto-paste"))
+        let mockPoster = MockCGEventPoster()
+        let injector = PasteInjector(eventPoster: mockPoster)
+        let pasteboard = NSPasteboard.withUniqueName()
+
+        try injector.copyToPasteboard(
+            clip: clip,
+            databaseManager: databaseManager,
+            pasteboard: pasteboard,
+            forcePlainText: false,
+            transformation: .none
+        )
+
+        // Clipboard is populated with internal marker and string
+        XCTAssertEqual(pasteboard.string(forType: .string), "Copy without auto-paste")
+        XCTAssertNotNil(pasteboard.data(forType: PasteInjector.internalPasteMarker))
+        // No CGEvent synthesized
+        XCTAssertEqual(mockPoster.postCommandVCalledCount, 0)
+
+        // Paste count incremented
+        let updated = try databaseManager.fetchClip(id: clip.id)
+        XCTAssertEqual(updated?.pasteCount, 1)
+    }
+
+    @MainActor
+    func testCopyBatchToPasteboardWithoutCommandV() throws {
+        let clip1 = try databaseManager.ingestCapturedClip(CapturedClip(plainText: "First"))
+        let clip2 = try databaseManager.ingestCapturedClip(CapturedClip(plainText: "Second"))
+        let mockPoster = MockCGEventPoster()
+        let injector = PasteInjector(eventPoster: mockPoster)
+        let pasteboard = NSPasteboard.withUniqueName()
+
+        try injector.copyBatchToPasteboard(
+            clips: [clip1, clip2],
+            mode: .concatenated(separator: .newline),
+            transformation: .none,
+            databaseManager: databaseManager,
+            pasteboard: pasteboard
+        )
+
+        XCTAssertEqual(pasteboard.string(forType: .string), "First\nSecond")
+        XCTAssertNotNil(pasteboard.data(forType: PasteInjector.internalPasteMarker))
+        XCTAssertEqual(mockPoster.postCommandVCalledCount, 0)
+
+        let updated1 = try databaseManager.fetchClip(id: clip1.id)
+        let updated2 = try databaseManager.fetchClip(id: clip2.id)
+        XCTAssertEqual(updated1?.pasteCount, 1)
+        XCTAssertEqual(updated2?.pasteCount, 1)
+    }
+
     func testQuickPasteShortcutMapper() {
         // Labels
-        XCTAssertEqual(QuickPasteShortcutMapper.label(forIndex: 0), "0")
-        XCTAssertEqual(QuickPasteShortcutMapper.label(forIndex: 9), "9")
+        XCTAssertEqual(QuickPasteShortcutMapper.label(forIndex: 0), "1")
+        XCTAssertEqual(QuickPasteShortcutMapper.label(forIndex: 8), "9")
+        XCTAssertEqual(QuickPasteShortcutMapper.label(forIndex: 9), "0")
         XCTAssertEqual(QuickPasteShortcutMapper.label(forIndex: 10), "a")
         XCTAssertEqual(QuickPasteShortcutMapper.label(forIndex: 35), "z")
         XCTAssertNil(QuickPasteShortcutMapper.label(forIndex: 36))
         XCTAssertNil(QuickPasteShortcutMapper.label(forIndex: -1))
 
         // Index reverse lookup
-        XCTAssertEqual(QuickPasteShortcutMapper.index(forCharacter: "0"), 0)
-        XCTAssertEqual(QuickPasteShortcutMapper.index(forCharacter: "9"), 9)
+        XCTAssertEqual(QuickPasteShortcutMapper.index(forCharacter: "1"), 0)
+        XCTAssertEqual(QuickPasteShortcutMapper.index(forCharacter: "9"), 8)
+        XCTAssertEqual(QuickPasteShortcutMapper.index(forCharacter: "0"), 9)
         XCTAssertEqual(QuickPasteShortcutMapper.index(forCharacter: "a"), 10)
         XCTAssertEqual(QuickPasteShortcutMapper.index(forCharacter: "A"), 10)
         XCTAssertEqual(QuickPasteShortcutMapper.index(forCharacter: "z"), 35)

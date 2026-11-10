@@ -18,7 +18,7 @@ public struct ClipboardListView: View {
             HStack {
                 Spacer()
                 RoundedRectangle(cornerRadius: 2, style: .continuous)
-                    .fill(Color.primary.opacity(0.18))
+                    .fill(ConCopyTheme.Surfaces.dragHandle)
                     .frame(width: 36, height: 4)
                 Spacer()
             }
@@ -62,7 +62,7 @@ public struct ClipboardListView: View {
                         .padding(.vertical, 2)
                         .background(
                             RoundedRectangle(cornerRadius: 4, style: .continuous)
-                                .fill(viewModel.isPlainTextModeEnabled ? Color.accentColor : Color.primary.opacity(0.08))
+                                .fill(viewModel.isPlainTextModeEnabled ? ConCopyTheme.Accents.primary : ConCopyTheme.Surfaces.pillBackground)
                         )
                         .foregroundColor(viewModel.isPlainTextModeEnabled ? .white : .secondary)
                 }
@@ -194,7 +194,8 @@ public struct ClipboardListView: View {
                     ListTabButton(
                         title: "Tutte",
                         icon: "tray.full",
-                        isSelected: viewModel.selectedListId == nil && !viewModel.isFavoritesOnly
+                        isSelected: viewModel.selectedListId == nil && !viewModel.isFavoritesOnly,
+                        shortcutHint: "⌥1"
                     ) {
                         viewModel.selectAllClips()
                     }
@@ -202,16 +203,18 @@ public struct ClipboardListView: View {
                     ListTabButton(
                         title: "Preferiti",
                         icon: "star.fill",
-                        isSelected: viewModel.isFavoritesOnly
+                        isSelected: viewModel.isFavoritesOnly,
+                        shortcutHint: "⌥2"
                     ) {
                         viewModel.selectFavorites()
                     }
 
-                    ForEach(viewModel.lists) { list in
+                    ForEach(Array(viewModel.lists.enumerated()), id: \.element.id) { index, list in
                         ListTabButton(
                             title: list.name,
                             icon: list.isAutoStarActive ? "star.circle.fill" : "folder",
-                            isSelected: viewModel.selectedListId == list.id
+                            isSelected: viewModel.selectedListId == list.id,
+                            shortcutHint: index + 3 <= 9 ? "⌥\(index + 3)" : nil
                         ) {
                             viewModel.selectList(list.id)
                         }
@@ -288,7 +291,8 @@ public struct ClipboardListView: View {
                                         viewModel.toggleSelection(clipId: clip.id)
                                     }
                                 )
-                                .id("\(clip.id)-\(clip.updatedAt.timeIntervalSince1970)-\(clip.customName ?? "")-\(clip.isFavorite)")
+                                .equatable()
+                                .id("\(clip.id)-\(index)-\(clip.updatedAt.timeIntervalSince1970)-\(clip.customName ?? "")-\(clip.isFavorite)")
                                 .contentShape(Rectangle())
                                 .contextMenu {
                                     rowContextMenu(for: clip)
@@ -296,21 +300,13 @@ public struct ClipboardListView: View {
                                 .onTapGesture(count: 2) {
                                     viewModel.paste(clip: clip)
                                 }
-                                .simultaneousGesture(
-                                    TapGesture().onEnded {
-                                        viewModel.selectedIndex = index
-                                    }
-                                )
+                                .onTapGesture {
+                                    viewModel.selectedIndex = index
+                                }
                             }
                         }
                         .padding(.vertical, 4)
                     }
-                    .simultaneousGesture(TapGesture().onEnded {
-                        if isFieldFocused {
-                            isFieldFocused = false
-                            viewModel.isSearchFocused = false
-                        }
-                    })
                     .onChange(of: viewModel.selectedIndex) { _, newIndex in
                         if newIndex >= 0 && newIndex < viewModel.clips.count {
                             withAnimation(.easeInOut(duration: 0.1)) {
@@ -363,7 +359,7 @@ public struct ClipboardListView: View {
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                .stroke(ConCopyTheme.Surfaces.windowBorder, lineWidth: 1)
         )
         .overlay(alignment: .top) {
             if let toast = viewModel.toastMessage {
@@ -391,8 +387,16 @@ public struct ClipboardListView: View {
             }
         }
         .onAppear {
-            isFieldFocused = false
-            viewModel.isSearchFocused = false
+            DispatchQueue.main.async {
+                isFieldFocused = true
+                viewModel.isSearchFocused = true
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
+            DispatchQueue.main.async {
+                isFieldFocused = true
+                viewModel.isSearchFocused = true
+            }
         }
         .onChange(of: viewModel.isSearchFocused) { _, focused in
             if isFieldFocused != focused {
@@ -469,6 +473,10 @@ public struct ClipboardListView: View {
             .onAppear {
                 editNameValue = clip.customName ?? ""
             }
+        }
+        // Move to List sheet
+        .sheet(item: $viewModel.movingClip) { clip in
+            MoveToListSheetView(viewModel: viewModel, clip: clip)
         }
     }
 
@@ -600,9 +608,9 @@ struct VisualEffectBackground: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
-        nsView.material = material
-        nsView.blendingMode = blendingMode
-        nsView.state = state
+        if nsView.material != material { nsView.material = material }
+        if nsView.blendingMode != blendingMode { nsView.blendingMode = blendingMode }
+        if nsView.state != state { nsView.state = state }
     }
 }
 
@@ -610,6 +618,7 @@ struct ListTabButton: View {
     let title: String
     let icon: String
     let isSelected: Bool
+    var shortcutHint: String? = nil
     let action: () -> Void
 
     var body: some View {
@@ -619,18 +628,29 @@ struct ListTabButton: View {
                     .font(.system(size: 10, weight: isSelected ? .bold : .medium))
                 Text(title)
                     .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
+                if let hint = shortcutHint {
+                    Text(hint)
+                        .font(.system(size: 8.5, weight: .semibold, design: .monospaced))
+                        .foregroundColor(isSelected ? ConCopyTheme.Accents.primary : .secondary.opacity(0.7))
+                        .padding(.horizontal, 3.5)
+                        .padding(.vertical, 1.5)
+                        .background(
+                            RoundedRectangle(cornerRadius: 3.5, style: .continuous)
+                                .fill(ConCopyTheme.Badges.tabShortcutBackground(isSelected: isSelected))
+                        )
+                }
             }
             .padding(.horizontal, 9)
             .padding(.vertical, 5)
             .background(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(isSelected ? Color.accentColor.opacity(0.2) : Color.primary.opacity(0.05))
+                    .fill(isSelected ? ConCopyTheme.Rows.selectedBackground : ConCopyTheme.Surfaces.pillBackground)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .stroke(isSelected ? Color.accentColor.opacity(0.4) : Color.clear, lineWidth: 1)
+                    .stroke(isSelected ? ConCopyTheme.Rows.selectedBorder : ConCopyTheme.Surfaces.pillBorder, lineWidth: 1)
             )
-            .foregroundColor(isSelected ? .accentColor : .secondary)
+            .foregroundColor(isSelected ? ConCopyTheme.Accents.primary : .secondary)
         }
         .buttonStyle(.plain)
     }
@@ -702,26 +722,31 @@ struct ClipRowView: View, Equatable {
             if clip.isFavorite {
                 Image(systemName: "star.fill")
                     .font(.system(size: 9, weight: .bold))
-                    .foregroundColor(.yellow)
+                    .foregroundColor(ConCopyTheme.Accents.star)
                     .padding(3)
-                    .background(Color.yellow.opacity(0.15))
+                    .background(ConCopyTheme.Accents.starBackground)
                     .clipShape(Circle())
             }
 
-            // Shortcut Pill Badge
+            // Shortcut Pill Badge (⌘ + Valore)
             if let label = shortcutLabel {
-                Text(label)
-                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                    .foregroundColor(isSelected ? .primary : .secondary)
-                    .frame(width: 18, height: 18)
-                    .background(
-                        RoundedRectangle(cornerRadius: 4, style: .continuous)
-                            .fill(isSelected ? Color.primary.opacity(0.12) : Color.primary.opacity(0.06))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 4, style: .continuous)
-                            .stroke(Color.primary.opacity(0.1), lineWidth: 0.5)
-                    )
+                HStack(spacing: 2) {
+                    Image(systemName: "command")
+                        .font(.system(size: 8.5, weight: .medium))
+                    Text(label)
+                        .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                }
+                .foregroundColor(ConCopyTheme.Badges.quickPasteForeground(isSelected: isSelected))
+                .padding(.horizontal, 4.5)
+                .padding(.vertical, 2.5)
+                .background(
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .fill(ConCopyTheme.Badges.quickPasteBackground(isSelected: isSelected))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .stroke(ConCopyTheme.Badges.quickPasteBorder(isSelected: isSelected), lineWidth: 0.5)
+                )
             }
         }
         .padding(.horizontal, 10)
@@ -730,13 +755,13 @@ struct ClipRowView: View, Equatable {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(
                     isPasting
-                    ? Color.accentColor.opacity(0.4)
-                    : (isSelected ? Color.accentColor.opacity(0.18) : Color.clear)
+                    ? ConCopyTheme.Rows.batchSelectedBackground
+                    : (isSelected ? ConCopyTheme.Rows.selectedBackground : Color.clear)
                 )
         )
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(isSelected ? Color.accentColor.opacity(0.4) : Color.clear, lineWidth: 1)
+                .stroke(isSelected ? ConCopyTheme.Rows.selectedBorder : Color.clear, lineWidth: 1)
         )
         .scaleEffect(isPasting ? 0.98 : 1.0)
         .animation(.easeOut(duration: 0.12), value: isPasting)
@@ -745,37 +770,11 @@ struct ClipRowView: View, Equatable {
     }
 
     private var typeBadgeBackground: Color {
-        switch clip.primaryType {
-        case .text:
-            return Color.blue.opacity(0.12)
-        case .richText, .html:
-            return Color.indigo.opacity(0.12)
-        case .image:
-            return Color.purple.opacity(0.12)
-        case .url:
-            return Color.teal.opacity(0.12)
-        case .file:
-            return Color.orange.opacity(0.12)
-        case .color:
-            return Color.pink.opacity(0.12)
-        }
+        ConCopyTheme.Types.background(for: clip.primaryType)
     }
 
     private var typeBadgeForeground: Color {
-        switch clip.primaryType {
-        case .text:
-            return Color.blue
-        case .richText, .html:
-            return Color.indigo
-        case .image:
-            return Color.purple
-        case .url:
-            return Color.teal
-        case .file:
-            return Color.orange
-        case .color:
-            return Color.pink
-        }
+        ConCopyTheme.Types.foreground(for: clip.primaryType)
     }
 
     @ViewBuilder
@@ -795,6 +794,160 @@ struct ClipRowView: View, Equatable {
             Image(systemName: "link")
         case .color:
             Image(systemName: "paintpalette")
+        }
+    }
+}
+
+struct MoveToListSheetView: View {
+    @ObservedObject var viewModel: ClipboardViewModel
+    let clip: ClipRecord
+    @State private var eventMonitor: Any? = nil
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 8) {
+                Image(systemName: "folder.badge.gearshape")
+                    .font(.title2)
+                    .foregroundColor(ConCopyTheme.Accents.primary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Sposta nella Lista")
+                        .font(.headline)
+                    Text("Seleziona con click o ⌥1..9")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+
+            Divider().opacity(0.3)
+
+            VStack(spacing: 6) {
+                Button(action: {
+                    viewModel.assignClipToList(clip: clip, listId: nil)
+                    viewModel.movingClip = nil
+                    viewModel.showToast("Rimosso da tutte le liste")
+                }) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "tray")
+                            .frame(width: 16)
+                        Text("Nessuna Lista (Tutte)")
+                            .font(.system(size: 13, weight: clip.listId == nil ? .semibold : .regular))
+                        Spacer()
+                        if clip.listId == nil {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundColor(ConCopyTheme.Accents.primary)
+                        }
+                        Text("⌥1")
+                            .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                            .foregroundColor(.secondary)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 2)
+                            .background(
+                                RoundedRectangle(cornerRadius: 3.5, style: .continuous)
+                                    .fill(ConCopyTheme.Surfaces.pillBackground)
+                            )
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(clip.listId == nil ? ConCopyTheme.Rows.selectedBackground : ConCopyTheme.Surfaces.pillBackground)
+                    )
+                }
+                .buttonStyle(.plain)
+
+                ForEach(Array(viewModel.lists.enumerated()), id: \.element.id) { index, list in
+                    let digit = index + 2
+                    Button(action: {
+                        viewModel.assignClipToList(clip: clip, listId: list.id)
+                        viewModel.movingClip = nil
+                        viewModel.showToast("Spostato in \"\(list.name)\"")
+                    }) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "folder")
+                                .frame(width: 16)
+                            Text(list.name)
+                                .font(.system(size: 13, weight: clip.listId == list.id ? .semibold : .regular))
+                            Spacer()
+                            if clip.listId == list.id {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 11, weight: .bold))
+                                    .foregroundColor(ConCopyTheme.Accents.primary)
+                            }
+                            if digit <= 9 {
+                                Text("⌥\(digit)")
+                                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                                    .foregroundColor(.secondary)
+                                    .padding(.horizontal, 4)
+                                    .padding(.vertical, 2)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 3.5, style: .continuous)
+                                            .fill(ConCopyTheme.Surfaces.pillBackground)
+                                    )
+                            }
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 7)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(clip.listId == list.id ? ConCopyTheme.Rows.selectedBackground : ConCopyTheme.Surfaces.pillBackground)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .frame(minWidth: 260)
+
+            HStack {
+                Spacer()
+                Button("Chiudi") {
+                    viewModel.movingClip = nil
+                }
+                .keyboardShortcut(.cancelAction)
+            }
+        }
+        .padding(16)
+        .onAppear {
+            eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                if event.keyCode == 53 {
+                    viewModel.movingClip = nil
+                    return nil
+                }
+
+                if event.modifierFlags.contains(.option) && !event.modifierFlags.contains(.command) && !event.modifierFlags.contains(.control) {
+                    var optionDigit: Int? = nil
+                    switch event.keyCode {
+                    case 18, 83: optionDigit = 1
+                    case 19, 84: optionDigit = 2
+                    case 20, 85: optionDigit = 3
+                    case 21, 86: optionDigit = 4
+                    case 23, 87: optionDigit = 5
+                    case 22, 88: optionDigit = 6
+                    case 26, 89: optionDigit = 7
+                    case 28, 91: optionDigit = 8
+                    case 25, 92: optionDigit = 9
+                    default: break
+                    }
+
+                    if optionDigit == nil, let chars = event.charactersIgnoringModifiers,
+                       let char = chars.first,
+                       let d = char.wholeNumberValue, d >= 1 && d <= 9 {
+                        optionDigit = d
+                    }
+
+                    if let digit = optionDigit {
+                        viewModel.assignMovingClip(toOptionIndex: digit)
+                        return nil
+                    }
+                }
+                return event
+            }
+        }
+        .onDisappear {
+            if let monitor = eventMonitor {
+                NSEvent.removeMonitor(monitor)
+                eventMonitor = nil
+            }
         }
     }
 }

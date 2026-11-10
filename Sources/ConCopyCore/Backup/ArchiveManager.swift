@@ -90,21 +90,21 @@ public struct ArchiveManager: Sendable {
 
         var backupClips: [BackupClipItem] = []
         for clip in clips {
-            let payloads = try databaseManager.fetchPayloads(forClipId: clip.id)
-            var backupPayloads: [BackupPayloadItem] = []
-            for payload in payloads {
-                let data = try databaseManager.loadPayloadData(for: payload)
-                backupPayloads.append(
-                    BackupPayloadItem(
-                        utiType: payload.utiType,
-                        base64Data: data.base64EncodedString(),
-                        byteSize: payload.byteSize
+            let item: BackupClipItem = try autoreleasepool {
+                let payloads = try databaseManager.fetchPayloads(forClipId: clip.id)
+                var backupPayloads: [BackupPayloadItem] = []
+                for payload in payloads {
+                    let data = try databaseManager.loadPayloadData(for: payload)
+                    backupPayloads.append(
+                        BackupPayloadItem(
+                            utiType: payload.utiType,
+                            base64Data: data.base64EncodedString(),
+                            byteSize: payload.byteSize
+                        )
                     )
-                )
-            }
+                }
 
-            backupClips.append(
-                BackupClipItem(
+                return BackupClipItem(
                     id: clip.id,
                     contentHash: clip.contentHash,
                     plainText: clip.plainText,
@@ -119,7 +119,8 @@ public struct ArchiveManager: Sendable {
                     updatedAt: clip.updatedAt,
                     payloads: backupPayloads
                 )
-            )
+            }
+            backupClips.append(item)
         }
 
         let archive = ConCopyArchive(lists: lists, clips: backupClips)
@@ -132,69 +133,74 @@ public struct ArchiveManager: Sendable {
     }
 
     public func importArchive(from sourceURL: URL, databaseManager: DatabaseManager) async throws {
-        let data = try Data(contentsOf: sourceURL)
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let archive = try decoder.decode(ConCopyArchive.self, from: data)
+        let (lists, clips) = try autoreleasepool { () -> ([ClipListRecord], [BackupClipItem]) in
+            let data = try Data(contentsOf: sourceURL, options: .mappedIfSafe)
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            let archive = try decoder.decode(ConCopyArchive.self, from: data)
+            return (archive.lists, archive.clips)
+        }
 
         try await databaseManager.dbWriter.write { db in
-            for list in archive.lists {
+            for list in lists {
                 try list.save(db)
             }
 
-            for clipItem in archive.clips {
-                let existing = try ClipRecord.filter(Column("contentHash") == clipItem.contentHash).fetchOne(db)
-                if var found = existing {
-                    found.updatedAt = max(found.updatedAt, clipItem.updatedAt)
-                    if clipItem.isFavorite {
-                        found.isFavorite = true
+            for clipItem in clips {
+                try autoreleasepool {
+                    let existing = try ClipRecord.filter(Column("contentHash") == clipItem.contentHash).fetchOne(db)
+                    if var found = existing {
+                        found.updatedAt = max(found.updatedAt, clipItem.updatedAt)
+                        if clipItem.isFavorite {
+                            found.isFavorite = true
+                        }
+                        if found.listId == nil {
+                            found.listId = clipItem.listId
+                        }
+                        try found.update(db)
+                        return
                     }
-                    if found.listId == nil {
-                        found.listId = clipItem.listId
+
+                    let clip = ClipRecord(
+                        id: clipItem.id,
+                        contentHash: clipItem.contentHash,
+                        plainText: clipItem.plainText,
+                        customName: clipItem.customName,
+                        primaryType: clipItem.primaryType,
+                        sourceAppBundleId: clipItem.sourceAppBundleId,
+                        isFavorite: clipItem.isFavorite,
+                        listId: clipItem.listId,
+                        pasteCount: clipItem.pasteCount,
+                        manualSortIndex: clipItem.manualSortIndex,
+                        createdAt: clipItem.createdAt,
+                        updatedAt: clipItem.updatedAt
+                    )
+                    try clip.insert(db)
+
+                    for payloadItem in clipItem.payloads {
+                        let payloadData = Data(base64Encoded: payloadItem.base64Data) ?? Data()
+                        let payload: ClipPayloadRecord
+
+                        if payloadData.count > 4096 {
+                            let filename = try databaseManager.blobStorage.storeBlob(data: payloadData)
+                            payload = ClipPayloadRecord(
+                                clipId: clip.id,
+                                utiType: payloadItem.utiType,
+                                inlineData: nil,
+                                blobFilename: filename,
+                                byteSize: payloadData.count
+                            )
+                        } else {
+                            payload = ClipPayloadRecord(
+                                clipId: clip.id,
+                                utiType: payloadItem.utiType,
+                                inlineData: payloadData,
+                                blobFilename: nil,
+                                byteSize: payloadData.count
+                            )
+                        }
+                        try payload.insert(db)
                     }
-                    try found.update(db)
-                    continue
-                }
-
-                let clip = ClipRecord(
-                    id: clipItem.id,
-                    contentHash: clipItem.contentHash,
-                    plainText: clipItem.plainText,
-                    customName: clipItem.customName,
-                    primaryType: clipItem.primaryType,
-                    sourceAppBundleId: clipItem.sourceAppBundleId,
-                    isFavorite: clipItem.isFavorite,
-                    listId: clipItem.listId,
-                    pasteCount: clipItem.pasteCount,
-                    manualSortIndex: clipItem.manualSortIndex,
-                    createdAt: clipItem.createdAt,
-                    updatedAt: clipItem.updatedAt
-                )
-                try clip.insert(db)
-
-                for payloadItem in clipItem.payloads {
-                    let payloadData = Data(base64Encoded: payloadItem.base64Data) ?? Data()
-                    let payload: ClipPayloadRecord
-
-                    if payloadData.count > 4096 {
-                        let filename = try databaseManager.blobStorage.storeBlob(data: payloadData)
-                        payload = ClipPayloadRecord(
-                            clipId: clip.id,
-                            utiType: payloadItem.utiType,
-                            inlineData: nil,
-                            blobFilename: filename,
-                            byteSize: payloadData.count
-                        )
-                    } else {
-                        payload = ClipPayloadRecord(
-                            clipId: clip.id,
-                            utiType: payloadItem.utiType,
-                            inlineData: payloadData,
-                            blobFilename: nil,
-                            byteSize: payloadData.count
-                        )
-                    }
-                    try payload.insert(db)
                 }
             }
         }

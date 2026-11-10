@@ -98,6 +98,13 @@ public struct PreferencesView: View {
                 Toggle("Avvia automaticamente all'accesso", isOn: $settingsManager.launchAtLogin)
             }
 
+            Section(header: Text("Incollaggio")) {
+                Toggle("Incolla direttamente alla selezione", isOn: $settingsManager.isDirectPasteEnabled)
+                Text("Se attivo, selezionare una clip la incolla immediatamente nell'app attiva. Se disattivato, la copia solo negli appunti (usa Cmd+V per incollare).")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
             Section(header: Text("Cronologia & Pulizia")) {
                 Toggle("Pulizia automatica", isOn: $settingsManager.autoCleanupEnabled)
 
@@ -356,7 +363,7 @@ public struct PreferencesView: View {
         savePanel.prompt = "Esporta"
 
         if savePanel.runModal() == .OK, let targetURL = savePanel.url {
-            Task {
+            Task.detached(priority: .utility) {
                 do {
                     try await ArchiveManager().exportArchive(to: targetURL, databaseManager: db)
                     await MainActor.run {
@@ -385,7 +392,7 @@ public struct PreferencesView: View {
         openPanel.prompt = "Importa"
 
         if openPanel.runModal() == .OK, let sourceURL = openPanel.url {
-            Task {
+            Task.detached(priority: .utility) {
                 do {
                     try await ArchiveManager().importArchive(from: sourceURL, databaseManager: db)
                     await MainActor.run {
