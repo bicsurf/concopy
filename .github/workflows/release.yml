@@ -3,7 +3,7 @@ name: Build and Release DMG
 on:
   push:
     tags:
-      - 'v*' # Si attiva automaticamente quando fai il push di un tag che inizia per 'v' (es. v1.0.0)
+      - 'v*'
 
 jobs:
   release:
@@ -13,9 +13,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Select Xcode version
-        run: sudo xcode-select -s /Applications/Xcode_15.2.app/Contents/Developer # O lascia la versione di default di macos-latest
 
       - name: Build Universal Binary and Bundle App
         run: |
