@@ -13,13 +13,24 @@ public enum PreferencesTab: String, CaseIterable, Identifiable {
 @MainActor
 public struct PreferencesView: View {
     @ObservedObject private var settingsManager: AppSettingsManager
+    public var databaseManager: DatabaseManager?
+    public var onDataChanged: (() -> Void)?
+
     @State private var selectedTab: PreferencesTab = .general
     @State private var selectedBundleId: String? = nil
     @State private var isShowingManualAddSheet: Bool = false
     @State private var manualBundleIdText: String = ""
+    @State private var isShowingClearConfirm: Bool = false
+    @State private var statusAlertMessage: String? = nil
 
-    public init(settingsManager: AppSettingsManager? = nil) {
+    public init(
+        settingsManager: AppSettingsManager? = nil,
+        databaseManager: DatabaseManager? = nil,
+        onDataChanged: (() -> Void)? = nil
+    ) {
         self.settingsManager = settingsManager ?? .shared
+        self.databaseManager = databaseManager
+        self.onDataChanged = onDataChanged
     }
 
     public var body: some View {
@@ -30,9 +41,9 @@ public struct PreferencesView: View {
                 }
             }
             .pickerStyle(.segmented)
-            .padding(.horizontal, 20)
-            .padding(.top, 16)
-            .padding(.bottom, 12)
+            .frame(maxWidth: 260)
+            .padding(.top, 14)
+            .padding(.bottom, 10)
 
             Divider()
 
@@ -46,140 +57,180 @@ public struct PreferencesView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(width: 500, height: 460)
+        .frame(minWidth: 500, idealWidth: 540, minHeight: 380, idealHeight: 460)
         .sheet(isPresented: $isShowingManualAddSheet) {
             manualAddSheet
+        }
+        .alert("Svuotare la Cronologia?", isPresented: $isShowingClearConfirm) {
+            Button("Annulla", role: .cancel) {}
+            Button("Svuota", role: .destructive) {
+                clearHistoryAction()
+            }
+        } message: {
+            Text("Tutte le clip non contrassegnate come preferite verranno eliminate definitivamente dal disco.")
+        }
+        .alert("Operazione Completata", isPresented: Binding(
+            get: { statusAlertMessage != nil },
+            set: { if !$0 { statusAlertMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) { statusAlertMessage = nil }
+        } message: {
+            Text(statusAlertMessage ?? "")
         }
     }
 
     // MARK: - General Tab
     private var generalTabView: some View {
-        ScrollView {
-            Form {
-                Section {
-                    Toggle("Pausa registrazione appunti", isOn: $settingsManager.isMonitoringPaused)
-                        .font(.body)
-                    Text("Quando attiva, ConCopy non registrerà nuovi elementi copiati negli appunti.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
+        Form {
+            Section(header: Text("Monitoraggio Appunti")) {
+                Toggle("Pausa registrazione appunti", isOn: $settingsManager.isMonitoringPaused)
+                Text("Quando attiva, ConCopy non registrerà nuovi elementi copiati negli appunti.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
 
-                Section {
-                    Toggle("Cattura automatica screenshot macOS", isOn: $settingsManager.autoCaptureScreenshots)
-                        .font(.body)
-                    Text("Salva automaticamente le nuove schermate acquisite nella cartella screenshot.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
+                Toggle("Cattura screenshot macOS", isOn: $settingsManager.autoCaptureScreenshots)
+                Text("Salva automaticamente le nuove schermate acquisite nella cartella screenshot.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
 
-                Section {
-                    Toggle("Avvia automaticamente all'accesso", isOn: $settingsManager.launchAtLogin)
-                        .font(.body)
-                    Text("Avvia l'applicazione all'avvio della sessione macOS.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
+            Section(header: Text("Generale")) {
+                Toggle("Avvia automaticamente all'accesso", isOn: $settingsManager.launchAtLogin)
+            }
 
-                Section {
-                    Toggle("Pulizia automatica cronologia", isOn: $settingsManager.autoCleanupEnabled)
-                        .font(.body)
+            Section(header: Text("Cronologia & Pulizia")) {
+                Toggle("Pulizia automatica", isOn: $settingsManager.autoCleanupEnabled)
 
-                    if settingsManager.autoCleanupEnabled {
-                        Picker("Elimina clip più vecchie di:", selection: $settingsManager.retentionDays) {
-                            Text("7 giorni").tag(7)
-                            Text("14 giorni").tag(14)
-                            Text("30 giorni").tag(30)
-                            Text("90 giorni").tag(90)
-                        }
-
-                        Picker("Capacità massima cronologia:", selection: $settingsManager.maxHistoryCount) {
-                            Text("200 elementi").tag(200)
-                            Text("500 elementi").tag(500)
-                            Text("1000 elementi").tag(1000)
-                            Text("5000 elementi").tag(5000)
-                        }
+                if settingsManager.autoCleanupEnabled {
+                    Picker("Elimina clip più vecchie di:", selection: $settingsManager.retentionDays) {
+                        Text("7 giorni").tag(7)
+                        Text("14 giorni").tag(14)
+                        Text("30 giorni").tag(30)
+                        Text("90 giorni").tag(90)
                     }
 
-                    Text("Nota: gli elementi preferiti (★) non vengono mai eliminati automaticamente.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-
-                Section {
-                    Toggle("Sincronizzazione iCloud (CloudKit)", isOn: $settingsManager.iCloudSyncEnabled)
-                        .font(.body)
-                    Text("Replicazione crittografata e privata delle clip testuali e delle liste tra i tuoi dispositivi Apple.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-
-                Section {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Scorciatoia Globale")
-                            .font(.headline)
-                        Text("Premi ⌘⇧V (Cmd + Shift + V) per mostrare o nascondere ConCopy.")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                    Picker("Capacità massima cronologia:", selection: $settingsManager.maxHistoryCount) {
+                        Text("200 elementi").tag(200)
+                        Text("500 elementi").tag(500)
+                        Text("1000 elementi").tag(1000)
+                        Text("5000 elementi").tag(5000)
                     }
+                }
+
+                Text("Nota: gli elementi preferiti (★) non vengono mai eliminati automaticamente.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+                Button(role: .destructive, action: {
+                    isShowingClearConfirm = true
+                }) {
+                    Label("Svuota Cronologia Non Preferiti", systemImage: "trash")
+                        .foregroundColor(.red)
                 }
             }
-            .padding(20)
+
+            Section(header: Text("Backup & Ripristino (JSON)")) {
+                HStack(spacing: 12) {
+                    Button(action: exportBackupAction) {
+                        Label("Esporta Archivio...", systemImage: "square.and.arrow.up")
+                    }
+                    Button(action: importBackupAction) {
+                        Label("Importa Archivio...", systemImage: "square.and.arrow.down")
+                    }
+                }
+                Text("Esporta o ripristina tutte le clip (inclusi blob e immagini) e le liste in formato JSON.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            Section(header: Text("iCloud Sync")) {
+                Toggle("Sincronizzazione iCloud (CloudKit)", isOn: $settingsManager.iCloudSyncEnabled)
+                Text("Replicazione crittografata e privata delle clip testuali e delle liste tra i tuoi dispositivi Apple.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            Section(header: Text("Scorciatoia Globale")) {
+                HStack {
+                    Text("Pannello principale")
+                    Spacer()
+                    Text("⌘⇧V")
+                        .font(.system(.body, design: .monospaced))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.secondary.opacity(0.12))
+                        .cornerRadius(4)
+                }
+            }
         }
+        .formStyle(.grouped)
     }
 
     // MARK: - Blacklist Tab
     private var blacklistTabView: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Le applicazioni in questa lista non verranno monitorate. I contenuti copiati da esse non saranno salvati.")
-                .font(.caption)
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Le applicazioni in questa lista non verranno monitorate. I contenuti copiati da esse verranno ignorati.")
+                .font(.subheadline)
                 .foregroundColor(.secondary)
-                .padding(.horizontal, 16)
-                .padding(.top, 12)
+                .padding(.horizontal, 20)
+                .padding(.top, 16)
 
             List(selection: $selectedBundleId) {
-                ForEach(settingsManager.excludedAppBundleIds, id: \.self) { bundleId in
-                    let info = resolveAppInfo(for: bundleId)
-                    HStack(spacing: 10) {
-                        if let icon = info.icon {
-                            Image(nsImage: icon)
-                                .resizable()
-                                .frame(width: 22, height: 22)
-                        } else {
-                            Image(systemName: "app.fill")
-                                .font(.system(size: 18))
-                                .foregroundColor(.secondary)
-                        }
-
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(info.name)
-                                .font(.system(size: 12, weight: .semibold))
-                            Text(bundleId)
-                                .font(.system(size: 10, design: .monospaced))
-                                .foregroundColor(.secondary)
-                        }
-
-                        Spacer()
-
-                        Button(action: {
-                            settingsManager.removeExcludedApp(bundleId: bundleId)
-                            if selectedBundleId == bundleId {
-                                selectedBundleId = nil
+                if settingsManager.excludedAppBundleIds.isEmpty {
+                    Text("Nessuna applicazione esclusa")
+                        .font(.callout)
+                        .foregroundColor(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.vertical, 20)
+                } else {
+                    ForEach(settingsManager.excludedAppBundleIds, id: \.self) { bundleId in
+                        let info = resolveAppInfo(for: bundleId)
+                        HStack(spacing: 10) {
+                            if let icon = info.icon {
+                                Image(nsImage: icon)
+                                    .resizable()
+                                    .frame(width: 24, height: 24)
+                            } else {
+                                Image(systemName: "app.fill")
+                                    .font(.system(size: 20))
+                                    .foregroundColor(.secondary)
                             }
-                        }) {
-                            Image(systemName: "trash")
-                                .font(.system(size: 11))
-                                .foregroundColor(.secondary)
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(info.name)
+                                    .font(.system(size: 13, weight: .medium))
+                                Text(bundleId)
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundColor(.secondary)
+                            }
+
+                            Spacer()
+
+                            Button(action: {
+                                settingsManager.removeExcludedApp(bundleId: bundleId)
+                                if selectedBundleId == bundleId {
+                                    selectedBundleId = nil
+                                }
+                            }) {
+                                Image(systemName: "trash")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                            .help("Rimuovi dalla blacklist")
                         }
-                        .buttonStyle(.plain)
-                        .help("Rimuovi dalla blacklist")
+                        .tag(bundleId)
+                        .padding(.vertical, 4)
                     }
-                    .tag(bundleId)
-                    .padding(.vertical, 2)
                 }
             }
             .listStyle(.inset(alternatesRowBackgrounds: true))
-            .border(Color.secondary.opacity(0.15))
-            .padding(.horizontal, 16)
+            .cornerRadius(6)
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+            )
+            .padding(.horizontal, 20)
 
             HStack(spacing: 8) {
                 Menu {
@@ -218,8 +269,8 @@ public struct PreferencesView: View {
 
                 Spacer()
             }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 12)
+            .padding(.horizontal, 20)
+            .padding(.bottom, 16)
         }
     }
 
@@ -280,5 +331,73 @@ public struct PreferencesView: View {
             return (name, icon)
         }
         return (bundleId, nil)
+    }
+
+    private func clearHistoryAction() {
+        guard let db = databaseManager else { return }
+        do {
+            let count = try db.clearAllHistory(preserveFavorites: true)
+            onDataChanged?()
+            statusAlertMessage = "Eliminate \(count) clip dalla cronologia."
+        } catch {
+            statusAlertMessage = "Errore durante lo svuotamento: \(error.localizedDescription)"
+        }
+    }
+
+    private func exportBackupAction() {
+        guard let db = databaseManager else {
+            statusAlertMessage = "Database non disponibile."
+            return
+        }
+
+        let savePanel = NSSavePanel()
+        savePanel.allowedContentTypes = [.json]
+        savePanel.nameFieldStringValue = "ConCopy_Backup_\(ISO8601DateFormatter().string(from: Date())).json"
+        savePanel.prompt = "Esporta"
+
+        if savePanel.runModal() == .OK, let targetURL = savePanel.url {
+            Task {
+                do {
+                    try await ArchiveManager().exportArchive(to: targetURL, databaseManager: db)
+                    await MainActor.run {
+                        self.statusAlertMessage = "Archivio esportato con successo in:\n\(targetURL.lastPathComponent)"
+                    }
+                } catch {
+                    await MainActor.run {
+                        self.statusAlertMessage = "Errore durante l'esportazione: \(error.localizedDescription)"
+                    }
+                }
+            }
+        }
+    }
+
+    private func importBackupAction() {
+        guard let db = databaseManager else {
+            statusAlertMessage = "Database non disponibile."
+            return
+        }
+
+        let openPanel = NSOpenPanel()
+        openPanel.allowedContentTypes = [.json]
+        openPanel.allowsMultipleSelection = false
+        openPanel.canChooseDirectories = false
+        openPanel.canChooseFiles = true
+        openPanel.prompt = "Importa"
+
+        if openPanel.runModal() == .OK, let sourceURL = openPanel.url {
+            Task {
+                do {
+                    try await ArchiveManager().importArchive(from: sourceURL, databaseManager: db)
+                    await MainActor.run {
+                        self.onDataChanged?()
+                        self.statusAlertMessage = "Archivio importato con successo da:\n\(sourceURL.lastPathComponent)"
+                    }
+                } catch {
+                    await MainActor.run {
+                        self.statusAlertMessage = "Errore durante l'importazione: \(error.localizedDescription)"
+                    }
+                }
+            }
+        }
     }
 }

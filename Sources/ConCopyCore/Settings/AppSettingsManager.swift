@@ -84,7 +84,8 @@ public final class AppSettingsManager: ObservableObject {
         }
 
         if #available(macOS 13.0, *) {
-            let isEnabled = SMAppService.mainApp.status == .enabled
+            let isBundled = Bundle.main.bundleIdentifier != nil && Bundle.main.bundlePath.hasSuffix(".app")
+            let isEnabled = isBundled && (SMAppService.mainApp.status == .enabled)
             self.launchAtLogin = isEnabled || userDefaults.bool(forKey: Self.launchAtLoginKey)
         } else {
             self.launchAtLogin = userDefaults.bool(forKey: Self.launchAtLoginKey)
@@ -141,6 +142,9 @@ public final class AppSettingsManager: ObservableObject {
     }
 
     private func updateLaunchAtLoginService(enabled: Bool) {
+        guard Bundle.main.bundleIdentifier != nil && Bundle.main.bundlePath.hasSuffix(".app") else {
+            return
+        }
         if #available(macOS 13.0, *) {
             do {
                 if enabled {

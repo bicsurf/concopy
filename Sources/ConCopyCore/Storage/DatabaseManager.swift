@@ -266,30 +266,40 @@ public final class DatabaseManager: Sendable {
                 return try request.limit(limit).fetchAll(db)
             }
 
-            let tokens = trimmed.components(separatedBy: .whitespacesAndNewlines)
-                .map { token in
-                    token.filter { !$0.isWhitespace && $0 != "\"" && $0 != "*" && $0 != "^" }
-                }
+            let words = trimmed.unicodeScalars.split { !CharacterSet.alphanumerics.contains($0) }
+                .map { String($0) }
                 .filter { !$0.isEmpty }
 
-            guard !tokens.isEmpty else {
-                var request = ClipRecord.all()
+            guard !words.isEmpty else {
+                let likePattern = "%\(trimmed)%"
+                var fallbackSql = """
+                SELECT * FROM clips
+                WHERE (plainText LIKE ? OR customName LIKE ?)
+                """
+                var fallbackArgs: [DatabaseValueConvertible] = [likePattern, likePattern]
+
                 if let listId {
-                    request = request.filter(Column("listId") == listId.uuidString.lowercased())
+                    fallbackSql += " AND listId = ?"
+                    fallbackArgs.append(listId.uuidString.lowercased())
                 }
                 if let sourceAppBundleId {
-                    request = request.filter(Column("sourceAppBundleId") == sourceAppBundleId)
+                    fallbackSql += " AND sourceAppBundleId = ?"
+                    fallbackArgs.append(sourceAppBundleId)
                 }
                 if let primaryType {
-                    request = request.filter(Column("primaryType") == primaryType.rawValue)
+                    fallbackSql += " AND primaryType = ?"
+                    fallbackArgs.append(primaryType.rawValue)
                 }
                 if favoritesOnly {
-                    request = request.filter(Column("isFavorite") == true)
+                    fallbackSql += " AND isFavorite = 1"
                 }
-                return try request.order(Column("updatedAt").desc).limit(limit).fetchAll(db)
+                fallbackSql += " ORDER BY \(orderClause) LIMIT ?"
+                fallbackArgs.append(limit)
+
+                return try ClipRecord.fetchAll(db, sql: fallbackSql, arguments: StatementArguments(fallbackArgs))
             }
 
-            let ftsQuery = tokens.map { "\"\($0)\"*" }.joined(separator: " ")
+            let ftsQuery = words.map { "\"\($0)\"*" }.joined(separator: " ")
 
             var sql = """
             SELECT clips.* FROM clips
@@ -515,6 +525,8 @@ public final class DatabaseManager: Sendable {
             if deleteContainedClips {
                 let clips = try ClipRecord.filter(Column("listId") == idString).fetchAll(db)
                 clipsToDelete = clips.map(\.id)
+            } else {
+                try db.execute(sql: "UPDATE clips SET listId = NULL WHERE listId = ?", arguments: [idString])
             }
             try ClipListRecord.filter(Column("id") == idString).deleteAll(db)
         }
@@ -524,6 +536,24 @@ public final class DatabaseManager: Sendable {
                 try deleteClip(clipId: clipId)
             }
         }
+    }
+
+    @discardableResult
+    public func clearAllHistory(preserveFavorites: Bool = true) throws -> Int {
+        var clipsToDelete: [UUID] = []
+        try dbWriter.read { db in
+            var request = ClipRecord.all()
+            if preserveFavorites {
+                request = request.filter(Column("isFavorite") == false)
+            }
+            let clips = try request.fetchAll(db)
+            clipsToDelete = clips.map(\.id)
+        }
+
+        for clipId in clipsToDelete {
+            try deleteClip(clipId: clipId)
+        }
+        return clipsToDelete.count
     }
 
     public func fetchAllLists() throws -> [ClipListRecord] {

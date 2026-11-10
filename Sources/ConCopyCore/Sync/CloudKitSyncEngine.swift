@@ -30,11 +30,25 @@ public final class CloudKitSyncCoordinator: NSObject, CKSyncEngineDelegate, @unc
         super.init()
     }
 
+    public static var isCloudKitAvailable: Bool {
+        guard let bundleId = Bundle.main.bundleIdentifier, !bundleId.isEmpty else {
+            return false
+        }
+        guard Bundle.main.bundlePath.hasSuffix(".app") else {
+            return false
+        }
+        return true
+    }
+
     public func startIfPossible(containerIdentifier: String? = nil) {
         lock.lock()
         defer { lock.unlock() }
 
         guard syncEngine == nil else { return }
+        guard Self.isCloudKitAvailable else {
+            print("[ConCopy] CloudKit unavailable in unbundled/SPM environment. Operating in local-only mode.")
+            return
+        }
 
         let container = containerIdentifier.map { CKContainer(identifier: $0) } ?? CKContainer.default()
         let database = container.privateCloudDatabase

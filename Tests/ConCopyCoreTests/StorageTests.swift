@@ -222,4 +222,84 @@ final class StorageTests: XCTestCase {
         )
         XCTAssertEqual(richTextType, .richText)
     }
+
+    func testFTS5SanitizationWithSpecialCharacters() throws {
+        _ = try databaseManager.ingestCapturedClip(
+            CapturedClip(plainText: "Learning c++ and rust systems programming")
+        )
+        _ = try databaseManager.ingestCapturedClip(
+            CapturedClip(plainText: "Server listening on http://example.com:8080/api/v1")
+        )
+        _ = try databaseManager.ingestCapturedClip(
+            CapturedClip(plainText: "Unit testing with \"quoted strings\" and (parentheses)")
+        )
+
+        // 1. Quoted string query
+        let quotedResults = try databaseManager.searchClips(query: "\"quoted\"")
+        XCTAssertEqual(quotedResults.count, 1)
+
+        // 2. Query with special characters: c++ (sanitized to "c"*, matches without FTS5 syntax crash)
+        let cppResults = try databaseManager.searchClips(query: "c++")
+        XCTAssertFalse(cppResults.isEmpty)
+        XCTAssertTrue(cppResults.contains { $0.plainText?.contains("c++") == true })
+
+        // 3. Query with URL, colons and slashes
+        let urlResults = try databaseManager.searchClips(query: "http://example.com:8080")
+        XCTAssertEqual(urlResults.count, 1)
+
+        // 4. Query with pure symbols: ***
+        let symbolResults = try databaseManager.searchClips(query: "***")
+        XCTAssertTrue(symbolResults.isEmpty)
+
+        // 5. Query with parentheses
+        let parenResults = try databaseManager.searchClips(query: "(parentheses)")
+        XCTAssertEqual(parenResults.count, 1)
+
+        // 6. Query with port colon
+        let portResults = try databaseManager.searchClips(query: ":8080")
+        XCTAssertEqual(portResults.count, 1)
+    }
+
+    func testURLMetadataUpdateAndFTS5SearchCycle() throws {
+        let clip = try databaseManager.ingestCapturedClip(
+            CapturedClip(
+                plainText: "https://news.ycombinator.com",
+                primaryType: .url
+            )
+        )
+
+        // Initially matches by URL string
+        let initialSearch = try databaseManager.searchClips(query: "ycombinator")
+        XCTAssertEqual(initialSearch.count, 1)
+        XCTAssertEqual(initialSearch.first?.id, clip.id)
+
+        // Simulate LinkMetadataFetcher title update
+        let fetchedTitle = "Hacker News: Computer Technology and Startups"
+        try databaseManager.updateCustomName(clipId: clip.id, name: fetchedTitle)
+
+        // Verify FTS5 now indexes the new title
+        let titleSearch = try databaseManager.searchClips(query: "Hacker")
+        XCTAssertEqual(titleSearch.count, 1)
+        XCTAssertEqual(titleSearch.first?.id, clip.id)
+        XCTAssertEqual(titleSearch.first?.customName, fetchedTitle)
+
+        // Searching for another word from the title
+        let techSearch = try databaseManager.searchClips(query: "Startups")
+        XCTAssertEqual(techSearch.count, 1)
+        XCTAssertEqual(techSearch.first?.id, clip.id)
+    }
+
+    func testClearAllHistoryPreservesFavorites() throws {
+        let normal = try databaseManager.ingestCapturedClip(CapturedClip(plainText: "Normal clip to delete"))
+        let fav = try databaseManager.ingestCapturedClip(CapturedClip(plainText: "Protected favorite clip"))
+        _ = try databaseManager.toggleFavorite(clipId: fav.id)
+
+        let clearedCount = try databaseManager.clearAllHistory(preserveFavorites: true)
+        XCTAssertEqual(clearedCount, 1)
+
+        let remaining = try databaseManager.searchClips()
+        XCTAssertEqual(remaining.count, 1)
+        XCTAssertEqual(remaining.first?.id, fav.id)
+        XCTAssertNil(try databaseManager.fetchClip(id: normal.id))
+    }
 }

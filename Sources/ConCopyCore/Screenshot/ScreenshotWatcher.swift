@@ -97,11 +97,36 @@ public final class ScreenshotWatcher: @unchecked Sendable {
 
         for fileName in newFiles {
             let fileURL = monitoredDirectoryURL.appendingPathComponent(fileName)
-            // Wait briefly for file write completion if needed
-            if isScreenshotFile(fileURL: fileURL), let clip = processFile(at: fileURL) {
+            guard isScreenshotFile(fileURL: fileURL) else { continue }
+            // Wait for file write completion to prevent reading partial/empty file
+            guard waitForFileStabilization(at: fileURL) else { continue }
+            if let clip = processFile(at: fileURL) {
                 onScreenshotCaptured?(clip, fileURL)
             }
         }
+    }
+
+    private func waitForFileStabilization(at url: URL, maxRetries: Int = 5, retryDelay: TimeInterval = 0.04) -> Bool {
+        // Initial debounce for macOS screenshot write flush
+        Thread.sleep(forTimeInterval: 0.15)
+        var previousSize: Int64 = -1
+
+        for _ in 0..<maxRetries {
+            guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+                  let size = attrs[.size] as? Int64,
+                  size > 0 else {
+                Thread.sleep(forTimeInterval: retryDelay)
+                continue
+            }
+
+            if size == previousSize {
+                return true
+            }
+            previousSize = size
+            Thread.sleep(forTimeInterval: retryDelay)
+        }
+
+        return previousSize > 0
     }
 
     public func processFile(at fileURL: URL) -> CapturedClip? {

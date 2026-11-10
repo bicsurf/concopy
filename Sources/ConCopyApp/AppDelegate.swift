@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var syncCoordinator: CloudKitSyncCoordinator?
     private var databaseManager: DatabaseManager?
     private var viewModel: ClipboardViewModel?
+    private let linkMetadataFetcher = LinkMetadataFetcher()
 
     nonisolated override init() {
         super.init()
@@ -35,6 +36,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let vm = ClipboardViewModel(databaseManager: db)
         self.viewModel = vm
 
+        PreferencesWindowController.shared.configure(databaseManager: db) { [weak vm] in
+            vm?.loadClips()
+        }
+
         let floatingPanel = FloatingPanel(viewModel: vm)
         self.panel = floatingPanel
 
@@ -50,6 +55,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let saved = try self?.databaseManager?.ingestCapturedClip(captured)
                 if let clip = saved {
                     self?.syncCoordinator?.queueUpload(for: clip)
+                    if clip.primaryType == .url,
+                       let plain = clip.plainText,
+                       let url = URL(string: plain) {
+                        Task { [weak self] in
+                            guard let db = self?.databaseManager else { return }
+                            await self?.linkMetadataFetcher.fetchAndUpdateMetadata(clipId: clip.id, url: url, databaseManager: db)
+                            await MainActor.run {
+                                self?.viewModel?.loadClips()
+                            }
+                        }
+                    }
                 }
                 self?.viewModel?.loadClips()
             } catch {

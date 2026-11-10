@@ -1,3 +1,5 @@
+import AppKit
+import ApplicationServices
 import Combine
 import ConCopyCore
 import Foundation
@@ -23,6 +25,9 @@ public final class ClipboardViewModel: ObservableObject {
     @Published public var isQuickLookVisible: Bool = false
     @Published public var editingClip: ClipRecord? = nil
     @Published public var renamingClip: ClipRecord? = nil
+    @Published public var pastingClipId: UUID? = nil
+    @Published public var isAccessibilityTrusted: Bool = true
+    @Published public var toastMessage: String? = nil
 
     public let databaseManager: DatabaseManager
     public let pasteInjector: PasteInjector
@@ -34,8 +39,30 @@ public final class ClipboardViewModel: ObservableObject {
     ) {
         self.databaseManager = databaseManager
         self.pasteInjector = pasteInjector
+        checkAccessibilityPermissions()
         loadLists()
         loadClips()
+    }
+
+    public func checkAccessibilityPermissions() {
+        self.isAccessibilityTrusted = pasteInjector.eventPoster.isProcessTrusted()
+    }
+
+    public func openAccessibilitySettings() {
+        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+        _ = AXIsProcessTrustedWithOptions(options)
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    public func clearHistory(preserveFavorites: Bool = true) {
+        do {
+            _ = try databaseManager.clearAllHistory(preserveFavorites: preserveFavorites)
+            loadClips()
+        } catch {
+            print("[ConCopy] Failed to clear history: \(error)")
+        }
     }
 
     public func toggleQuickLook() {
@@ -64,7 +91,7 @@ public final class ClipboardViewModel: ObservableObject {
 
     public func loadLists() {
         do {
-            self.lists = try databaseManager.fetchAllLists()
+            self.lists = try databaseManager.fetchLists()
         } catch {
             print("[ConCopy] Error loading lists: \(error)")
         }
@@ -118,6 +145,18 @@ public final class ClipboardViewModel: ObservableObject {
         }
     }
 
+    public func deleteList(_ listId: UUID, deleteContainedClips: Bool = false) {
+        do {
+            try databaseManager.deleteList(listId: listId, deleteContainedClips: deleteContainedClips)
+            loadLists()
+            if selectedListId == listId {
+                selectAllClips()
+            }
+        } catch {
+            print("[ConCopy] Failed to delete list: \(error)")
+        }
+    }
+
     public func toggleAutoStar(for listId: UUID) {
         do {
             if let list = lists.first(where: { $0.id == listId }) {
@@ -162,34 +201,67 @@ public final class ClipboardViewModel: ObservableObject {
         }
     }
 
+    public func showToast(_ message: String, duration: TimeInterval = 2.5) {
+        self.toastMessage = message
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
+            if self?.toastMessage == message {
+                self?.toastMessage = nil
+            }
+        }
+    }
+
     public func pasteSelected(optionHeld: Bool = false) {
         if selectedClipIds.count >= 2 {
             pasteSelectedBatch(mode: .concatenated(separator: batchSeparator))
-        } else {
-            paste(at: selectedIndex, optionHeld: optionHeld)
+        } else if let singleId = selectedClipIds.first, let clip = clips.first(where: { $0.id == singleId }) {
+            paste(clip: clip, optionHeld: optionHeld)
+        } else if selectedIndex >= 0 && selectedIndex < clips.count {
+            paste(clip: clips[selectedIndex], optionHeld: optionHeld)
         }
     }
 
     public func paste(at index: Int, optionHeld: Bool = false) {
         guard index >= 0 && index < clips.count else { return }
-        let clip = clips[index]
+        selectedIndex = index
+        paste(clip: clips[index], optionHeld: optionHeld)
+    }
+
+    public func paste(clip: ClipRecord, optionHeld: Bool = false) {
+        if let index = clips.firstIndex(where: { $0.id == clip.id }) {
+            selectedIndex = index
+        }
+        self.pastingClipId = clip.id
         let forcePlainText = optionHeld || isPlainTextModeEnabled
         let transformation = activeTransformation
+        let isTrusted = pasteInjector.eventPoster.isProcessTrusted()
 
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
+                if !isTrusted {
+                    self.showToast("Copiato negli appunti! Premi ⌘V per incollare.")
+                }
                 try await self.pasteInjector.paste(
                     clip: clip,
                     databaseManager: self.databaseManager,
                     forcePlainText: forcePlainText,
                     transformation: transformation,
                     beforeEventHook: { [weak self] in
-                        self?.onClosePanel?()
+                        if isTrusted {
+                            self?.onClosePanel?()
+                        } else {
+                            Task { @MainActor [weak self] in
+                                try? await Task.sleep(nanoseconds: 1_200_000_000)
+                                self?.onClosePanel?()
+                            }
+                        }
                     }
                 )
+                self.pastingClipId = nil
                 self.loadClips()
             } catch {
+                self.pastingClipId = nil
                 print("[ConCopy] Failed to paste clip: \(error)")
             }
         }
@@ -206,17 +278,28 @@ public final class ClipboardViewModel: ObservableObject {
         }
 
         let transformation = activeTransformation
+        let isTrusted = pasteInjector.eventPoster.isProcessTrusted()
 
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
+                if !isTrusted {
+                    self.showToast("Testo copiato negli appunti! Premi ⌘V per incollare.")
+                }
                 try await self.pasteInjector.pasteBatch(
                     clips: orderedClips,
                     mode: mode,
                     transformation: transformation,
                     databaseManager: self.databaseManager,
                     beforeEventHook: { [weak self] in
-                        self?.onClosePanel?()
+                        if isTrusted {
+                            self?.onClosePanel?()
+                        } else {
+                            Task { @MainActor [weak self] in
+                                try? await Task.sleep(nanoseconds: 1_200_000_000)
+                                self?.onClosePanel?()
+                            }
+                        }
                     }
                 )
                 self.loadClips()

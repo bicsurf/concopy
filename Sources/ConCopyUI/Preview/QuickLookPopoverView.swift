@@ -65,6 +65,13 @@ public struct QuickLookPopoverView: View {
         .onAppear {
             loadImageDataIfNeeded()
         }
+        .onChange(of: clip.id) { _, _ in
+            imageData = nil
+            imageResolution = ""
+            imageSizeKB = ""
+            zoomScale = 1.0
+            loadImageDataIfNeeded()
+        }
     }
 
     private var iconName: String {

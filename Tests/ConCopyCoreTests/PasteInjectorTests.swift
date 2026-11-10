@@ -12,11 +12,13 @@ final class MockCGEventPoster: CGEventPosting, @unchecked Sendable {
     }
 
     func postCommandV() -> Bool {
+        guard isProcessTrusted() else { return false }
         postCommandVCalledCount += 1
         return true
     }
 
     func postTab() -> Bool {
+        guard isProcessTrusted() else { return false }
         postTabCalledCount += 1
         return true
     }
@@ -120,6 +122,27 @@ final class PasteInjectorTests: XCTestCase {
     }
 
     @MainActor
+    func testLoopPreventionDuringPasteExecution() async throws {
+        let pasteboard = NSPasteboard.withUniqueName()
+        let monitor = ClipboardMonitor(pasteboard: pasteboard)
+        let captured = CapturedClip(plainText: "Existing clip to paste without loop")
+        let clip = try databaseManager.ingestCapturedClip(captured)
+
+        let mockPoster = MockCGEventPoster()
+        let injector = PasteInjector(eventPoster: mockPoster)
+
+        try await injector.paste(
+            clip: clip,
+            databaseManager: databaseManager,
+            pasteboard: pasteboard
+        )
+
+        // Verify monitor ignores the pasteboard write because of internalPasteMarker
+        let item = monitor.checkForChanges()
+        XCTAssertNil(item, "ClipboardMonitor must ignore internal paste and not create duplicate or loop")
+    }
+
+    @MainActor
     func testPasteCountIncrementAndMockCGEvent() async throws {
         let captured = CapturedClip(plainText: "Item to paste")
         let clip = try databaseManager.ingestCapturedClip(captured)
@@ -144,6 +167,30 @@ final class PasteInjectorTests: XCTestCase {
 
         let updated = try databaseManager.fetchClip(id: clip.id)
         XCTAssertEqual(updated?.pasteCount, 1)
+    }
+
+    @MainActor
+    func testBatchPasteFallbackWhenAccessibilityNotTrusted() async throws {
+        let clip1 = try databaseManager.ingestCapturedClip(CapturedClip(plainText: "Alpha"))
+        let clip2 = try databaseManager.ingestCapturedClip(CapturedClip(plainText: "Beta"))
+
+        let untrustedPoster = MockCGEventPoster()
+        untrustedPoster.trusted = false
+        let injector = PasteInjector(eventPoster: untrustedPoster)
+        let pasteboard = NSPasteboard.withUniqueName()
+
+        try await injector.pasteBatch(
+            clips: [clip1, clip2],
+            mode: .concatenated(separator: .tab),
+            transformation: .none,
+            databaseManager: databaseManager,
+            pasteboard: pasteboard
+        )
+
+        // Clipboard was still populated despite accessibility being untrusted
+        XCTAssertEqual(pasteboard.string(forType: .string), "Alpha\tBeta")
+        XCTAssertNotNil(pasteboard.data(forType: PasteInjector.internalPasteMarker))
+        XCTAssertEqual(untrustedPoster.postCommandVCalledCount, 0, "No CGEvent should be posted when untrusted")
     }
 
     func testQuickPasteShortcutMapper() {

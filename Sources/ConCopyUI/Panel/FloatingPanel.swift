@@ -4,6 +4,7 @@ import SwiftUI
 
 public final class FloatingPanel: NSPanel {
     public let viewModel: ClipboardViewModel
+    public private(set) var previousApp: NSRunningApplication?
 
     public init(viewModel: ClipboardViewModel) {
         self.viewModel = viewModel
@@ -16,19 +17,47 @@ public final class FloatingPanel: NSPanel {
 
         self.isFloatingPanel = true
         self.level = .floating
-        self.becomesKeyOnlyIfNeeded = true
+        self.becomesKeyOnlyIfNeeded = false
         self.isMovableByWindowBackground = true
         self.titleVisibility = .hidden
         self.titlebarAppearsTransparent = true
         self.hidesOnDeactivate = false
         self.isReleasedWhenClosed = false
         self.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        self.initialFirstResponder = nil
+        self.isOpaque = false
+        self.backgroundColor = .clear
+        self.hasShadow = true
+        self.setFrameAutosaveName("ConCopyFloatingPanelFrame")
 
         viewModel.onClosePanel = { [weak self] in
-            self?.orderOut(nil)
+            guard let self = self else { return }
+            self.orderOut(nil)
+            if let prev = self.previousApp {
+                if #available(macOS 14.0, *) {
+                    prev.activate()
+                } else {
+                    prev.activate(options: .activateIgnoringOtherApps)
+                }
+            } else {
+                NSApp.hide(nil)
+            }
         }
 
         self.contentView = NSHostingView(rootView: ClipboardListView(viewModel: viewModel))
+    }
+
+    public override func orderOut(_ sender: Any?) {
+        saveFrame(usingName: "ConCopyFloatingPanelFrame")
+        super.orderOut(sender)
+    }
+
+    public override func mouseDragged(with event: NSEvent) {
+        if isMovableByWindowBackground {
+            performDrag(with: event)
+        } else {
+            super.mouseDragged(with: event)
+        }
     }
 
     public convenience init(databaseManager: DatabaseManager) {
@@ -49,7 +78,16 @@ public final class FloatingPanel: NSPanel {
         false
     }
 
+    public func activatePanelForInput() {
+        makeKey()
+        NSApp.activate()
+    }
+
     public override func sendEvent(_ event: NSEvent) {
+        if attachedSheet != nil {
+            super.sendEvent(event)
+            return
+        }
         if event.type == .keyDown {
             if handleKeyDown(event) {
                 return
@@ -73,8 +111,10 @@ public final class FloatingPanel: NSPanel {
                 viewModel.renamingClip = nil
                 return true
             }
-            if !viewModel.searchQuery.isEmpty {
+            if viewModel.isSearchFocused || !viewModel.searchQuery.isEmpty {
                 viewModel.searchQuery = ""
+                viewModel.isSearchFocused = false
+                makeFirstResponder(nil)
                 return true
             } else {
                 orderOut(nil)
@@ -115,7 +155,7 @@ public final class FloatingPanel: NSPanel {
         }
 
         // Return / Enter: paste selected
-        if event.keyCode == 36 {
+        if event.keyCode == 36 || event.keyCode == 76 {
             let optionHeld = event.modifierFlags.contains(.option)
             viewModel.pasteSelected(optionHeld: optionHeld)
             return true
@@ -133,6 +173,19 @@ public final class FloatingPanel: NSPanel {
             let shiftHeld = event.modifierFlags.contains(.shift)
             viewModel.moveSelectionDown(expandSelection: shiftHeld)
             return true
+        }
+
+        // Cmd+1..9: quick paste matching item index even if search is focused
+        if event.modifierFlags.contains(.command) && !event.modifierFlags.contains(.control) && !event.modifierFlags.contains(.shift) {
+            if let chars = event.charactersIgnoringModifiers,
+               let char = chars.first,
+               char >= "1" && char <= "9",
+               let digit = Int(String(char)) {
+                let index = digit - 1
+                let optionHeld = event.modifierFlags.contains(.option)
+                viewModel.paste(at: index, optionHeld: optionHeld)
+                return true
+            }
         }
 
         // Quick paste with 0-9 and a-z when search is not actively focused
@@ -154,9 +207,20 @@ public final class FloatingPanel: NSPanel {
         if isVisible {
             orderOut(nil)
         } else {
+            let frontApp = NSWorkspace.shared.frontmostApplication
+            if let frontApp, frontApp.bundleIdentifier != Bundle.main.bundleIdentifier {
+                self.previousApp = frontApp
+            }
+            viewModel.isSearchFocused = false
+            viewModel.searchQuery = ""
+            viewModel.checkAccessibilityPermissions()
             viewModel.loadClips()
-            positionNearMouse()
+            if !setFrameUsingName("ConCopyFloatingPanelFrame") {
+                positionNearMouse()
+            }
             orderFrontRegardless()
+            makeKey()
+            makeFirstResponder(nil)
         }
     }
 

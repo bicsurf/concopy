@@ -135,9 +135,11 @@ public struct PasteInjector: Sendable {
 
         beforeEventHook?()
 
-        try await Task.sleep(nanoseconds: 35_000_000)
+        try await Task.sleep(nanoseconds: 80_000_000)
 
-        _ = eventPoster.postCommandV()
+        if eventPoster.isProcessTrusted() {
+            _ = eventPoster.postCommandV()
+        }
     }
 
     @MainActor
@@ -181,9 +183,11 @@ public struct PasteInjector: Sendable {
 
         beforeEventHook?()
 
-        try await Task.sleep(nanoseconds: 35_000_000)
+        try await Task.sleep(nanoseconds: 80_000_000)
 
-        _ = eventPoster.postCommandV()
+        if eventPoster.isProcessTrusted() {
+            _ = eventPoster.postCommandV()
+        }
     }
 
     @MainActor
@@ -197,51 +201,41 @@ public struct PasteInjector: Sendable {
     ) async throws {
         guard !clips.isEmpty else { return }
 
+        // 1. Release panel & reactivate target application
+        beforeEventHook?()
+
+        // 2. Initial delay of at least 80ms for WindowServer context switch
+        try await Task.sleep(nanoseconds: 80_000_000)
+
+        // 3. Process combined text based on mode (newline, custom separator, or tab for form fields)
+        let separatorString: String
         switch mode {
         case .concatenated(let separator):
-            let processedStrings = clips.map { clip -> String in
-                let text = clip.plainText ?? ""
-                return TextTransformer.apply(transformation, to: text)
-            }
-            let joinedText = processedStrings.joined(separator: separator.rawValue)
+            separatorString = separator.rawValue
+        case .sequentialFormFields:
+            separatorString = "\t"
+        }
 
-            pasteboard.clearContents()
-            pasteboard.setData(Data(), forType: Self.internalPasteMarker)
-            pasteboard.setString(joinedText, forType: .string)
+        let processedStrings = clips.map { clip -> String in
+            let text = clip.plainText ?? ""
+            return TextTransformer.apply(transformation, to: text)
+        }
+        let joinedText = processedStrings.joined(separator: separatorString)
 
-            for clip in clips {
-                _ = try databaseManager.recordPasteUsage(clipId: clip.id)
-            }
+        // 4. Write resulting combined string once to pasteboard
+        pasteboard.clearContents()
+        pasteboard.setData(Data(), forType: Self.internalPasteMarker)
+        pasteboard.setString(joinedText, forType: .string)
 
-            beforeEventHook?()
+        for clip in clips {
+            _ = try databaseManager.recordPasteUsage(clipId: clip.id)
+        }
 
-            try await Task.sleep(nanoseconds: 35_000_000)
+        // 5. Additional 50ms buffer before sending the single Cmd+V CGEvent
+        try await Task.sleep(nanoseconds: 50_000_000)
 
+        if eventPoster.isProcessTrusted() {
             _ = eventPoster.postCommandV()
-
-        case .sequentialFormFields(let delayMs):
-            beforeEventHook?()
-
-            let sleepNanos = delayMs * 1_000_000
-
-            for (index, clip) in clips.enumerated() {
-                let text = clip.plainText ?? ""
-                let transformed = TextTransformer.apply(transformation, to: text)
-
-                pasteboard.clearContents()
-                pasteboard.setData(Data(), forType: Self.internalPasteMarker)
-                pasteboard.setString(transformed, forType: .string)
-
-                _ = try databaseManager.recordPasteUsage(clipId: clip.id)
-
-                try await Task.sleep(nanoseconds: sleepNanos)
-                _ = eventPoster.postCommandV()
-
-                if index < clips.count - 1 {
-                    try await Task.sleep(nanoseconds: sleepNanos)
-                    _ = eventPoster.postTab()
-                }
-            }
         }
     }
 }

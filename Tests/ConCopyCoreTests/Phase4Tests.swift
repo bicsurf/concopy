@@ -135,8 +135,15 @@ final class Phase4Tests: XCTestCase {
         )
 
         XCTAssertTrue(hookCalled)
-        XCTAssertEqual(mockPoster.postCommandVCalledCount, 3)
-        XCTAssertEqual(mockPoster.postTabCalledCount, 2)
+        XCTAssertEqual(mockPoster.postCommandVCalledCount, 1)
+        XCTAssertEqual(pasteboard.string(forType: .string), "Name\tEmail\tCity")
+
+        let updated1 = try databaseManager.fetchClip(id: clip1.id)
+        let updated2 = try databaseManager.fetchClip(id: clip2.id)
+        let updated3 = try databaseManager.fetchClip(id: clip3.id)
+        XCTAssertEqual(updated1?.pasteCount, 1)
+        XCTAssertEqual(updated2?.pasteCount, 1)
+        XCTAssertEqual(updated3?.pasteCount, 1)
     }
 
     func testListsOrderingAndAutoStar() throws {
@@ -176,6 +183,12 @@ final class Phase4Tests: XCTestCase {
         let newStarred = try databaseManager.ingestCapturedClip(CapturedClip(plainText: "Auto Star Clip"))
         XCTAssertTrue(newStarred.isFavorite)
         XCTAssertEqual(newStarred.listId, list2.id)
+
+        // Test createList and fetchLists immediately reflect in storage
+        let list3 = try databaseManager.createList(name: "List 3")
+        let updatedLists = try databaseManager.fetchLists()
+        XCTAssertEqual(updatedLists.count, 3)
+        XCTAssertTrue(updatedLists.contains(where: { $0.id == list3.id && $0.name == "List 3" }))
     }
 
     private func createSampleImageData() throws -> Data {
