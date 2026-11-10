@@ -1,0 +1,25 @@
+# Build products & Swift Package Manager
+.build/
+.swiftpm/
+DerivedData/
+*.xcodeproj
+*.xcworkspace
+
+# macOS System Files
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+
+# Xcode User Data & Settings
+xcuserdata/
+*.xcresult
+*.xccrashpoint
+*.ideprojectstate
+*.xcuserstate
+
+# Temporary files & logs
+*.log
+.lock
+tmp/

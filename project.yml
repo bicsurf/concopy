@@ -1,0 +1,56 @@
+name: ConCopy
+options:
+  bundleIdPrefix: com.concopy
+  deploymentTarget:
+    macOS: "14.0"
+  xcodeVersion: "15.0"
+
+packages:
+  GRDB:
+    url: https://github.com/groue/GRDB.swift.git
+    from: 6.24.0
+  KeyboardShortcuts:
+    url: https://github.com/sindresorhus/KeyboardShortcuts.git
+    from: 1.11.0
+
+targets:
+  ConCopyCore:
+    type: library.static
+    platform: macOS
+    sources: [Sources/ConCopyCore]
+    dependencies:
+      - package: GRDB
+
+  ConCopyUI:
+    type: library.static
+    platform: macOS
+    sources: [Sources/ConCopyUI]
+    dependencies:
+      - target: ConCopyCore
+      - package: KeyboardShortcuts
+
+  ConCopyApp:
+    type: application
+    platform: macOS
+    sources: [Sources/ConCopyApp]
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.concopy.ConCopyApp
+    info:
+      path: Sources/ConCopyApp/Info.plist
+      properties:
+        LSUIElement: true
+        CFBundleName: "ConCopy"
+        CFBundleIdentifier: "com.concopy.ConCopyApp"
+        CFBundleShortVersionString: "1.0.0"
+        CFBundleVersion: "1"
+        NSPrincipalClass: NSApplication
+    dependencies:
+      - target: ConCopyCore
+      - target: ConCopyUI
+
+  ConCopyCoreTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources: [Tests/ConCopyCoreTests]
+    dependencies:
+      - target: ConCopyCore
