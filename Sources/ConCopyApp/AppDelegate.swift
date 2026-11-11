@@ -51,6 +51,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         self.statusItemController = StatusItemController(panel: floatingPanel)
 
+        // Auto-check for updates if enabled
+        Task {
+            await UpdateChecker.shared.checkAutomaticallyIfNeeded()
+        }
+
         KeyboardShortcuts.onKeyUp(for: .toggleConCopyPanel) { [weak floatingPanel] in
             floatingPanel?.togglePanel()
         }

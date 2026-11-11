@@ -14,6 +14,9 @@ public final class AppSettingsManager: ObservableObject {
     public static let autoCaptureScreenshotsKey = "ConCopy.Settings.autoCaptureScreenshots"
     public static let iCloudSyncEnabledKey = "ConCopy.Settings.iCloudSyncEnabled"
     public static let isDirectPasteEnabledKey = "ConCopy.Settings.isDirectPasteEnabled"
+    public static let isAutoCheckUpdatesEnabledKey = "ConCopy.Settings.isAutoCheckUpdatesEnabled"
+    public static let lastUpdateCheckDateKey = "ConCopy.Settings.lastUpdateCheckDate"
+    public static let skippedUpdateVersionKey = "ConCopy.Settings.skippedUpdateVersion"
 
     public static let defaultExcludedAppBundleIds: [String] = [
         "com.agilebits.onepassword",
@@ -77,6 +80,24 @@ public final class AppSettingsManager: ObservableObject {
         }
     }
 
+    @Published public var isAutoCheckUpdatesEnabled: Bool {
+        didSet {
+            defaults.set(isAutoCheckUpdatesEnabled, forKey: Self.isAutoCheckUpdatesEnabledKey)
+        }
+    }
+
+    @Published public var lastUpdateCheckDate: Date? {
+        didSet {
+            defaults.set(lastUpdateCheckDate, forKey: Self.lastUpdateCheckDateKey)
+        }
+    }
+
+    @Published public var skippedUpdateVersion: String? {
+        didSet {
+            defaults.set(skippedUpdateVersion, forKey: Self.skippedUpdateVersionKey)
+        }
+    }
+
     public init(userDefaults: UserDefaults = .standard) {
         self.defaults = userDefaults
 
@@ -123,6 +144,15 @@ public final class AppSettingsManager: ObservableObject {
         } else {
             self.isDirectPasteEnabled = true
         }
+
+        if userDefaults.object(forKey: Self.isAutoCheckUpdatesEnabledKey) != nil {
+            self.isAutoCheckUpdatesEnabled = userDefaults.bool(forKey: Self.isAutoCheckUpdatesEnabledKey)
+        } else {
+            self.isAutoCheckUpdatesEnabled = true
+        }
+
+        self.lastUpdateCheckDate = userDefaults.object(forKey: Self.lastUpdateCheckDateKey) as? Date
+        self.skippedUpdateVersion = userDefaults.string(forKey: Self.skippedUpdateVersionKey)
     }
 
     public func isAppExcluded(bundleId: String?) -> Bool {

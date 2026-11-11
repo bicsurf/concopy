@@ -56,6 +56,10 @@ public final class StatusItemController: NSObject {
             prefsItem.target = self
             menu.addItem(prefsItem)
 
+            let updateItem = NSMenuItem(title: "Controlla aggiornamenti...", action: #selector(checkForUpdates), keyEquivalent: "")
+            updateItem.target = self
+            menu.addItem(updateItem)
+
             menu.addItem(NSMenuItem.separator())
 
             let quitItem = NSMenuItem(title: "Esci da ConCopy", action: #selector(quitApp), keyEquivalent: "q")
@@ -80,6 +84,12 @@ public final class StatusItemController: NSObject {
 
     @objc private func openPreferences() {
         PreferencesWindowController.shared.showWindow()
+    }
+
+    @objc private func checkForUpdates() {
+        Task { @MainActor in
+            await UpdateChecker.shared.checkForUpdatesWithUI()
+        }
     }
 
     @objc private func quitApp() {

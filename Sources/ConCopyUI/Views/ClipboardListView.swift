@@ -4,6 +4,7 @@ import SwiftUI
 
 public struct ClipboardListView: View {
     @ObservedObject public var viewModel: ClipboardViewModel
+    @ObservedObject private var updateChecker = UpdateChecker.shared
     @FocusState private var isFieldFocused: Bool
     @State private var editTextValue: String = ""
     @State private var editNameValue: String = ""
@@ -111,6 +112,42 @@ public struct ClipboardListView: View {
                     WindowDragGestureArea()
                 }
             )
+
+            // Update Available Banner
+            if let update = updateChecker.availableUpdate {
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.down.circle.fill")
+                        .foregroundColor(ConCopyTheme.Accents.primary)
+                        .font(.system(size: 13))
+
+                    Text("Nuova versione v\(update.version) disponibile")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.primary)
+
+                    Spacer()
+
+                    Button("Scarica") {
+                        if let url = update.dmgDownloadURL ?? URL(string: update.releasePageURL.absoluteString) {
+                            NSWorkspace.shared.open(url)
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.mini)
+
+                    Button(action: {
+                        updateChecker.skipUpdate(version: update.version)
+                    }) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Nascondi per questa versione")
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 5)
+                .background(ConCopyTheme.Badges.tabShortcutBackground(isSelected: true))
+            }
 
             // Accessibility Permission Banner
             if !viewModel.isAccessibilityTrusted {

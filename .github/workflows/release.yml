@@ -17,13 +17,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Build Universal Binary and Bundle App
-        run: |
-          chmod +x scripts/*.sh
-          sh scripts/build-app.sh
+      # - name: Build Universal Binary and Bundle App
+      #   run: |
+      #     chmod +x scripts/*.sh
+      #     sh scripts/build-app.sh
 
       - name: Create DMG package
         run: |
+          chmod +x scripts/*.sh
           sh scripts/build-dmg.sh
 
       - name: Release and Upload DMG

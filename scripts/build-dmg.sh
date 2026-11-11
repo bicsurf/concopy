@@ -2,6 +2,8 @@
 set -e
 
 APP_NAME="ConCopy"
+RAW_VERSION="${GITHUB_REF_NAME:-$(git describe --tags --abbrev=0 2>/dev/null || echo "1.0.0")}"
+export VERSION="${RAW_VERSION#v}"
 VERSION="1.0.0"
 DMG_NAME="${APP_NAME}-${VERSION}.dmg"
 BUNDLE_DIR="$APP_NAME.app"
