@@ -16,16 +16,15 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      # - name: Build Universal Binary and Bundle App
-      #   run: |
-      #     chmod +x scripts/*.sh
-      #     sh scripts/build-app.sh
-
-      - name: Create DMG package
+      - name: Build Universal App & Create DMG
+        env:
+          GITHUB_REF_NAME: ${{ github.ref_name }}
         run: |
           chmod +x scripts/*.sh
-          sh scripts/build-dmg.sh
+          ./scripts/build-dmg.sh
 
       - name: Release and Upload DMG
         uses: softprops/action-gh-release@v1
