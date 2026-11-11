@@ -14,6 +14,7 @@ public enum PreferencesTab: String, CaseIterable, Identifiable {
 @MainActor
 public struct PreferencesView: View {
     @ObservedObject private var settingsManager: AppSettingsManager
+    @ObservedObject private var updateChecker = UpdateChecker.shared
     public var databaseManager: DatabaseManager?
     public var onDataChanged: (() -> Void)?
 
@@ -159,6 +160,46 @@ public struct PreferencesView: View {
                 Text("Esporta o ripristina tutte le clip (inclusi blob e immagini) e le liste in formato JSON")
                     .font(.caption)
                     .foregroundColor(.secondary)
+            }
+
+            Section(header: Text("Aggiornamenti")) {
+                HStack {
+                    Text("Versione installata:")
+                    Spacer()
+                    Text("v\(updateChecker.currentVersion)")
+                        .foregroundColor(.secondary)
+                }
+
+                Toggle("Controlla aggiornamenti automaticamente", isOn: $settingsManager.isAutoCheckUpdatesEnabled)
+                Text("Verifica periodicamente su GitHub la presenza di nuove versioni di ConCopy")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+                HStack {
+                    Button(action: {
+                        Task {
+                            await updateChecker.checkForUpdatesWithUI()
+                        }
+                    }) {
+                        HStack(spacing: 6) {
+                            if updateChecker.isChecking {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Image(systemName: "arrow.clockwise")
+                            }
+                            Text(updateChecker.isChecking ? "Verifica in corso..." : "Verifica ora")
+                        }
+                    }
+                    .disabled(updateChecker.isChecking)
+
+                    if let status = updateChecker.statusMessage {
+                        Spacer()
+                        Text(status)
+                            .font(.caption)
+                            .foregroundColor(updateChecker.availableUpdate != nil ? ConCopyTheme.Accents.primary : .secondary)
+                    }
+                }
             }
 
             // Section(header: Text("iCloud Sync")) {
