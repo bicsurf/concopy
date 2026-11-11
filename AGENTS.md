@@ -17,7 +17,7 @@ Sources/
 
 1. **`ConCopyCore`**:
    - **Nessuna dipendenza da SwiftUI**: Non importare mai `SwiftUI`, `NSView`, `NSWindow`, o viste grafiche in questo target.
-   - Responsabilità: Monitoraggio `NSPasteboard`, sanitizzazione query e storage SQLite con `GRDB.swift` + `FTS5`, deduplicazione crittografica SHA-256, I/O dei blob su disco, iniezione sintetica di eventi `CGEvent`, watcher del filesystem, sincronizzazione `CloudKit` e backup JSON.
+   - Responsabilità: Monitoraggio `NSPasteboard`, sanitizzazione query e storage SQLite con `GRDB.swift` + `FTS5`, deduplicazione crittografica SHA-256, I/O dei blob su disco, iniezione sintetica di eventi `CGEvent`, watcher del filesystem, sincronizzazione non-bloccante su `iCloud Drive` e backup JSON.
    - **Concorrenza & Threading**: I/O, parsing e calcoli pesanti devono avvenire su thread secondari o `actor` dedicati, mai vincolati a `@MainActor`.
 
 2. **`ConCopyUI`**:
@@ -62,9 +62,9 @@ Il pannello deve chiudersi immediatamente al cambio di contesto:
      - `↑ / ↓` (keyCodes 126, 125): muovono la selezione nella lista (Shift espande per multi-selezione).
      - `Cmd + 1 ... 9`, `Cmd + 0`: incollaggio rapido senza Shift, con fallback hardware keycode.
      - `Option + 1 ... 9`: cambio scheda/lista (senza inserire caratteri accentati o simboli nel campo di ricerca).
-     - `Cmd + D`: toggle preferiti.
+     - `Cmd + D`: deselezione rapida se selezione multipla attiva, altrimenti toggle preferiti.
      - `Cmd + M`: apertura modale lista.
-     - `Escape`: svuota la query se valorizzata; se vuota, chiude il pannello (`orderOut(nil)`).
+     - `Escape`: chiude fogli modali, deseleziona il batch se attivo, svuota la query se valorizzata, o chiude il pannello (`orderOut(nil)`).
 
 3. **Mappatura Hardware KeyCode**:
    - A causa del comportamento di AppKit con layout di tastiera internazionali (IT, US, FR, DE, tastierino numerico), non affidarsi unicamente a `charactersIgnoringModifiers`.
@@ -126,7 +126,7 @@ Il pannello deve chiudersi immediatamente al cambio di contesto:
 
 - **Zero Force-Unwrap**: Vietato l'uso di `!` o `fatalError` nel codice di produzione. Gestire sempre gli errori tramite `do-catch`, `guard let` o valori di fallback sicuri.
 - **Swift Concurrency**: Usare `async/await`, `actor` e `@MainActor` rispettando i vincoli di isolamento.
-- **Nessuna regressione nei test**: Ogni modifica apportata a `ConCopyCore` o alla logica di incollaggio deve mantenere tutti i 42 test esistenti funzionanti al 100%.
+- **Nessuna regressione nei test**: Ogni modifica apportata a `ConCopyCore` o alla logica di incollaggio deve mantenere tutti i 58 test esistenti funzionanti al 100%.
 
 ---
 
@@ -141,6 +141,6 @@ swift build
 # Verifica compilazione ottimizzata per release (zero warning ammessi)
 swift build -c release
 
-# Esecuzione completa dei test di unità e integrazione (42 test attesi)
+# Esecuzione completa dei test di unità e integrazione (58 test attesi)
 swift test
 ```

@@ -21,6 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApplication.shared.setActivationPolicy(.accessory)
+        NSApp.applicationIconImage = AboutWindowController.loadConCopyAppIcon()
 
         _ = checkAccessibilityPermissions()
 
@@ -49,7 +50,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         self.panel = floatingPanel
 
-        self.statusItemController = StatusItemController(panel: floatingPanel)
+        let statusController = StatusItemController(panel: floatingPanel)
+        if let button = statusController.statusButton {
+            button.image = MenuBarIcon.create()
+            button.imagePosition = .imageOnly
+            button.toolTip = "ConCopy"
+        }
+        self.statusItemController = statusController
 
         // Auto-check for updates if enabled
         Task {
@@ -124,7 +131,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         watcher.start()
         self.screenshotWatcher = watcher
 
-        // Setup CloudKit Sync Coordinator
+        // Setup iCloud Drive Sync Coordinator
         let sync = CloudKitSyncCoordinator(databaseManager: db)
         sync.onRemoteChangesImported = { [weak vm] in
             vm?.loadClips()
