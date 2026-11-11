@@ -5,9 +5,12 @@ import ConCopyCore
 public final class StatusItemController: NSObject {
     private var statusItem: NSStatusItem?
     private let onToggle: () -> Void
+    private let onClosePanel: (() -> Void)?
+    private weak var panel: FloatingPanel?
 
-    public init(onToggle: @escaping () -> Void) {
+    public init(onToggle: @escaping () -> Void, onClosePanel: (() -> Void)? = nil) {
         self.onToggle = onToggle
+        self.onClosePanel = onClosePanel
         super.init()
         setupStatusItem()
     }
@@ -15,15 +18,25 @@ public final class StatusItemController: NSObject {
     public convenience init(panel: FloatingPanel) {
         self.init(onToggle: { [weak panel] in
             panel?.togglePanel()
+        }, onClosePanel: { [weak panel] in
+            if panel?.isVisible == true {
+                panel?.orderOut(nil)
+            }
         })
+        self.panel = panel
+    }
+
+    public var statusButton: NSStatusBarButton? {
+        statusItem?.button
     }
 
     private func setupStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = item.button {
-            let image = NSImage(systemSymbolName: "doc.on.clipboard", accessibilityDescription: "ConCopy")
-            image?.isTemplate = true
+            let image = MenuBarIcon.create()
             button.image = image
+            button.imagePosition = .imageOnly
+            button.toolTip = "ConCopy"
             button.target = self
             button.action = #selector(statusItemClicked(_:))
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
@@ -60,6 +73,13 @@ public final class StatusItemController: NSObject {
             updateItem.target = self
             menu.addItem(updateItem)
 
+            let aboutItem = NSMenuItem(title: "Informazioni", action: #selector(openAbout), keyEquivalent: "")
+            if let infoImage = NSImage(systemSymbolName: "info.circle", accessibilityDescription: "Informazioni") {
+                aboutItem.image = infoImage
+            }
+            aboutItem.target = self
+            menu.addItem(aboutItem)
+
             menu.addItem(NSMenuItem.separator())
 
             let quitItem = NSMenuItem(title: "Esci da ConCopy", action: #selector(quitApp), keyEquivalent: "q")
@@ -83,7 +103,12 @@ public final class StatusItemController: NSObject {
     }
 
     @objc private func openPreferences() {
+        onClosePanel?()
         PreferencesWindowController.shared.showWindow()
+    }
+
+    @objc private func openAbout() {
+        AboutWindowController.shared.showWindow(closingPanel: onClosePanel)
     }
 
     @objc private func checkForUpdates() {

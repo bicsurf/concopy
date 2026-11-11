@@ -31,6 +31,10 @@ public final class FloatingPanel: NSPanel {
         self.hasShadow = true
         self.setFrameAutosaveName("ConCopyFloatingPanelFrame")
 
+        standardWindowButton(.closeButton)?.isHidden = true
+        standardWindowButton(.miniaturizeButton)?.isHidden = true
+        standardWindowButton(.zoomButton)?.isHidden = true
+
         viewModel.onClosePanel = { [weak self] in
             guard let self = self else { return }
             self.orderOut(nil)
@@ -290,14 +294,28 @@ public final class FloatingPanel: NSPanel {
             return true
         }
 
-        // Cmd+C: copy selected clip to clipboard when not actively editing search
+        // Cmd+C: copy selected clip or multiple clips to clipboard when not actively editing search
         if event.modifierFlags.contains(.command) && !event.modifierFlags.contains(.control) && !event.modifierFlags.contains(.shift) {
             if event.charactersIgnoringModifiers?.lowercased() == "c" && (!viewModel.isSearchFocused || viewModel.searchQuery.isEmpty) {
-                if viewModel.selectedIndex >= 0 && viewModel.selectedIndex < viewModel.clips.count {
+                if !viewModel.selectedClipIds.isEmpty {
+                    let ordered = viewModel.clips.filter { viewModel.selectedClipIds.contains($0.id) }
+                    if !ordered.isEmpty {
+                        try? viewModel.pasteInjector.copyBatchToPasteboard(
+                            clips: ordered,
+                            mode: .concatenated(separator: viewModel.batchSeparator),
+                            transformation: viewModel.activeTransformation,
+                            databaseManager: viewModel.databaseManager
+                        )
+                        viewModel.showToast("Copiati \(ordered.count) elementi negli appunti!")
+                        return true
+                    }
+                } else if viewModel.selectedIndex >= 0 && viewModel.selectedIndex < viewModel.clips.count {
                     let clip = viewModel.clips[viewModel.selectedIndex]
                     try? viewModel.pasteInjector.copyToPasteboard(
                         clip: clip,
-                        databaseManager: viewModel.databaseManager
+                        databaseManager: viewModel.databaseManager,
+                        forcePlainText: viewModel.isPlainTextModeEnabled,
+                        transformation: viewModel.activeTransformation
                     )
                     viewModel.showToast("Copiato negli appunti!")
                     return true

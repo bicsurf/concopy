@@ -8,6 +8,7 @@ public struct ClipboardListView: View {
     @FocusState private var isFieldFocused: Bool
     @State private var editTextValue: String = ""
     @State private var editNameValue: String = ""
+    @State private var isClearButtonHovered: Bool = false
 
     public init(viewModel: ClipboardViewModel) {
         self.viewModel = viewModel
@@ -322,10 +323,17 @@ public struct ClipboardListView: View {
                                     rowContextMenu(for: clip)
                                 }
                                 .onTapGesture {
-                                    if NSEvent.modifierFlags.contains(.command) {
-                                        viewModel.toggleSelection(clipId: clip.id)
+                                    let flags = NSEvent.modifierFlags
+                                    if flags.contains(.shift) {
+                                        viewModel.selectRange(to: clip)
+                                    } else if flags.contains(.command) {
+                                        viewModel.toggleSelection(for: clip)
                                     } else {
-                                        viewModel.selectedIndex = index
+                                        if !viewModel.selectedClipIds.isEmpty {
+                                            viewModel.toggleSelection(clipId: clip.id)
+                                        } else {
+                                            viewModel.selectSingle(clipId: clip.id)
+                                        }
                                     }
                                 }
                             }
@@ -346,27 +354,34 @@ public struct ClipboardListView: View {
             if !viewModel.selectedClipIds.isEmpty {
                 Divider().opacity(0.3)
                 HStack(spacing: 8) {
+                    // Contatore selezionati
                     Text("\(viewModel.selectedClipIds.count) selezionati")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: 12, weight: .medium))
                         .foregroundColor(.secondary)
+                        .padding(.leading, 2)
 
+                    // Pulsante X minimale per deselezione
                     Button(action: {
                         viewModel.clearSelection()
                     }) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.system(size: 11))
-                            Text("Deseleziona tutto")
-                                .font(.system(size: 11, weight: .medium))
-                        }
-                        .foregroundColor(.secondary)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .background(Color.primary.opacity(0.06))
-                        .clipShape(Capsule())
+                        Image(systemName: "xmark")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(isClearButtonHovered ? .primary : .secondary)
+                            .frame(width: 24, height: 24)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    .fill(isClearButtonHovered ? ConCopyTheme.Rows.hoverBackground : ConCopyTheme.Surfaces.pillBackground)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    .stroke(ConCopyTheme.Surfaces.pillBorder, lineWidth: 0.5)
+                            )
                     }
                     .buttonStyle(.plain)
-                    .help("Deseleziona tutti gli elementi (Esc o Cmd+D)")
+                    .help("Deseleziona tutto (Esc / ⌘D)")
+                    .onHover { hovering in
+                        isClearButtonHovered = hovering
+                    }
 
                     Spacer()
 
@@ -379,7 +394,7 @@ public struct ClipboardListView: View {
                         .pickerStyle(.menu)
                         .frame(maxWidth: 120)
 
-                        Button("Incolla Insieme") {
+                        Button(viewModel.appSettings.isDirectPasteEnabled ? "Incolla Insieme" : "Copia Insieme") {
                             viewModel.pasteSelectedBatch(mode: .concatenated(separator: viewModel.batchSeparator))
                         }
                         .buttonStyle(.borderedProminent)
@@ -389,6 +404,12 @@ public struct ClipboardListView: View {
                             viewModel.pasteSelectedBatch(mode: .sequentialFormFields(delayMs: 60))
                         }
                         .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    } else {
+                        Button(viewModel.appSettings.isDirectPasteEnabled ? "Incolla" : "Copia") {
+                            viewModel.pasteSelected()
+                        }
+                        .buttonStyle(.borderedProminent)
                         .controlSize(.small)
                     }
                 }
@@ -754,12 +775,14 @@ struct ClipRowView: View, Equatable {
     }
 
     var body: some View {
-        HStack(spacing: 9) {
+        HStack(spacing: 8) {
             // Checkbox for batch
             Button(action: onToggleCheck) {
                 Image(systemName: isChecked ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 12))
-                    .foregroundColor(isChecked ? .accentColor : .secondary.opacity(0.3))
+                    .font(.system(size: 13, weight: isChecked ? .semibold : .regular))
+                    .foregroundColor(isChecked ? .accentColor : .secondary.opacity(0.35))
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
 
@@ -858,8 +881,9 @@ struct ClipRowView: View, Equatable {
                 )
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
+        .padding(.leading, 4)
+        .padding(.trailing, 10)
+        .padding(.vertical, 5)
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(

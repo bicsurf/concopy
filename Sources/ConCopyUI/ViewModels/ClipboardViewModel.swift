@@ -21,6 +21,19 @@ public final class ClipboardViewModel: ObservableObject {
     @Published public var currentSortMode: ClipSortMode = .updatedAtDesc
     @Published public var selectedIndex: Int = 0
     @Published public var selectedClipIds: Set<UUID> = []
+    public private(set) var selectionAnchorId: UUID? = nil
+
+    public var selectedClipId: UUID? {
+        get {
+            guard selectedIndex >= 0 && selectedIndex < clips.count else { return nil }
+            return clips[selectedIndex].id
+        }
+        set {
+            if let newId = newValue, let idx = clips.firstIndex(where: { $0.id == newId }) {
+                selectedIndex = idx
+            }
+        }
+    }
     @Published public var batchSeparator: BatchPasteSeparator = .newline
     @Published public var isSearchFocused: Bool = false
     @Published public var isQuickLookVisible: Bool = false
@@ -206,38 +219,14 @@ public final class ClipboardViewModel: ObservableObject {
         }
     }
 
-    public func moveSelectionUp(expandSelection: Bool = false) {
-        if isSnippetsOnly {
-            if selectedSnippetIndex > 0 {
-                selectedSnippetIndex -= 1
-            }
-            return
-        }
-        if selectedIndex > 0 {
-            selectedIndex -= 1
-            if expandSelection, selectedIndex < clips.count {
-                selectedClipIds.insert(clips[selectedIndex].id)
-            } else if !expandSelection {
-                selectedClipIds.removeAll()
-            }
-        }
+    public func selectSingle(clipId: UUID) {
+        selectedClipIds.removeAll()
+        selectedClipId = clipId
+        selectionAnchorId = clipId
     }
 
-    public func moveSelectionDown(expandSelection: Bool = false) {
-        if isSnippetsOnly {
-            if selectedSnippetIndex < snippets.count - 1 {
-                selectedSnippetIndex += 1
-            }
-            return
-        }
-        if selectedIndex < clips.count - 1 {
-            selectedIndex += 1
-            if expandSelection, selectedIndex < clips.count {
-                selectedClipIds.insert(clips[selectedIndex].id)
-            } else if !expandSelection {
-                selectedClipIds.removeAll()
-            }
-        }
+    public func toggleSelection(for clip: ClipRecord) {
+        toggleSelection(clipId: clip.id)
     }
 
     public func toggleSelection(clipId: UUID) {
@@ -246,10 +235,95 @@ public final class ClipboardViewModel: ObservableObject {
         } else {
             selectedClipIds.insert(clipId)
         }
+        selectedClipId = clipId
+        selectionAnchorId = clipId
+    }
+
+    public func selectRange(to clip: ClipRecord) {
+        selectRange(toClipId: clip.id)
+    }
+
+    public func selectRange(toClipId clipId: UUID) {
+        guard !clips.isEmpty else { return }
+
+        let anchorId = selectionAnchorId ?? selectedClipId
+        let startIndex: Int
+        if let anchorId = anchorId, let found = clips.firstIndex(where: { $0.id == anchorId }) {
+            startIndex = found
+        } else {
+            startIndex = 0
+        }
+
+        let endIndex = clips.firstIndex(where: { $0.id == clipId }) ?? 0
+        let range = min(startIndex, endIndex)...max(startIndex, endIndex)
+
+        var newSelection: Set<UUID> = []
+        for idx in range {
+            newSelection.insert(clips[idx].id)
+        }
+        selectedClipIds = newSelection
+        selectedClipId = clipId
+        // Keep selectionAnchorId intact for subsequent extensions/contractions
+        if selectionAnchorId == nil {
+            selectionAnchorId = clips[startIndex].id
+        }
+    }
+
+    public func moveSelection(by offset: Int, extendSelection: Bool) {
+        if isSnippetsOnly {
+            if offset < 0 && selectedSnippetIndex > 0 {
+                selectedSnippetIndex -= 1
+            } else if offset > 0 && selectedSnippetIndex < snippets.count - 1 {
+                selectedSnippetIndex += 1
+            }
+            return
+        }
+
+        guard !clips.isEmpty else { return }
+
+        if !extendSelection {
+            selectedClipIds.removeAll()
+            let newIndex = max(0, min(clips.count - 1, selectedIndex + offset))
+            selectedIndex = newIndex
+            selectionAnchorId = selectedClipId
+            return
+        }
+
+        // Shift is held: extend or contract range with respect to selectionAnchorId
+        if selectionAnchorId == nil {
+            selectionAnchorId = selectedClipId
+        }
+
+        let anchorIndex: Int
+        if let anchorId = selectionAnchorId, let idx = clips.firstIndex(where: { $0.id == anchorId }) {
+            anchorIndex = idx
+        } else {
+            anchorIndex = selectedIndex
+            selectionAnchorId = selectedClipId
+        }
+
+        let targetIndex = max(0, min(clips.count - 1, selectedIndex + offset))
+        selectedIndex = targetIndex
+
+        let range = min(anchorIndex, targetIndex)...max(anchorIndex, targetIndex)
+        var newSelection: Set<UUID> = []
+        for idx in range {
+            newSelection.insert(clips[idx].id)
+        }
+        selectedClipIds = newSelection
+    }
+
+    public func moveSelectionUp(expandSelection: Bool = false) {
+        moveSelection(by: -1, extendSelection: expandSelection)
+    }
+
+    public func moveSelectionDown(expandSelection: Bool = false) {
+        moveSelection(by: 1, extendSelection: expandSelection)
     }
 
     public func clearSelection() {
         selectedClipIds.removeAll()
+        selectionAnchorId = selectedClipId
     }
 
     public func showToast(_ message: String, duration: TimeInterval = 2.5) {

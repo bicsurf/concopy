@@ -33,3 +33,13 @@ jobs:
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Commit Updated Homebrew Cask
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Casks/concopy.rb
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(release): aggiorna Homebrew Cask a v${GITHUB_REF_NAME#v} [skip ci]"
+            git push origin HEAD:main
+          fi

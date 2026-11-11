@@ -1,4 +1,5 @@
 # Build products & Swift Package Manager
+build/
 *.app
 .build/
 .swiftpm/
