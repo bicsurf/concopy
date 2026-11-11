@@ -202,12 +202,20 @@ public struct PreferencesView: View {
                 }
             }
 
-            // Section(header: Text("iCloud Sync")) {
-            //     Toggle("Sincronizzazione iCloud (CloudKit)", isOn: $settingsManager.iCloudSyncEnabled)
-            //     Text("Replicazione crittografata e privata delle clip testuali e delle liste tra i tuoi dispositivi Apple")
-            //         .font(.caption)
-            //         .foregroundColor(.secondary)
-            // }
+            Section(header: Text("Sincronizzazione iCloud Drive")) {
+                Toggle("Sincronizzazione iCloud Drive", isOn: $settingsManager.iCloudSyncEnabled)
+                    .disabled(!CloudKitSyncCoordinator.isCloudDriveAvailable)
+
+                if CloudKitSyncCoordinator.isCloudDriveAvailable {
+                    Text("Replicazione automatica e privata delle clip tra i tuoi Mac tramite la cartella iCloud Drive.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                } else {
+                    Text("iCloud Drive non disponibile o disabilitato su questo Mac.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
         }
         .formStyle(.grouped)
     }

@@ -181,13 +181,6 @@ public final class FloatingPanel: NSPanel {
         return false
     }
 
-    public override func keyDown(with event: NSEvent) {
-        if handleKeyDown(event) {
-            return
-        }
-        super.keyDown(with: event)
-    }
-
     private func handleKeyDown(_ event: NSEvent) -> Bool {
         // Escape: close preview/modals, clear selection, clear search, or close panel
         if event.keyCode == 53 {

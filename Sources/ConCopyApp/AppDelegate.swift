@@ -126,6 +126,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Setup CloudKit Sync Coordinator
         let sync = CloudKitSyncCoordinator(databaseManager: db)
+        sync.onRemoteChangesImported = { [weak vm] in
+            vm?.loadClips()
+        }
         if AppSettingsManager.shared.iCloudSyncEnabled {
             sync.startIfPossible()
         }
