@@ -42,6 +42,7 @@ public final class ClipboardViewModel: ObservableObject {
     public let pasteInjector: PasteInjector
     public let appSettings: AppSettingsManager
     public var onClosePanel: (() -> Void)?
+    public var onOpenSettings: (() -> Void)?
 
     public init(
         databaseManager: DatabaseManager,
@@ -247,6 +248,10 @@ public final class ClipboardViewModel: ObservableObject {
         }
     }
 
+    public func clearSelection() {
+        selectedClipIds.removeAll()
+    }
+
     public func showToast(_ message: String, duration: TimeInterval = 2.5) {
         self.toastMessage = message
         Task { @MainActor [weak self] in
@@ -299,13 +304,9 @@ public final class ClipboardViewModel: ObservableObject {
                         forcePlainText: forcePlainText,
                         transformation: transformation
                     )
-                    self.showToast("Copiato negli appunti!")
+                    self.onClosePanel?()
+                    self.pastingClipId = nil
                     self.loadClips()
-                    Task { @MainActor [weak self] in
-                        try? await Task.sleep(nanoseconds: 600_000_000)
-                        self?.onClosePanel?()
-                        self?.pastingClipId = nil
-                    }
                 } catch {
                     self.pastingClipId = nil
                     print("[ConCopy] Failed to copy clip: \(error)")
@@ -330,14 +331,17 @@ public final class ClipboardViewModel: ObservableObject {
                             self?.onClosePanel?()
                         } else {
                             Task { @MainActor [weak self] in
-                                try? await Task.sleep(nanoseconds: 1_200_000_000)
+                                try? await Task.sleep(nanoseconds: 450_000_000)
                                 self?.onClosePanel?()
+                                self?.loadClips()
                             }
                         }
                     }
                 )
                 self.pastingClipId = nil
-                self.loadClips()
+                if isTrusted {
+                    self.loadClips()
+                }
             } catch {
                 self.pastingClipId = nil
                 print("[ConCopy] Failed to paste clip: \(error)")
@@ -368,12 +372,9 @@ public final class ClipboardViewModel: ObservableObject {
                         transformation: transformation,
                         databaseManager: self.databaseManager
                     )
-                    self.showToast("Testo copiato negli appunti!")
+                    self.onClosePanel?()
+                    self.selectedClipIds.removeAll()
                     self.loadClips()
-                    Task { @MainActor [weak self] in
-                        try? await Task.sleep(nanoseconds: 600_000_000)
-                        self?.onClosePanel?()
-                    }
                 } catch {
                     print("[ConCopy] Failed to batch copy clips: \(error)")
                 }
@@ -397,13 +398,16 @@ public final class ClipboardViewModel: ObservableObject {
                             self?.onClosePanel?()
                         } else {
                             Task { @MainActor [weak self] in
-                                try? await Task.sleep(nanoseconds: 1_200_000_000)
+                                try? await Task.sleep(nanoseconds: 450_000_000)
                                 self?.onClosePanel?()
+                                self?.loadClips()
                             }
                         }
                     }
                 )
-                self.loadClips()
+                if isTrusted {
+                    self.loadClips()
+                }
             } catch {
                 print("[ConCopy] Failed to batch paste clips: \(error)")
             }

@@ -90,14 +90,18 @@ public struct ClipboardListView: View {
                 }
                 // Preferences button
                 Button(action: {
-                    PreferencesWindowController.shared.showWindow()
+                    if let onOpenSettings = viewModel.onOpenSettings {
+                        onOpenSettings()
+                    } else {
+                        PreferencesWindowController.shared.showWindow()
+                    }
                 }) {
                     Image(systemName: "gearshape")
                         .font(.system(size: 12))
                         .foregroundColor(.secondary)
                 }
                 .buttonStyle(.plain)
-                .help("Preferenze (Cmd+,)")
+                .help("Impostazioni (⌘,)")
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -269,6 +273,9 @@ public struct ClipboardListView: View {
                                     fileIconImage: clip.primaryType == .file ? viewModel.fileIcon(for: clip) : nil,
                                     onToggleCheck: {
                                         viewModel.toggleSelection(clipId: clip.id)
+                                    },
+                                    onToggleFavorite: {
+                                        viewModel.toggleFavorite(clip: clip)
                                     }
                                 )
                                 .equatable()
@@ -278,7 +285,11 @@ public struct ClipboardListView: View {
                                     rowContextMenu(for: clip)
                                 }
                                 .onTapGesture {
-                                    viewModel.selectedIndex = index
+                                    if NSEvent.modifierFlags.contains(.command) {
+                                        viewModel.toggleSelection(clipId: clip.id)
+                                    } else {
+                                        viewModel.selectedIndex = index
+                                    }
                                 }
                             }
                         }
@@ -294,35 +305,55 @@ public struct ClipboardListView: View {
                 }
             }
 
-            // Bottom Batch Paste Bar (when >= 2 clips selected)
-            if viewModel.selectedClipIds.count >= 2 {
+            // Bottom Batch Actions Bar (when multi-selection is active)
+            if !viewModel.selectedClipIds.isEmpty {
                 Divider().opacity(0.3)
                 HStack(spacing: 8) {
                     Text("\(viewModel.selectedClipIds.count) selezionati")
                         .font(.system(size: 11, weight: .medium))
                         .foregroundColor(.secondary)
 
+                    Button(action: {
+                        viewModel.clearSelection()
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 11))
+                            Text("Deseleziona tutto")
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                        .foregroundColor(.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(Color.primary.opacity(0.06))
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Deseleziona tutti gli elementi (Esc o Cmd+D)")
+
                     Spacer()
 
-                    Picker("", selection: $viewModel.batchSeparator) {
-                        ForEach(BatchPasteSeparator.allCases, id: \.self) { sep in
-                            Text(sep.displayName).tag(sep)
+                    if viewModel.selectedClipIds.count >= 2 {
+                        Picker("", selection: $viewModel.batchSeparator) {
+                            ForEach(BatchPasteSeparator.allCases, id: \.self) { sep in
+                                Text(sep.displayName).tag(sep)
+                            }
                         }
-                    }
-                    .pickerStyle(.menu)
-                    .frame(maxWidth: 120)
+                        .pickerStyle(.menu)
+                        .frame(maxWidth: 120)
 
-                    Button("Incolla Insieme") {
-                        viewModel.pasteSelectedBatch(mode: .concatenated(separator: viewModel.batchSeparator))
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
+                        Button("Incolla Insieme") {
+                            viewModel.pasteSelectedBatch(mode: .concatenated(separator: viewModel.batchSeparator))
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
 
-                    Button("Tab Modulo") {
-                        viewModel.pasteSelectedBatch(mode: .sequentialFormFields(delayMs: 60))
+                        Button("Tab Modulo") {
+                            viewModel.pasteSelectedBatch(mode: .sequentialFormFields(delayMs: 60))
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
@@ -672,6 +703,9 @@ struct ClipRowView: View, Equatable {
     var thumbnailImage: NSImage? = nil
     var fileIconImage: NSImage? = nil
     let onToggleCheck: () -> Void
+    var onToggleFavorite: (() -> Void)? = nil
+
+    @State private var isHovered = false
 
     static func == (lhs: ClipRowView, rhs: ClipRowView) -> Bool {
         lhs.clip == rhs.clip &&
@@ -743,15 +777,28 @@ struct ClipRowView: View, Equatable {
 
             Spacer(minLength: 6)
 
-            // Star Pill Badge
-            if clip.isFavorite {
-                Image(systemName: "star.fill")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundColor(ConCopyTheme.Accents.star)
-                    .padding(3)
-                    .background(ConCopyTheme.Accents.starBackground)
+            // Star Button (Favorite)
+            Button(action: {
+                onToggleFavorite?()
+            }) {
+                Image(systemName: clip.isFavorite ? "star.fill" : "star")
+                    .font(.system(size: 10, weight: clip.isFavorite ? .bold : .regular))
+                    .foregroundColor(
+                        clip.isFavorite
+                        ? ConCopyTheme.Accents.star
+                        : (isHovered ? Color.secondary : Color.secondary.opacity(0.35))
+                    )
+                    .frame(width: 18, height: 18)
+                    .background(
+                        clip.isFavorite
+                        ? ConCopyTheme.Accents.starBackground
+                        : (isHovered ? Color.primary.opacity(0.06) : Color.clear)
+                    )
                     .clipShape(Circle())
+                    .contentShape(Circle())
             }
+            .buttonStyle(.plain)
+            .help(clip.isFavorite ? "Rimuovi dai Preferiti (Cmd+D)" : "Aggiungi ai Preferiti (Cmd+D)")
 
             // Shortcut Pill Badge (⌘ + Valore)
             if let label = shortcutLabel {
@@ -792,6 +839,7 @@ struct ClipRowView: View, Equatable {
         .animation(.easeOut(duration: 0.12), value: isPasting)
         .contentShape(Rectangle())
         .padding(.horizontal, 6)
+        .onHover { isHovered = $0 }
     }
 
     private var typeBadgeBackground: Color {

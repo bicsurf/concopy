@@ -68,7 +68,7 @@ public struct PreferencesView: View {
                 clearHistoryAction()
             }
         } message: {
-            Text("Tutte le clip non contrassegnate come preferite verranno eliminate definitivamente dal disco.")
+            Text("Tutte le clip non contrassegnate come preferite verranno eliminate definitivamente dal disco")
         }
         .alert("Operazione Completata", isPresented: Binding(
             get: { statusAlertMessage != nil },
@@ -89,33 +89,32 @@ public struct PreferencesView: View {
                     Spacer()
                     KeyboardShortcuts.Recorder(for: .toggleConCopyPanel)
                 }
-                Text("Scorciatoia globale di sistema per mostrare o nascondere la finestra flottante di ConCopy (predefinito: ⇧⌘V).")
+                Text("Scorciatoia globale di sistema per mostrare o nascondere la finestra flottante di ConCopy (predefinito: ⇧⌘V)")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
 
             Section(header: Text("Monitoraggio Appunti")) {
                 Toggle("Pausa registrazione appunti", isOn: $settingsManager.isMonitoringPaused)
-                Text("Quando attiva, ConCopy non registrerà nuovi elementi copiati negli appunti.")
+                Text("Quando attiva, ConCopy non registrerà nuovi elementi copiati negli appunti")
                     .font(.caption)
                     .foregroundColor(.secondary)
 
                 Toggle("Cattura screenshot macOS", isOn: $settingsManager.autoCaptureScreenshots)
-                Text("Salva automaticamente le nuove schermate acquisite nella cartella screenshot.")
+                Text("Salva automaticamente le nuove schermate acquisite nella cartella screenshot")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
 
             Section(header: Text("Generale")) {
-                Toggle("Avvia automaticamente all'accesso", isOn: $settingsManager.launchAtLogin)
-            }
-
-            Section(header: Text("Incollaggio")) {
-                Toggle("Incolla direttamente alla selezione", isOn: $settingsManager.isDirectPasteEnabled)
-                Text("Se attivo, selezionare una clip la incolla immediatamente nell'app attiva. Se disattivato, la copia solo negli appunti (usa Cmd+V per incollare).")
+                Toggle("Avvia automaticamente all'accessione", isOn: $settingsManager.launchAtLogin)
+                Toggle("Incolla direttamente nella selezione", isOn: $settingsManager.isDirectPasteEnabled)
+                Text("Se attivo, selezionare una clip la incolla immediatamente nell'app attiva. Se disattivato, la copia solo negli appunti (usa Cmd+V per incollare)")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
+
+            // Section(header: Text("Incollaggio")) {
 
             Section(header: Text("Cronologia & Pulizia")) {
                 Toggle("Pulizia automatica", isOn: $settingsManager.autoCleanupEnabled)
@@ -136,19 +135,19 @@ public struct PreferencesView: View {
                     }
                 }
 
-                Text("Nota: gli elementi preferiti (★) non vengono mai eliminati automaticamente.")
+                Text("Nota: gli elementi preferiti (★) non vengono mai eliminati automaticamente")
                     .font(.caption)
                     .foregroundColor(.secondary)
 
                 Button(role: .destructive, action: {
                     isShowingClearConfirm = true
                 }) {
-                    Label("Svuota Cronologia Non Preferiti", systemImage: "trash")
+                    Label("Svuota Cronologia", systemImage: "trash")
                         .foregroundColor(.red)
                 }
             }
 
-            Section(header: Text("Backup & Ripristino (JSON)")) {
+            Section(header: Text("Backup & Ripristino")) {
                 HStack(spacing: 12) {
                     Button(action: exportBackupAction) {
                         Label("Esporta Archivio...", systemImage: "square.and.arrow.up")
@@ -157,17 +156,17 @@ public struct PreferencesView: View {
                         Label("Importa Archivio...", systemImage: "square.and.arrow.down")
                     }
                 }
-                Text("Esporta o ripristina tutte le clip (inclusi blob e immagini) e le liste in formato JSON.")
+                Text("Esporta o ripristina tutte le clip (inclusi blob e immagini) e le liste in formato JSON")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
 
-            Section(header: Text("iCloud Sync")) {
-                Toggle("Sincronizzazione iCloud (CloudKit)", isOn: $settingsManager.iCloudSyncEnabled)
-                Text("Replicazione crittografata e privata delle clip testuali e delle liste tra i tuoi dispositivi Apple.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
+            // Section(header: Text("iCloud Sync")) {
+            //     Toggle("Sincronizzazione iCloud (CloudKit)", isOn: $settingsManager.iCloudSyncEnabled)
+            //     Text("Replicazione crittografata e privata delle clip testuali e delle liste tra i tuoi dispositivi Apple")
+            //         .font(.caption)
+            //         .foregroundColor(.secondary)
+            // }
         }
         .formStyle(.grouped)
     }
@@ -175,7 +174,7 @@ public struct PreferencesView: View {
     // MARK: - Blacklist Tab
     private var blacklistTabView: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Le applicazioni in questa lista non verranno monitorate. I contenuti copiati da esse verranno ignorati.")
+            Text("Le applicazioni in questa lista non verranno monitorate. I contenuti copiati da esse verranno ignorati")
                 .font(.subheadline)
                 .foregroundColor(.secondary)
                 .padding(.horizontal, 20)
@@ -244,7 +243,7 @@ public struct PreferencesView: View {
                         chooseAppFile()
                     }
                     if let frontmost = NSWorkspace.shared.frontmostApplication,
-                       let bundleId = frontmost.bundleIdentifier {
+                        let bundleId = frontmost.bundleIdentifier {
                         Button("Aggiungi app attiva (\(frontmost.localizedName ?? bundleId))") {
                             settingsManager.addExcludedApp(bundleId: bundleId)
                         }
@@ -286,7 +285,7 @@ public struct PreferencesView: View {
             Text("Aggiungi Bundle ID da escludere")
                 .font(.headline)
 
-            Text("Inserisci l'identificatore bundle univoco dell'applicazione (es: com.apple.keychainaccess).")
+            Text("Inserisci l'identificatore bundle univoco dell'applicazione (es: com.apple.keychainaccess)")
                 .font(.caption)
                 .foregroundColor(.secondary)
 
@@ -344,7 +343,7 @@ public struct PreferencesView: View {
         do {
             let count = try db.clearAllHistory(preserveFavorites: true)
             onDataChanged?()
-            statusAlertMessage = "Eliminate \(count) clip dalla cronologia."
+            statusAlertMessage = "Eliminate \(count) clip dalla cronologia"
         } catch {
             statusAlertMessage = "Errore durante lo svuotamento: \(error.localizedDescription)"
         }
@@ -352,7 +351,7 @@ public struct PreferencesView: View {
 
     private func exportBackupAction() {
         guard let db = databaseManager else {
-            statusAlertMessage = "Database non disponibile."
+            statusAlertMessage = "Database non disponibile"
             return
         }
 
@@ -370,7 +369,7 @@ public struct PreferencesView: View {
                     }
                 } catch {
                     await MainActor.run {
-                        self.statusAlertMessage = "Errore durante l'esportazione: \(error.localizedDescription)"
+                        self.statusAlertMessage = "Errore durante l'esportazione:\n\(error.localizedDescription)"
                     }
                 }
             }
@@ -379,7 +378,7 @@ public struct PreferencesView: View {
 
     private func importBackupAction() {
         guard let db = databaseManager else {
-            statusAlertMessage = "Database non disponibile."
+            statusAlertMessage = "Database non disponibile"
             return
         }
 
@@ -400,7 +399,7 @@ public struct PreferencesView: View {
                     }
                 } catch {
                     await MainActor.run {
-                        self.statusAlertMessage = "Errore durante l'importazione: \(error.localizedDescription)"
+                        self.statusAlertMessage = "Errore durante l'importazione:\n\(error.localizedDescription)"
                     }
                 }
             }

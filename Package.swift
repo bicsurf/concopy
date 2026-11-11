@@ -43,7 +43,8 @@ let package = Package(
         .testTarget(
             name: "ConCopyCoreTests",
             dependencies: [
-                "ConCopyCore"
+                "ConCopyCore",
+                "ConCopyUI"
             ],
             path: "Tests/ConCopyCoreTests"
         )

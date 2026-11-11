@@ -5,6 +5,7 @@ import SwiftUI
 public final class FloatingPanel: NSPanel {
     public let viewModel: ClipboardViewModel
     public private(set) var previousApp: NSRunningApplication?
+    public var onOpenSettings: (() -> Void)?
 
     public init(viewModel: ClipboardViewModel) {
         self.viewModel = viewModel
@@ -188,7 +189,7 @@ public final class FloatingPanel: NSPanel {
     }
 
     private func handleKeyDown(_ event: NSEvent) -> Bool {
-        // Escape: close preview/modals, clear search, or close panel
+        // Escape: close preview/modals, clear selection, clear search, or close panel
         if event.keyCode == 53 {
             if viewModel.isQuickLookVisible {
                 viewModel.isQuickLookVisible = false
@@ -204,6 +205,10 @@ public final class FloatingPanel: NSPanel {
             }
             if viewModel.movingClip != nil {
                 viewModel.movingClip = nil
+                return true
+            }
+            if !viewModel.selectedClipIds.isEmpty {
+                viewModel.clearSelection()
                 return true
             }
             if !viewModel.searchQuery.isEmpty {
@@ -233,10 +238,18 @@ public final class FloatingPanel: NSPanel {
             return true
         }
 
-        // Cmd+,: Open preferences
+        // Cmd+,: Open preferences (key code 43 is comma or characters == ",")
         if event.modifierFlags.contains(.command),
-           event.charactersIgnoringModifiers == "," {
-            PreferencesWindowController.shared.showWindow()
+           event.charactersIgnoringModifiers == "," || event.keyCode == 43 {
+            orderOut(nil)
+            if let onOpenSettings = self.onOpenSettings {
+                onOpenSettings()
+            } else if let onOpenSettings = viewModel.onOpenSettings {
+                onOpenSettings()
+            } else {
+                PreferencesWindowController.shared.showWindow()
+            }
+            NSApp.activate(ignoringOtherApps: true)
             return true
         }
 
@@ -268,9 +281,13 @@ public final class FloatingPanel: NSPanel {
             return true
         }
 
-        // Cmd+D: toggle favorite on selected clip
+        // Cmd+D: clear selection if multi-selection active, else toggle favorite on selected clip
         if event.modifierFlags.contains(.command) && !event.modifierFlags.contains(.shift) && !event.modifierFlags.contains(.control) && (event.charactersIgnoringModifiers == "d" || event.charactersIgnoringModifiers == "D") {
-            viewModel.toggleFavoriteSelected()
+            if !viewModel.selectedClipIds.isEmpty {
+                viewModel.clearSelection()
+            } else {
+                viewModel.toggleFavoriteSelected()
+            }
             return true
         }
 

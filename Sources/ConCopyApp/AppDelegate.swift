@@ -41,6 +41,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let floatingPanel = FloatingPanel(viewModel: vm)
+        floatingPanel.onOpenSettings = {
+            PreferencesWindowController.shared.showWindow()
+        }
+        vm.onOpenSettings = {
+            PreferencesWindowController.shared.showWindow()
+        }
         self.panel = floatingPanel
 
         self.statusItemController = StatusItemController(panel: floatingPanel)
