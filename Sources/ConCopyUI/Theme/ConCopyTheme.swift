@@ -118,6 +118,16 @@ public enum ConCopyTheme {
             light: NSColor(red: 0.72, green: 0.28, blue: 0.12, alpha: 1.0),
             dark: NSColor(red: 0.92, green: 0.48, blue: 0.32, alpha: 1.0)
         )
+
+        /// Icona e accento Snippet (Ambra caldo #FF9F0A)
+        public static let snippet = ConCopyTheme.dynamicColor(
+            light: NSColor(red: 0.88, green: 0.52, blue: 0.05, alpha: 1.0),
+            dark: NSColor(red: 1.0, green: 0.62, blue: 0.04, alpha: 1.0)
+        )
+        public static let snippetBackground = ConCopyTheme.dynamicColor(
+            light: NSColor(red: 0.88, green: 0.52, blue: 0.05, alpha: 0.14),
+            dark: NSColor(red: 1.0, green: 0.62, blue: 0.04, alpha: 0.18)
+        )
     }
 
     // MARK: - Badge Scorciatoie (Quick Paste & Navigation Badges)

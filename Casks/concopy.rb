@@ -1,5 +1,5 @@
 cask "concopy" do
-  version "1.2.0"
+  version "1.2.1"
   sha256 "b21300c96738e6d3ed1f91dd9e78868aa384bbd17fa7aa1288b731c0fff35d3c"
 
   url "https://github.com/bicsurf/concopy/releases/download/v#{version}/ConCopy-#{version}.dmg"

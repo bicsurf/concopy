@@ -8,13 +8,13 @@ public final class PreferencesWindowController: NSWindowController {
 
     public init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 540, height: 440),
+            contentRect: NSRect(x: 0, y: 0, width: 580, height: 520),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.title = "Impostazioni ConCopy"
-        window.minSize = NSSize(width: 500, height: 380)
+        window.minSize = NSSize(width: 540, height: 460)
         window.center()
         window.isReleasedWhenClosed = false
         window.contentView = NSHostingView(rootView: PreferencesView())

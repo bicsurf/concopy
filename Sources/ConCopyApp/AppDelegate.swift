@@ -178,4 +178,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let options = [checkOptionPrompt: prompt] as CFDictionary
         return AXIsProcessTrustedWithOptions(options)
     }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        clipboardMonitor?.stop()
+        screenshotWatcher?.stop()
+        syncCoordinator?.stop()
+    }
 }

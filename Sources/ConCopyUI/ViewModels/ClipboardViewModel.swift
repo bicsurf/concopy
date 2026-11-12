@@ -13,7 +13,13 @@ public final class ClipboardViewModel: ObservableObject {
     @Published public var isFavoritesOnly: Bool = false
     @Published public var searchQuery: String = "" {
         didSet {
-            loadClips()
+            if isSnippetsOnly {
+                if selectedSnippetIndex >= filteredSnippets.count {
+                    selectedSnippetIndex = max(0, filteredSnippets.count - 1)
+                }
+            } else {
+                loadClips()
+            }
         }
     }
     @Published public var isPlainTextModeEnabled: Bool = false
@@ -34,6 +40,24 @@ public final class ClipboardViewModel: ObservableObject {
             }
         }
     }
+    public var isSelectionMode: Bool {
+        !selectedClipIds.isEmpty
+    }
+    public var filteredClips: [ClipRecord] {
+        clips
+    }
+    public var filteredSnippets: [SnippetRecord] {
+        let q = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return snippets }
+        return snippets.filter { snippet in
+            snippet.shortcut.lowercased().contains(q) ||
+            snippet.content.lowercased().contains(q) ||
+            (snippet.title?.lowercased().contains(q) == true)
+        }
+    }
+    @Published public var scrollTargetTopTrigger: UUID? = nil
+    private var lastTopClipId: UUID? = nil
+    private var lastTopClipUpdatedAt: Date? = nil
     @Published public var batchSeparator: BatchPasteSeparator = .newline
     @Published public var isSearchFocused: Bool = false
     @Published public var isQuickLookVisible: Bool = false
@@ -137,18 +161,58 @@ public final class ClipboardViewModel: ObservableObject {
 
     public func loadClips() {
         do {
-            self.clips = try databaseManager.searchClips(
+            let fetched = try databaseManager.searchClips(
                 query: searchQuery,
                 listId: selectedListId,
                 favoritesOnly: isFavoritesOnly,
                 sortMode: currentSortMode
             )
-            if selectedIndex >= clips.count {
+
+            let isNewTopClip: Bool
+            if let first = fetched.first {
+                if let lastId = lastTopClipId {
+                    isNewTopClip = (first.id != lastId) || (lastTopClipUpdatedAt != nil && first.updatedAt > lastTopClipUpdatedAt!)
+                } else {
+                    isNewTopClip = true
+                }
+            } else {
+                isNewTopClip = false
+            }
+
+            self.clips = fetched
+            self.lastTopClipId = fetched.first?.id
+            self.lastTopClipUpdatedAt = fetched.first?.updatedAt
+
+            if isNewTopClip && !isSelectionMode {
+                selectedClipId = fetched.first?.id
+                selectedClipIds.removeAll()
+                selectionAnchorId = nil
+                scrollTargetTopTrigger = UUID()
+            } else if selectedIndex >= clips.count {
                 selectedIndex = max(0, clips.count - 1)
             }
         } catch {
             print("[ConCopy] Error loading clips: \(error)")
         }
+    }
+
+    public func selectMostRecentClip() {
+        guard !clips.isEmpty else { return }
+        selectedClipId = filteredClips.first?.id
+        if !isSelectionMode {
+            selectedClipIds.removeAll()
+            selectionAnchorId = nil
+        }
+        scrollTargetTopTrigger = UUID()
+    }
+
+    public func prepareForPanelOpen() {
+        if !searchQuery.isEmpty {
+            searchQuery = ""
+        }
+        checkAccessibilityPermissions()
+        loadClips()
+        selectMostRecentClip()
     }
 
     public func selectAllClips() {
@@ -271,11 +335,10 @@ public final class ClipboardViewModel: ObservableObject {
 
     public func moveSelection(by offset: Int, extendSelection: Bool) {
         if isSnippetsOnly {
-            if offset < 0 && selectedSnippetIndex > 0 {
-                selectedSnippetIndex -= 1
-            } else if offset > 0 && selectedSnippetIndex < snippets.count - 1 {
-                selectedSnippetIndex += 1
-            }
+            let count = filteredSnippets.count
+            guard count > 0 else { return }
+            let newIndex = max(0, min(count - 1, selectedSnippetIndex + offset))
+            selectedSnippetIndex = newIndex
             return
         }
 
@@ -338,8 +401,8 @@ public final class ClipboardViewModel: ObservableObject {
 
     public func pasteSelected(optionHeld: Bool = false) {
         if isSnippetsOnly {
-            if selectedSnippetIndex >= 0 && selectedSnippetIndex < snippets.count {
-                pasteSnippet(snippets[selectedSnippetIndex])
+            if selectedSnippetIndex >= 0 && selectedSnippetIndex < filteredSnippets.count {
+                pasteSnippet(filteredSnippets[selectedSnippetIndex])
             }
             return
         }
@@ -533,10 +596,6 @@ public final class ClipboardViewModel: ObservableObject {
     public func promptMoveSelectedClipToList() {
         guard selectedIndex >= 0 && selectedIndex < clips.count else { return }
         let clip = clips[selectedIndex]
-        if lists.isEmpty {
-            showToast("Nessuna lista creata")
-            return
-        }
         self.movingClip = clip
     }
 
@@ -549,14 +608,33 @@ public final class ClipboardViewModel: ObservableObject {
         }
     }
 
+    public func assignSelectedClipsToList(listId: UUID?) {
+        for clipId in selectedClipIds {
+            do {
+                _ = try databaseManager.assignClip(clipId: clipId, toListId: listId)
+            } catch {
+                print("[ConCopy] Failed to assign clip \(clipId) to list: \(error)")
+            }
+        }
+        loadClips()
+    }
+
+    public func convertMovingClipToSnippet() {
+        guard let clip = movingClip else { return }
+        movingClip = nil
+        createSnippetFromClip(clip)
+    }
+
     public func assignMovingClip(toOptionIndex digit: Int) {
         guard let clip = movingClip else { return }
         if digit == 1 {
             assignClipToList(clip: clip, listId: nil)
             movingClip = nil
             showToast("Rimosso da tutte le liste")
+        } else if digit == 2 {
+            convertMovingClipToSnippet()
         } else {
-            let listIndex = digit - 2
+            let listIndex = digit - 3
             if listIndex >= 0 && listIndex < lists.count {
                 let list = lists[listIndex]
                 assignClipToList(clip: clip, listId: list.id)
@@ -580,9 +658,25 @@ public final class ClipboardViewModel: ObservableObject {
     public func loadSnippets() {
         do {
             snippets = try databaseManager.fetchSnippets()
+            if selectedSnippetIndex >= filteredSnippets.count {
+                selectedSnippetIndex = max(0, filteredSnippets.count - 1)
+            }
         } catch {
             print("[ConCopy] Failed to load snippets: \(error)")
         }
+    }
+
+    public func createSnippetFromClip(_ clip: ClipRecord) {
+        let text = clip.plainText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !text.isEmpty else { return }
+        let autoTitle = clip.customName ?? (text.count > 30 ? String(text.prefix(30)) + "..." : text)
+        let placeholder = SnippetRecord(
+            shortcut: ";",
+            content: text,
+            title: autoTitle
+        )
+        editingSnippet = placeholder
+        isSnippetEditorPresented = true
     }
 
     public func saveSnippet(shortcut: String, content: String, title: String? = nil, existingId: UUID? = nil) {
@@ -668,5 +762,9 @@ public final class ClipboardViewModel: ObservableObject {
             }
         }
         return NSWorkspace.shared.icon(forFile: fileURL.path)
+    }
+
+    public func appIcon(for clip: ClipRecord) -> NSImage? {
+        AppIconProvider.shared.icon(for: clip.sourceAppBundleId)
     }
 }

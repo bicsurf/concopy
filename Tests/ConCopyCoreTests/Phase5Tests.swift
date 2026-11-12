@@ -93,6 +93,7 @@ final class Phase5Tests: XCTestCase {
             CapturedClip(plainText: "Standard small text clip")
         )
         _ = try databaseManager.assignClip(clipId: textClip.id, toListId: list1.id)
+        _ = try databaseManager.toggleFavorite(clipId: textClip.id)
         try databaseManager.updateCustomName(clipId: textClip.id, name: "Quick Note")
 
         let largeData = Data(repeating: 0x55, count: 6000)

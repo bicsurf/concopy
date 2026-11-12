@@ -20,7 +20,7 @@ public final class StatusItemController: NSObject {
             panel?.togglePanel()
         }, onClosePanel: { [weak panel] in
             if panel?.isVisible == true {
-                panel?.orderOut(nil)
+                panel?.hidePanel(restoreFocus: false)
             }
         })
         self.panel = panel
@@ -95,7 +95,11 @@ public final class StatusItemController: NSObject {
     }
 
     @objc private func showConCopy() {
-        onToggle()
+        if let panel = panel {
+            panel.showPanel()
+        } else {
+            onToggle()
+        }
     }
 
     @objc private func toggleMonitoringPause() {

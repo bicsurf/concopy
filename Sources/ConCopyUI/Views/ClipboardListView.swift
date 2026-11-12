@@ -5,6 +5,7 @@ import SwiftUI
 public struct ClipboardListView: View {
     @ObservedObject public var viewModel: ClipboardViewModel
     @ObservedObject private var updateChecker = UpdateChecker.shared
+    @ObservedObject private var shortcutsManager = GlobalShortcutsManager.shared
     @FocusState private var isFieldFocused: Bool
     @State private var editTextValue: String = ""
     @State private var editNameValue: String = ""
@@ -199,7 +200,7 @@ public struct ClipboardListView: View {
                         title: "Tutte",
                         icon: "tray.full",
                         isSelected: viewModel.selectedListId == nil && !viewModel.isFavoritesOnly && !viewModel.isSnippetsOnly,
-                        shortcutHint: "⌥1"
+                        shortcutHint: "\(shortcutsManager.listModifierSymbol)1"
                     ) {
                         viewModel.selectAllClips()
                     }
@@ -208,16 +209,16 @@ public struct ClipboardListView: View {
                         title: "Preferiti",
                         icon: "star.fill",
                         isSelected: viewModel.selectedListId == nil && viewModel.isFavoritesOnly && !viewModel.isSnippetsOnly,
-                        shortcutHint: "⌥2"
+                        shortcutHint: "\(shortcutsManager.listModifierSymbol)2"
                     ) {
                         viewModel.selectFavorites()
                     }
 
                     ListTabButton(
                         title: "Snippet",
-                        icon: "text.badge.plus",
+                        icon: "curlybraces",
                         isSelected: viewModel.isSnippetsOnly,
-                        shortcutHint: "⌥3"
+                        shortcutHint: "\(shortcutsManager.listModifierSymbol)3"
                     ) {
                         viewModel.selectSnippets()
                     }
@@ -227,7 +228,7 @@ public struct ClipboardListView: View {
                             title: list.name,
                             icon: list.isAutoStarActive ? "star.circle.fill" : "folder",
                             isSelected: !viewModel.isSnippetsOnly && viewModel.selectedListId == list.id,
-                            shortcutHint: index + 4 <= 9 ? "⌥\(index + 4)" : nil
+                            shortcutHint: index + 4 <= 9 ? "\(shortcutsManager.listModifierSymbol)\(index + 4)" : nil
                         ) {
                             viewModel.selectList(list.id)
                         }
@@ -307,8 +308,10 @@ public struct ClipboardListView: View {
                                     isChecked: viewModel.selectedClipIds.contains(clip.id),
                                     isPasting: viewModel.pastingClipId == clip.id,
                                     shortcutLabel: QuickPasteShortcutMapper.label(forIndex: index),
+                                    quickPasteModifier: shortcutsManager.quickPasteModifierSystemImage,
                                     thumbnailImage: clip.primaryType == .image ? viewModel.imageThumbnail(for: clip) : nil,
                                     fileIconImage: clip.primaryType == .file ? viewModel.fileIcon(for: clip) : nil,
+                                    appIconImage: viewModel.appIcon(for: clip),
                                     onToggleCheck: {
                                         viewModel.toggleSelection(clipId: clip.id)
                                     },
@@ -317,7 +320,7 @@ public struct ClipboardListView: View {
                                     }
                                 )
                                 .equatable()
-                                .id("\(clip.id)-\(index)-\(clip.updatedAt.timeIntervalSince1970)-\(clip.customName ?? "")-\(clip.isFavorite)")
+                                .id("\(clip.id)-\(index)-\(clip.updatedAt.timeIntervalSince1970)-\(clip.customName ?? "")-\(clip.isFavorite)-\(shortcutsManager.swapNumericModifiers)")
                                 .contentShape(Rectangle())
                                 .contextMenu {
                                     rowContextMenu(for: clip)
@@ -340,10 +343,23 @@ public struct ClipboardListView: View {
                         }
                         .padding(.vertical, 4)
                     }
+                    .onAppear {
+                        viewModel.selectMostRecentClip()
+                        if let firstId = viewModel.clips.first?.id {
+                            proxy.scrollTo(firstId, anchor: .top)
+                        }
+                    }
+                    .onChange(of: viewModel.scrollTargetTopTrigger) { _, _ in
+                        if let firstId = viewModel.clips.first?.id {
+                            withAnimation(.easeInOut(duration: 0.1)) {
+                                proxy.scrollTo(firstId, anchor: .top)
+                            }
+                        }
+                    }
                     .onChange(of: viewModel.selectedIndex) { _, newIndex in
                         if newIndex >= 0 && newIndex < viewModel.clips.count {
                             withAnimation(.easeInOut(duration: 0.1)) {
-                                proxy.scrollTo(viewModel.clips[newIndex].id, anchor: .center)
+                                proxy.scrollTo(viewModel.clips[newIndex].id, anchor: newIndex == 0 ? .top : .center)
                             }
                         }
                     }
@@ -651,6 +667,14 @@ public struct ClipboardListView: View {
             }
         }
 
+        if clip.plainText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+            Button {
+                viewModel.createSnippetFromClip(clip)
+            } label: {
+                Label("Salva come Snippet...", systemImage: "curlybraces")
+            }
+        }
+
         Menu("Incolla come File") {
             Button("File di Testo (.txt)") {
                 viewModel.pasteAsFile(clip: clip)
@@ -758,8 +782,10 @@ struct ClipRowView: View, Equatable {
     let isChecked: Bool
     let isPasting: Bool
     let shortcutLabel: String?
+    var quickPasteModifier: String = GlobalShortcutsManager.shared.quickPasteModifierSystemImage
     var thumbnailImage: NSImage? = nil
     var fileIconImage: NSImage? = nil
+    var appIconImage: NSImage? = nil
     let onToggleCheck: () -> Void
     var onToggleFavorite: (() -> Void)? = nil
 
@@ -771,7 +797,8 @@ struct ClipRowView: View, Equatable {
         lhs.isSelected == rhs.isSelected &&
         lhs.isChecked == rhs.isChecked &&
         lhs.isPasting == rhs.isPasting &&
-        lhs.shortcutLabel == rhs.shortcutLabel
+        lhs.shortcutLabel == rhs.shortcutLabel &&
+        lhs.quickPasteModifier == rhs.quickPasteModifier
     }
 
     var body: some View {
@@ -788,20 +815,49 @@ struct ClipRowView: View, Equatable {
 
             // Type Icon Badge or Preview
             if let thumb = thumbnailImage {
-                Image(nsImage: thumb)
-                    .resizable()
-                    .scaledToFill()
-                    .frame(width: 26, height: 26)
-                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .stroke(Color.primary.opacity(0.12), lineWidth: 0.5)
-                    )
+                ZStack(alignment: .bottomTrailing) {
+                    Image(nsImage: thumb)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 26, height: 26)
+                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .stroke(Color.primary.opacity(0.12), lineWidth: 0.5)
+                        )
+                    if let appIcon = appIconImage {
+                        Image(nsImage: appIcon)
+                            .resizable()
+                            .interpolation(.high)
+                            .scaledToFit()
+                            .frame(width: 12, height: 12)
+                            .offset(x: 2, y: 2)
+                    }
+                }
+                .frame(width: 26, height: 26)
             } else if let icon = fileIconImage {
-                Image(nsImage: icon)
+                ZStack(alignment: .bottomTrailing) {
+                    Image(nsImage: icon)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 24, height: 24)
+                    if let appIcon = appIconImage {
+                        Image(nsImage: appIcon)
+                            .resizable()
+                            .interpolation(.high)
+                            .scaledToFit()
+                            .frame(width: 11, height: 11)
+                            .offset(x: 2, y: 2)
+                    }
+                }
+                .frame(width: 24, height: 24)
+            } else if let appIcon = appIconImage {
+                Image(nsImage: appIcon)
                     .resizable()
+                    .interpolation(.high)
                     .scaledToFit()
                     .frame(width: 24, height: 24)
+                    .shadow(color: Color.black.opacity(0.15), radius: 1, x: 0, y: 0.5)
             } else {
                 ZStack {
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
@@ -860,10 +916,10 @@ struct ClipRowView: View, Equatable {
             .buttonStyle(.plain)
             .help(clip.isFavorite ? "Rimuovi dai Preferiti (Cmd+D)" : "Aggiungi ai Preferiti (Cmd+D)")
 
-            // Shortcut Pill Badge (⌘ + Valore)
+            // Shortcut Pill Badge
             if let label = shortcutLabel {
                 HStack(spacing: 2) {
-                    Image(systemName: "command")
+                    Image(systemName: quickPasteModifier)
                         .font(.system(size: 8.5, weight: .medium))
                     Text(label)
                         .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
@@ -934,6 +990,7 @@ struct ClipRowView: View, Equatable {
 
 struct MoveToListSheetView: View {
     @ObservedObject var viewModel: ClipboardViewModel
+    @ObservedObject private var shortcutsManager = GlobalShortcutsManager.shared
     let clip: ClipRecord
     @State private var eventMonitor: Any? = nil
 
@@ -946,7 +1003,7 @@ struct MoveToListSheetView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Sposta nella Lista")
                         .font(.headline)
-                    Text("Seleziona con click o ⌥1..9")
+                    Text("Seleziona con click o \(shortcutsManager.listModifierSymbol)1..9")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -971,7 +1028,7 @@ struct MoveToListSheetView: View {
                                 .font(.system(size: 11, weight: .bold))
                                 .foregroundColor(ConCopyTheme.Accents.primary)
                         }
-                        Text("⌥1")
+                        Text("\(shortcutsManager.listModifierSymbol)1")
                             .font(.system(size: 9, weight: .semibold, design: .monospaced))
                             .foregroundColor(.secondary)
                             .padding(.horizontal, 4)
@@ -990,8 +1047,40 @@ struct MoveToListSheetView: View {
                 }
                 .buttonStyle(.plain)
 
+                // Opzione fissa "Snippet"
+                Button(action: {
+                    viewModel.convertMovingClipToSnippet()
+                }) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "curlybraces")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(ConCopyTheme.Accents.snippet)
+                            .frame(width: 16)
+                        Text("Snippet")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(.primary)
+                        Spacer()
+                        Text("\(shortcutsManager.listModifierSymbol)2")
+                            .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                            .foregroundColor(.secondary)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 2)
+                            .background(
+                                RoundedRectangle(cornerRadius: 3.5, style: .continuous)
+                                    .fill(ConCopyTheme.Surfaces.pillBackground)
+                            )
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(ConCopyTheme.Surfaces.pillBackground)
+                    )
+                }
+                .buttonStyle(.plain)
+
                 ForEach(Array(viewModel.lists.enumerated()), id: \.element.id) { index, list in
-                    let digit = index + 2
+                    let digit = index + 3
                     Button(action: {
                         viewModel.assignClipToList(clip: clip, listId: list.id)
                         viewModel.movingClip = nil
@@ -1009,7 +1098,7 @@ struct MoveToListSheetView: View {
                                     .foregroundColor(ConCopyTheme.Accents.primary)
                             }
                             if digit <= 9 {
-                                Text("⌥\(digit)")
+                                Text("\(shortcutsManager.listModifierSymbol)\(digit)")
                                     .font(.system(size: 9, weight: .semibold, design: .monospaced))
                                     .foregroundColor(.secondary)
                                     .padding(.horizontal, 4)
@@ -1048,32 +1137,11 @@ struct MoveToListSheetView: View {
                     return nil
                 }
 
-                if event.modifierFlags.contains(.option) && !event.modifierFlags.contains(.command) && !event.modifierFlags.contains(.control) {
-                    var optionDigit: Int? = nil
-                    switch event.keyCode {
-                    case 18, 83: optionDigit = 1
-                    case 19, 84: optionDigit = 2
-                    case 20, 85: optionDigit = 3
-                    case 21, 86: optionDigit = 4
-                    case 23, 87: optionDigit = 5
-                    case 22, 88: optionDigit = 6
-                    case 26, 89: optionDigit = 7
-                    case 28, 91: optionDigit = 8
-                    case 25, 92: optionDigit = 9
-                    default: break
-                    }
-
-                    if optionDigit == nil, let chars = event.charactersIgnoringModifiers,
-                       let char = chars.first,
-                       let d = char.wholeNumberValue, d >= 1 && d <= 9 {
-                        optionDigit = d
-                    }
-
-                    if let digit = optionDigit {
-                        viewModel.assignMovingClip(toOptionIndex: digit)
-                        return nil
-                    }
+                if let digit = shortcutsManager.matchedListDigit(for: event) {
+                    viewModel.assignMovingClip(toOptionIndex: digit)
+                    return nil
                 }
+
                 return event
             }
         }
@@ -1089,47 +1157,75 @@ struct MoveToListSheetView: View {
 // MARK: - Snippets List View
 struct SnippetsListView: View {
     @ObservedObject var viewModel: ClipboardViewModel
+    @ObservedObject private var shortcutsManager = GlobalShortcutsManager.shared
 
     var body: some View {
         VStack(spacing: 0) {
+            // Header bar con contatore e pulsante "+ Nuovo Snippet"
             HStack {
-                Text("Snippet Espandibili (\(viewModel.snippets.count))")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.secondary)
+                HStack(spacing: 6) {
+                    Image(systemName: "curlybraces")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(ConCopyTheme.Accents.snippet)
+                    Text("Snippet (\(viewModel.filteredSnippets.count))")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.secondary)
+                }
+
                 Spacer()
+
                 Button(action: {
                     viewModel.editingSnippet = nil
                     viewModel.isSnippetEditorPresented = true
                 }) {
                     HStack(spacing: 4) {
-                        Image(systemName: "plus")
+                        Image(systemName: "plus.circle.fill")
+                            .font(.system(size: 11))
                         Text("Nuovo Snippet")
+                            .font(.system(size: 11, weight: .semibold))
                     }
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(ConCopyTheme.Accents.primary)
+                    .foregroundColor(ConCopyTheme.Accents.snippet)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(ConCopyTheme.Accents.snippetBackground)
+                    )
                 }
                 .buttonStyle(.plain)
             }
             .padding(.horizontal, 14)
-            .padding(.vertical, 8)
+            .padding(.vertical, 7)
             .background(Color.primary.opacity(0.02))
 
             Divider().opacity(0.3)
 
-            if viewModel.snippets.isEmpty {
+            let displayedSnippets = viewModel.filteredSnippets
+
+            if displayedSnippets.isEmpty {
                 VStack(spacing: 8) {
-                    Image(systemName: "text.badge.plus")
+                    Image(systemName: "curlybraces")
                         .font(.system(size: 28, weight: .light))
-                        .foregroundColor(.secondary.opacity(0.6))
+                        .foregroundColor(ConCopyTheme.Accents.snippet.opacity(0.7))
                         .padding(.bottom, 4)
-                    Text("Nessuno snippet salvato")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(.secondary)
-                    Text("Crea scorciatoie come ';email' o ';indirizzo' per espandere testi frequenti.")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary.opacity(0.6))
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 24)
+
+                    if !viewModel.searchQuery.isEmpty {
+                        Text("Nessuno snippet corrisponde a \"\(viewModel.searchQuery)\"")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(.secondary)
+                        Text("Premi Esc per svuotare la ricerca o crea un nuovo snippet.")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary.opacity(0.6))
+                    } else {
+                        Text("Nessuno snippet salvato")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(.secondary)
+                        Text("Crea scorciatoie come ';email' o ';indirizzo' per espandere testi frequenti.")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary.opacity(0.6))
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 24)
+                    }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(WindowDragGestureArea())
@@ -1137,103 +1233,185 @@ struct SnippetsListView: View {
             } else {
                 ScrollViewReader { proxy in
                     ScrollView {
-                        LazyVStack(spacing: 4) {
-                            ForEach(Array(viewModel.snippets.enumerated()), id: \.element.id) { index, snippet in
-                                let isSelected = viewModel.selectedSnippetIndex == index
-                                let shortcutBadge = QuickPasteShortcutMapper.label(forIndex: index)
-
-                                HStack(spacing: 10) {
-                                    Text(snippet.shortcut)
-                                        .font(.system(size: 11, weight: .bold, design: .monospaced))
-                                        .foregroundColor(ConCopyTheme.Accents.primary)
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 3)
-                                        .background(
-                                            RoundedRectangle(cornerRadius: 4, style: .continuous)
-                                                .fill(ConCopyTheme.Rows.selectedBackground)
-                                        )
-
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        if let title = snippet.title, !title.isEmpty {
-                                            Text(title)
-                                                .font(.system(size: 12.5, weight: .semibold))
-                                                .foregroundColor(.primary)
-                                        }
-                                        Text(snippet.content)
-                                            .font(.system(size: 11.5))
-                                            .foregroundColor(.secondary)
-                                            .lineLimit(2)
-                                    }
-
-                                    Spacer()
-
-                                    if let badge = shortcutBadge {
-                                        HStack(spacing: 2) {
-                                            Image(systemName: "command")
-                                                .font(.system(size: 8.5, weight: .medium))
-                                            Text(badge)
-                                                .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
-                                        }
-                                        .foregroundColor(ConCopyTheme.Badges.quickPasteForeground(isSelected: isSelected))
-                                        .padding(.horizontal, 4.5)
-                                        .padding(.vertical, 2.5)
-                                        .background(
-                                            RoundedRectangle(cornerRadius: 4, style: .continuous)
-                                                .fill(ConCopyTheme.Badges.quickPasteBackground(isSelected: isSelected))
-                                        )
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 4, style: .continuous)
-                                                .stroke(ConCopyTheme.Badges.quickPasteBorder(isSelected: isSelected), lineWidth: 0.5)
-                                        )
-                                    }
-
-                                    Button("Incolla") {
+                        LazyVStack(spacing: 2) {
+                            ForEach(Array(displayedSnippets.enumerated()), id: \.element.id) { index, snippet in
+                                SnippetRowView(
+                                    snippet: snippet,
+                                    index: index,
+                                    isSelected: viewModel.selectedSnippetIndex == index,
+                                    shortcutLabel: QuickPasteShortcutMapper.label(forIndex: index),
+                                    onPaste: {
                                         viewModel.selectedSnippetIndex = index
                                         viewModel.pasteSnippet(snippet)
-                                    }
-                                    .buttonStyle(.borderedProminent)
-                                    .controlSize(.small)
-                                }
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 8)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                        .fill(isSelected ? ConCopyTheme.Rows.selectedBackground : ConCopyTheme.Surfaces.pillBackground)
+                                    },
+                                    onEdit: {
+                                        viewModel.editingSnippet = snippet
+                                        viewModel.isSnippetEditorPresented = true
+                                    },
+                                    onDelete: {
+                                        viewModel.deleteSnippet(snippet)
+                                    },
+                                    quickPasteModifier: shortcutsManager.quickPasteModifierSystemImage
                                 )
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                        .stroke(isSelected ? ConCopyTheme.Rows.selectedBorder : Color.clear, lineWidth: 1)
-                                )
-                                .contentShape(Rectangle())
-                                .id(snippet.id)
+                                .id("\(snippet.id)-\(index)-\(shortcutsManager.swapNumericModifiers)")
                                 .onTapGesture {
                                     viewModel.selectedSnippetIndex = index
                                 }
-                                .contextMenu {
-                                    Button("Modifica") {
-                                        viewModel.editingSnippet = snippet
-                                        viewModel.isSnippetEditorPresented = true
-                                    }
-                                    Button("Incolla") {
-                                        viewModel.pasteSnippet(snippet)
-                                    }
-                                    Divider()
-                                    Button("Elimina", role: .destructive) {
-                                        viewModel.deleteSnippet(snippet)
-                                    }
-                                }
                             }
                         }
-                        .padding(8)
+                        .padding(.vertical, 4)
                     }
                     .onChange(of: viewModel.selectedSnippetIndex) { _, newIndex in
-                        if newIndex >= 0 && newIndex < viewModel.snippets.count {
+                        if newIndex >= 0 && newIndex < displayedSnippets.count {
                             withAnimation(.easeInOut(duration: 0.1)) {
-                                proxy.scrollTo(viewModel.snippets[newIndex].id, anchor: .center)
+                                proxy.scrollTo(displayedSnippets[newIndex].id, anchor: newIndex == 0 ? .top : .center)
                             }
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+// MARK: - Snippet Row View
+struct SnippetRowView: View {
+    let snippet: SnippetRecord
+    let index: Int
+    let isSelected: Bool
+    let shortcutLabel: String?
+    let onPaste: () -> Void
+    let onEdit: () -> Void
+    let onDelete: () -> Void
+    var quickPasteModifier: String = GlobalShortcutsManager.shared.quickPasteModifierSystemImage
+
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            // Icona Snippet coerente (curlybraces in ambra)
+            ZStack {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(ConCopyTheme.Accents.snippetBackground)
+                    .frame(width: 24, height: 24)
+                Image(systemName: "curlybraces")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(ConCopyTheme.Accents.snippet)
+            }
+
+            // Titolo, Keyword Badge e Anteprima del Contenuto
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    if let title = snippet.title, !title.isEmpty {
+                        Text(title)
+                            .font(.system(size: 12.5, weight: .semibold))
+                            .foregroundColor(.primary)
+                            .lineLimit(1)
+                    } else {
+                        Text(snippet.shortcut)
+                            .font(.system(size: 12.5, weight: .semibold))
+                            .foregroundColor(.primary)
+                            .lineLimit(1)
+                    }
+
+                    // Keyword / Trigger badge
+                    Text(snippet.shortcut)
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .foregroundColor(ConCopyTheme.Accents.snippet)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1.5)
+                        .background(
+                            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                .fill(ConCopyTheme.Accents.snippetBackground)
+                        )
+                }
+
+                Text(snippet.content.trimmingCharacters(in: .whitespacesAndNewlines))
+                    .font(.system(size: 11.5, weight: .regular))
+                    .foregroundColor(.secondary)
+                    .lineLimit(2)
+            }
+
+            Spacer(minLength: 6)
+
+            // Azioni rapide visibili in hover
+            if isHovered {
+                HStack(spacing: 4) {
+                    Button(action: onEdit) {
+                        Image(systemName: "pencil")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                            .frame(width: 22, height: 22)
+                            .background(
+                                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                    .fill(ConCopyTheme.Surfaces.pillBackground)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .help("Modifica Snippet...")
+
+                    Button(action: onDelete) {
+                        Image(systemName: "trash")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                            .frame(width: 22, height: 22)
+                            .background(
+                                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                    .fill(ConCopyTheme.Surfaces.pillBackground)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .help("Elimina Snippet")
+                }
+            }
+
+            // Shortcut Pill Badge (per incollaggio rapido)
+            if let label = shortcutLabel {
+                HStack(spacing: 2) {
+                    Image(systemName: quickPasteModifier)
+                        .font(.system(size: 8.5, weight: .medium))
+                    Text(label)
+                        .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                }
+                .foregroundColor(ConCopyTheme.Badges.quickPasteForeground(isSelected: isSelected))
+                .padding(.horizontal, 4.5)
+                .padding(.vertical, 2.5)
+                .background(
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .fill(ConCopyTheme.Badges.quickPasteBackground(isSelected: isSelected))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .stroke(ConCopyTheme.Badges.quickPasteBorder(isSelected: isSelected), lineWidth: 0.5)
+                )
+            }
+        }
+        .padding(.leading, 10)
+        .padding(.trailing, 10)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(isSelected ? ConCopyTheme.Rows.selectedBackground : Color.clear)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(isSelected ? ConCopyTheme.Rows.selectedBorder : Color.clear, lineWidth: 1)
+        )
+        .contentShape(Rectangle())
+        .padding(.horizontal, 6)
+        .onHover { hovering in
+            isHovered = hovering
+        }
+        .contextMenu {
+            Button("Incolla") {
+                onPaste()
+            }
+            Button("Modifica Snippet...") {
+                onEdit()
+            }
+            Divider()
+            Button("Elimina Snippet", role: .destructive) {
+                onDelete()
             }
         }
     }
