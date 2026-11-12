@@ -206,7 +206,41 @@ public final class GlobalShortcutsManager: ObservableObject {
         return false
     }
 
-    /// Resolves list digit 1..9 from the given keyboard event according to the current modifier configuration.
+    /// Determines if an incoming `NSEvent` matches the shortcut for selecting "Tutte" (All clips).
+    /// Uses Cmd+A by default, or Option+A if `swapNumericModifiers` is true.
+    public func matchesAllClips(event: NSEvent) -> Bool {
+        let isOptionRequired = swapNumericModifiers
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+
+        if isOptionRequired {
+            guard flags.contains(.option),
+                  !flags.contains(.command),
+                  !flags.contains(.control),
+                  !flags.contains(.shift) else {
+                return false
+            }
+        } else {
+            guard flags.contains(.command),
+                  !flags.contains(.option),
+                  !flags.contains(.control),
+                  !flags.contains(.shift) else {
+                return false
+            }
+        }
+
+        // KeyCode 0 is 'a' on ANSI macOS keyboard layout
+        if event.keyCode == 0 {
+            return true
+        }
+
+        if let char = event.charactersIgnoringModifiers?.lowercased().first, char == "a" {
+            return true
+        }
+
+        return false
+    }
+
+    /// Resolves list digit 1..9 (and 0) from the given keyboard event according to the current modifier configuration.
     public func matchedListDigit(for event: NSEvent) -> Int? {
         let isOptionRequired = swapNumericModifiers
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
@@ -214,23 +248,29 @@ public final class GlobalShortcutsManager: ObservableObject {
         if isOptionRequired {
             guard flags.contains(.option),
                   !flags.contains(.command),
-                  !flags.contains(.control) else {
+                  !flags.contains(.control),
+                  !flags.contains(.shift) else {
                 return nil
             }
         } else {
             guard flags.contains(.command),
                   !flags.contains(.option),
-                  !flags.contains(.control) else {
+                  !flags.contains(.control),
+                  !flags.contains(.shift) else {
                 return nil
             }
         }
 
-        if let idx = digitIndex(forKeyCode: event.keyCode), idx >= 0 && idx <= 8 {
-            return idx + 1
+        if let idx = digitIndex(forKeyCode: event.keyCode) {
+            if idx >= 0 && idx <= 8 {
+                return idx + 1 // 1..9
+            } else if idx == 9 {
+                return 0 // 0
+            }
         }
 
         if let char = event.charactersIgnoringModifiers?.first,
-           let d = char.wholeNumberValue, d >= 1 && d <= 9 {
+           let d = char.wholeNumberValue, d >= 0 && d <= 9 {
             return d
         }
 

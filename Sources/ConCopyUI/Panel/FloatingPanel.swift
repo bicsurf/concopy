@@ -208,6 +208,10 @@ public final class FloatingPanel: NSPanel {
                 viewModel.movingClip = nil
                 return true
             }
+            if GlobalShortcutsManager.shared.matchesAllClips(event: event) {
+                viewModel.assignMovingClipToAll()
+                return true
+            }
             if let digit = GlobalShortcutsManager.shared.matchedListDigit(for: event) {
                 viewModel.assignMovingClip(toOptionIndex: digit)
                 return true
@@ -338,19 +342,27 @@ public final class FloatingPanel: NSPanel {
             }
         }
 
-        // Numeric shortcuts: List / Tab Selection (Default Cmd + 1..9, or Option + 1..9 if swapped)
+        // List / Tab Selection: All Clips (Default Cmd + A, or Option + A if swapped)
+        if GlobalShortcutsManager.shared.matchesAllClips(event: event) {
+            let isAlreadyAllClips = viewModel.selectedListId == nil && !viewModel.isFavoritesOnly && !viewModel.isSnippetsOnly
+            let hasSearchText = viewModel.isSearchFocused && !viewModel.searchQuery.isEmpty
+            if isAlreadyAllClips && hasSearchText && !GlobalShortcutsManager.shared.swapNumericModifiers {
+                return false // Propagate to NSTextView for standard selectAll:
+            }
+            viewModel.selectAllClips()
+            return true
+        }
+
+        // Numeric shortcuts: List / Tab Selection (Default Cmd + 1..9, 0, or Option + 1..9, 0 if swapped)
         if let digit = GlobalShortcutsManager.shared.matchedListDigit(for: event) {
             if digit == 1 {
-                viewModel.selectAllClips()
-                return true
-            } else if digit == 2 {
                 viewModel.selectFavorites()
                 return true
-            } else if digit == 3 {
+            } else if digit == 2 {
                 viewModel.selectSnippets()
                 return true
             } else {
-                let listIndex = digit - 4
+                let listIndex = digit == 0 ? 7 : (digit - 3)
                 if listIndex >= 0 && listIndex < viewModel.lists.count {
                     let list = viewModel.lists[listIndex]
                     viewModel.selectList(list.id)

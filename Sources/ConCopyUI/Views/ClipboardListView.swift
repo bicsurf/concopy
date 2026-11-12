@@ -200,7 +200,7 @@ public struct ClipboardListView: View {
                         title: "Tutte",
                         icon: "tray.full",
                         isSelected: viewModel.selectedListId == nil && !viewModel.isFavoritesOnly && !viewModel.isSnippetsOnly,
-                        shortcutHint: "\(shortcutsManager.listModifierSymbol)1"
+                        shortcutHint: "\(shortcutsManager.listModifierSymbol)A"
                     ) {
                         viewModel.selectAllClips()
                     }
@@ -209,7 +209,7 @@ public struct ClipboardListView: View {
                         title: "Preferiti",
                         icon: "star.fill",
                         isSelected: viewModel.selectedListId == nil && viewModel.isFavoritesOnly && !viewModel.isSnippetsOnly,
-                        shortcutHint: "\(shortcutsManager.listModifierSymbol)2"
+                        shortcutHint: "\(shortcutsManager.listModifierSymbol)1"
                     ) {
                         viewModel.selectFavorites()
                     }
@@ -218,17 +218,19 @@ public struct ClipboardListView: View {
                         title: "Snippet",
                         icon: "curlybraces",
                         isSelected: viewModel.isSnippetsOnly,
-                        shortcutHint: "\(shortcutsManager.listModifierSymbol)3"
+                        shortcutHint: "\(shortcutsManager.listModifierSymbol)2"
                     ) {
                         viewModel.selectSnippets()
                     }
 
                     ForEach(Array(viewModel.lists.enumerated()), id: \.element.id) { index, list in
+                        let digit = index + 3
+                        let hint = digit <= 9 ? "\(shortcutsManager.listModifierSymbol)\(digit)" : (digit == 10 ? "\(shortcutsManager.listModifierSymbol)0" : nil)
                         ListTabButton(
                             title: list.name,
                             icon: list.isAutoStarActive ? "star.circle.fill" : "folder",
                             isSelected: !viewModel.isSnippetsOnly && viewModel.selectedListId == list.id,
-                            shortcutHint: index + 4 <= 9 ? "\(shortcutsManager.listModifierSymbol)\(index + 4)" : nil
+                            shortcutHint: hint
                         ) {
                             viewModel.selectList(list.id)
                         }
@@ -1017,7 +1019,7 @@ struct MoveToListSheetView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Sposta nella Lista")
                         .font(.headline)
-                    Text("Seleziona con click o \(shortcutsManager.listModifierSymbol)1..9")
+                    Text("Seleziona con click, \(shortcutsManager.listModifierSymbol)A o \(shortcutsManager.listModifierSymbol)1..9")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -1026,10 +1028,9 @@ struct MoveToListSheetView: View {
             Divider().opacity(0.3)
 
             VStack(spacing: 6) {
+                // Opzione fissa "Nessuna Lista (Tutte)"
                 Button(action: {
-                    viewModel.assignClipToList(clip: clip, listId: nil)
-                    viewModel.movingClip = nil
-                    viewModel.showToast("Rimosso da tutte le liste")
+                    viewModel.assignMovingClipToAll()
                 }) {
                     HStack(spacing: 8) {
                         Image(systemName: "tray")
@@ -1038,6 +1039,44 @@ struct MoveToListSheetView: View {
                             .font(.system(size: 13, weight: clip.listId == nil ? .semibold : .regular))
                         Spacer()
                         if clip.listId == nil {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundColor(ConCopyTheme.Accents.primary)
+                        }
+                        Text("\(shortcutsManager.listModifierSymbol)A")
+                            .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                            .foregroundColor(.secondary)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 2)
+                            .background(
+                                RoundedRectangle(cornerRadius: 3.5, style: .continuous)
+                                    .fill(ConCopyTheme.Surfaces.pillBackground)
+                            )
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(clip.listId == nil ? ConCopyTheme.Rows.selectedBackground : ConCopyTheme.Surfaces.pillBackground)
+                    )
+                }
+                .buttonStyle(.plain)
+
+                // Opzione fissa "Preferiti"
+                Button(action: {
+                    let wasFav = clip.isFavorite
+                    viewModel.toggleFavorite(clip: clip)
+                    viewModel.movingClip = nil
+                    viewModel.showToast(wasFav ? "Rimosso dai Preferiti" : "Aggiunto ai Preferiti ★")
+                }) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "star.fill")
+                            .foregroundColor(ConCopyTheme.Accents.star)
+                            .frame(width: 16)
+                        Text(clip.isFavorite ? "Rimuovi dai Preferiti" : "Aggiungi ai Preferiti")
+                            .font(.system(size: 13, weight: clip.isFavorite ? .semibold : .regular))
+                        Spacer()
+                        if clip.isFavorite {
                             Image(systemName: "checkmark")
                                 .font(.system(size: 11, weight: .bold))
                                 .foregroundColor(ConCopyTheme.Accents.primary)
@@ -1056,7 +1095,7 @@ struct MoveToListSheetView: View {
                     .padding(.vertical, 7)
                     .background(
                         RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(clip.listId == nil ? ConCopyTheme.Rows.selectedBackground : ConCopyTheme.Surfaces.pillBackground)
+                            .fill(clip.isFavorite ? ConCopyTheme.Rows.selectedBackground : ConCopyTheme.Surfaces.pillBackground)
                     )
                 }
                 .buttonStyle(.plain)
@@ -1121,6 +1160,16 @@ struct MoveToListSheetView: View {
                                         RoundedRectangle(cornerRadius: 3.5, style: .continuous)
                                             .fill(ConCopyTheme.Surfaces.pillBackground)
                                     )
+                            } else if digit == 10 {
+                                Text("\(shortcutsManager.listModifierSymbol)0")
+                                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                                    .foregroundColor(.secondary)
+                                    .padding(.horizontal, 4)
+                                    .padding(.vertical, 2)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 3.5, style: .continuous)
+                                            .fill(ConCopyTheme.Surfaces.pillBackground)
+                                    )
                             }
                         }
                         .padding(.horizontal, 10)
@@ -1148,6 +1197,11 @@ struct MoveToListSheetView: View {
             eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
                 if event.keyCode == 53 {
                     viewModel.movingClip = nil
+                    return nil
+                }
+
+                if shortcutsManager.matchesAllClips(event: event) {
+                    viewModel.assignMovingClipToAll()
                     return nil
                 }
 

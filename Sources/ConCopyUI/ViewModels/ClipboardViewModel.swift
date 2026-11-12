@@ -680,16 +680,24 @@ public final class ClipboardViewModel: ObservableObject {
         createSnippetFromClip(clip)
     }
 
+    public func assignMovingClipToAll() {
+        guard let clip = movingClip else { return }
+        assignClipToList(clip: clip, listId: nil)
+        movingClip = nil
+        showToast("Rimosso da tutte le liste")
+    }
+
     public func assignMovingClip(toOptionIndex digit: Int) {
         guard let clip = movingClip else { return }
         if digit == 1 {
-            assignClipToList(clip: clip, listId: nil)
+            let wasFav = clip.isFavorite
+            toggleFavorite(clip: clip)
             movingClip = nil
-            showToast("Rimosso da tutte le liste")
+            showToast(wasFav ? "Rimosso dai Preferiti" : "Aggiunto ai Preferiti ★")
         } else if digit == 2 {
             convertMovingClipToSnippet()
         } else {
-            let listIndex = digit - 3
+            let listIndex = digit == 0 ? 7 : (digit - 3)
             if listIndex >= 0 && listIndex < lists.count {
                 let list = lists[listIndex]
                 assignClipToList(clip: clip, listId: list.id)

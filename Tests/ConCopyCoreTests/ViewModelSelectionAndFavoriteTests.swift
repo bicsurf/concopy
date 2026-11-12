@@ -410,6 +410,20 @@ final class ViewModelSelectionAndFavoriteTests: XCTestCase {
         XCTAssertNil(viewModel.movingClip)
         XCTAssertTrue(viewModel.isSnippetEditorPresented)
         XCTAssertEqual(viewModel.editingSnippet?.content, "Test snippet from clip")
+
+        // 8. Test Move Dialog Option 1 (Favorite toggle) and Option A (All Clips)
+        viewModel.promptMoveSelectedClipToList()
+        XCTAssertFalse(clip.isFavorite)
+        viewModel.assignMovingClip(toOptionIndex: 1)
+        XCTAssertNil(viewModel.movingClip)
+        let updatedClip = try databaseManager.fetchClip(id: clip.id)
+        XCTAssertEqual(updatedClip?.isFavorite, true)
+
+        viewModel.promptMoveSelectedClipToList()
+        viewModel.assignMovingClipToAll()
+        XCTAssertNil(viewModel.movingClip)
+        let unassignedClip = try databaseManager.fetchClip(id: clip.id)
+        XCTAssertNil(unassignedClip?.listId)
     }
 
     func testCopySelectedToPasteboardSingleAndBatch() throws {

@@ -102,6 +102,100 @@ final class GlobalShortcutsManagerTests: XCTestCase {
         XCTAssertTrue(manager.matches(event: moveEvent, for: .moveToList))
     }
 
+    func testCustomShortcutRemappingAndMatching() {
+        let manager = GlobalShortcutsManager.shared
+
+        // Default copySelection is Cmd+C (keyCode 8)
+        guard let cmdCEvent = NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: [.command],
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            characters: "c",
+            charactersIgnoringModifiers: "c",
+            isARepeat: false,
+            keyCode: 8
+        ), let customEvent = NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: [.command, .shift],
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            characters: "k",
+            charactersIgnoringModifiers: "k",
+            isARepeat: false,
+            keyCode: 40 // 'k'
+        ) else {
+            XCTFail("Could not create mock NSEvents")
+            return
+        }
+
+        // Initially Cmd+C matches
+        XCTAssertTrue(manager.matches(event: cmdCEvent, for: .copySelection))
+        XCTAssertFalse(manager.matches(event: customEvent, for: .copySelection))
+
+        // Remap to Cmd+Shift+K
+        let newShortcut = KeyboardShortcuts.Shortcut(.k, modifiers: [.command, .shift])
+        manager.setShortcut(newShortcut, for: .copySelection)
+
+        // Now Cmd+C should NOT match, and Cmd+Shift+K SHOULD match
+        XCTAssertFalse(manager.matches(event: cmdCEvent, for: .copySelection))
+        XCTAssertTrue(manager.matches(event: customEvent, for: .copySelection))
+
+        // Reset restores Cmd+C
+        manager.resetShortcut(for: .copySelection)
+        XCTAssertTrue(manager.matches(event: cmdCEvent, for: .copySelection))
+        XCTAssertFalse(manager.matches(event: customEvent, for: .copySelection))
+    }
+
+    func testMatchesAllClipsCommandAndOption() {
+        let manager = GlobalShortcutsManager.shared
+
+        // Cmd+A (keyCode 0)
+        guard let cmdAEvent = NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: [.command],
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            characters: "a",
+            charactersIgnoringModifiers: "a",
+            isARepeat: false,
+            keyCode: 0
+        ), let optAEvent = NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: [.option],
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            characters: "å",
+            charactersIgnoringModifiers: "a",
+            isARepeat: false,
+            keyCode: 0
+        ) else {
+            XCTFail("Could not create mock NSEvents")
+            return
+        }
+
+        // Default: Cmd+A matches All Clips, Opt+A returns false
+        manager.setSwapNumericModifiers(false)
+        XCTAssertTrue(manager.matchesAllClips(event: cmdAEvent))
+        XCTAssertFalse(manager.matchesAllClips(event: optAEvent))
+
+        // Inverted: Opt+A matches All Clips, Cmd+A returns false
+        manager.setSwapNumericModifiers(true)
+        XCTAssertTrue(manager.matchesAllClips(event: optAEvent))
+        XCTAssertFalse(manager.matchesAllClips(event: cmdAEvent))
+
+        // Reset state
+        manager.setSwapNumericModifiers(false)
+    }
+
     func testMatchedListDigitCommandAndOption() {
         let manager = GlobalShortcutsManager.shared
 
@@ -128,20 +222,47 @@ final class GlobalShortcutsManagerTests: XCTestCase {
             charactersIgnoringModifiers: "1",
             isARepeat: false,
             keyCode: 18
+        ), let cmd0Event = NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: [.command],
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            characters: "0",
+            charactersIgnoringModifiers: "0",
+            isARepeat: false,
+            keyCode: 29
+        ), let opt0Event = NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: [.option],
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            characters: "º",
+            charactersIgnoringModifiers: "0",
+            isARepeat: false,
+            keyCode: 29
         ) else {
             XCTFail("Could not create mock NSEvents")
             return
         }
 
-        // Default: Cmd+1 matches digit 1, Opt+1 returns nil
+        // Default: Cmd+1 matches digit 1, Cmd+0 matches digit 0, Opt+1 returns nil
         manager.setSwapNumericModifiers(false)
         XCTAssertEqual(manager.matchedListDigit(for: cmd1Event), 1)
+        XCTAssertEqual(manager.matchedListDigit(for: cmd0Event), 0)
         XCTAssertNil(manager.matchedListDigit(for: opt1Event))
 
-        // Inverted: Opt+1 matches digit 1, Cmd+1 returns nil
+        // Inverted: Opt+1 matches digit 1, Opt+0 matches digit 0, Cmd+1 returns nil
         manager.setSwapNumericModifiers(true)
         XCTAssertEqual(manager.matchedListDigit(for: opt1Event), 1)
+        XCTAssertEqual(manager.matchedListDigit(for: opt0Event), 0)
         XCTAssertNil(manager.matchedListDigit(for: cmd1Event))
+
+        // Reset state
+        manager.setSwapNumericModifiers(false)
     }
 
     func testMatchedQuickPasteIndexCommandAndOption() {
