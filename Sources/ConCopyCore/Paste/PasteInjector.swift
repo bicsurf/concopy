@@ -128,6 +128,9 @@ public struct PasteInjector: Sendable {
                     let data = try databaseManager.loadPayloadData(for: payload)
                     pasteboard.setData(data, forType: NSPasteboard.PasteboardType(payload.utiType))
                 }
+                if let text = clip.plainText, pasteboard.string(forType: .string) == nil {
+                    pasteboard.setString(text, forType: .string)
+                }
             }
         }
         // Assicura che il marcatore anti-loopback interno sia sempre presente

@@ -324,28 +324,16 @@ public final class FloatingPanel: NSPanel {
         }
 
         // Configurable shortcut: Copy selected clip or batch to clipboard
-        if GlobalShortcutsManager.shared.matches(event: event, for: .copySelection) && (!viewModel.isSearchFocused || viewModel.searchQuery.isEmpty) {
-            if !viewModel.selectedClipIds.isEmpty {
-                let ordered = viewModel.clips.filter { viewModel.selectedClipIds.contains($0.id) }
-                if !ordered.isEmpty {
-                    try? viewModel.pasteInjector.copyBatchToPasteboard(
-                        clips: ordered,
-                        mode: .concatenated(separator: viewModel.batchSeparator),
-                        transformation: viewModel.activeTransformation,
-                        databaseManager: viewModel.databaseManager
-                    )
-                    viewModel.showToast("Copiati \(ordered.count) elementi negli appunti!")
-                    return true
+        if GlobalShortcutsManager.shared.matches(event: event, for: .copySelection) {
+            let hasTextSelectionInField: Bool = {
+                if let textEditor = firstResponder as? NSText {
+                    return textEditor.selectedRange.length > 0
                 }
-            } else if viewModel.selectedIndex >= 0 && viewModel.selectedIndex < viewModel.clips.count {
-                let clip = viewModel.clips[viewModel.selectedIndex]
-                try? viewModel.pasteInjector.copyToPasteboard(
-                    clip: clip,
-                    databaseManager: viewModel.databaseManager,
-                    forcePlainText: viewModel.isPlainTextModeEnabled,
-                    transformation: viewModel.activeTransformation
-                )
-                viewModel.showToast("Copiato negli appunti!")
+                return false
+            }()
+
+            if !hasTextSelectionInField {
+                viewModel.copySelectedToPasteboard()
                 return true
             }
         }

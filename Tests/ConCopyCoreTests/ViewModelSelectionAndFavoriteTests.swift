@@ -411,4 +411,30 @@ final class ViewModelSelectionAndFavoriteTests: XCTestCase {
         XCTAssertTrue(viewModel.isSnippetEditorPresented)
         XCTAssertEqual(viewModel.editingSnippet?.content, "Test snippet from clip")
     }
+
+    func testCopySelectedToPasteboardSingleAndBatch() throws {
+        let clip1 = try databaseManager.ingestCapturedClip(CapturedClip(plainText: "Alpha Record", primaryType: .text))
+        let clip2 = try databaseManager.ingestCapturedClip(CapturedClip(plainText: "Beta Record", primaryType: .text))
+        viewModel.loadClips()
+
+        var panelClosed = false
+        viewModel.onClosePanel = {
+            panelClosed = true
+        }
+
+        // 1. Copy single selected
+        viewModel.selectedIndex = 0
+        panelClosed = false
+        viewModel.copySelectedToPasteboard()
+        XCTAssertTrue(panelClosed)
+        XCTAssertEqual(NSPasteboard.general.string(forType: .string), "Beta Record")
+
+        // 2. Copy batch selected
+        viewModel.selectedClipIds = [clip1.id, clip2.id]
+        panelClosed = false
+        viewModel.copySelectedToPasteboard()
+        XCTAssertTrue(panelClosed)
+        let batchContent = NSPasteboard.general.string(forType: .string) ?? ""
+        XCTAssertTrue(batchContent.contains("Beta Record") && batchContent.contains("Alpha Record"))
+    }
 }

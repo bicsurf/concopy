@@ -630,6 +630,20 @@ public struct ClipboardListView: View {
     @ViewBuilder
     private func rowContextMenu(for clip: ClipRecord) -> some View {
         Button(action: {
+            viewModel.copyClipToPasteboard(clip: clip)
+        }) {
+            Label("Copia negli appunti", systemImage: "doc.on.doc")
+        }
+
+        Button(action: {
+            viewModel.paste(clip: clip)
+        }) {
+            Label("Incolla", systemImage: "arrow.right.doc.on.clipboard")
+        }
+
+        Divider()
+
+        Button(action: {
             if let index = viewModel.clips.firstIndex(where: { $0.id == clip.id }) {
                 viewModel.selectedIndex = index
                 viewModel.isQuickLookVisible = true
@@ -1403,6 +1417,11 @@ struct SnippetRowView: View {
             isHovered = hovering
         }
         .contextMenu {
+            Button("Copia negli appunti") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setData(Data(), forType: PasteInjector.internalPasteMarker)
+                NSPasteboard.general.setString(snippet.content, forType: .string)
+            }
             Button("Incolla") {
                 onPaste()
             }

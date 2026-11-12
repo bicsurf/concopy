@@ -551,6 +551,61 @@ public final class ClipboardViewModel: ObservableObject {
         }
     }
 
+    public func copySelectedToPasteboard() {
+        if isSnippetsOnly {
+            if selectedSnippetIndex >= 0 && selectedSnippetIndex < filteredSnippets.count {
+                let snippet = filteredSnippets[selectedSnippetIndex]
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setData(Data(), forType: PasteInjector.internalPasteMarker)
+                NSPasteboard.general.setString(snippet.content, forType: .string)
+                showToast("Snippet copiato negli appunti!")
+                onClosePanel?()
+            }
+            return
+        }
+
+        if !selectedClipIds.isEmpty {
+            let ordered = clips.filter { selectedClipIds.contains($0.id) }
+            if !ordered.isEmpty {
+                do {
+                    try pasteInjector.copyBatchToPasteboard(
+                        clips: ordered,
+                        mode: .concatenated(separator: batchSeparator),
+                        transformation: activeTransformation,
+                        databaseManager: databaseManager
+                    )
+                    showToast("Copiati \(ordered.count) elementi negli appunti!")
+                    onClosePanel?()
+                    loadClips()
+                } catch {
+                    print("[ConCopy] Failed to copy batch to pasteboard: \(error)")
+                }
+                return
+            }
+        }
+
+        if selectedIndex >= 0 && selectedIndex < clips.count {
+            let clip = clips[selectedIndex]
+            copyClipToPasteboard(clip: clip)
+        }
+    }
+
+    public func copyClipToPasteboard(clip: ClipRecord) {
+        do {
+            try pasteInjector.copyToPasteboard(
+                clip: clip,
+                databaseManager: databaseManager,
+                forcePlainText: isPlainTextModeEnabled,
+                transformation: activeTransformation
+            )
+            showToast("Copiato negli appunti!")
+            onClosePanel?()
+            loadClips()
+        } catch {
+            print("[ConCopy] Failed to copy clip to pasteboard: \(error)")
+        }
+    }
+
     public func pasteAsFile(clip: ClipRecord, imageFormat: ImageExportFormat = .png) {
         Task { @MainActor [weak self] in
             guard let self else { return }
