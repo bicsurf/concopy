@@ -32,16 +32,4 @@ rm -rf "$TEMP_DMG_DIR"
 SHA256=$(shasum -a 256 "$DMG_NAME" | awk '{print $1}')
 echo "==> SHA256 calcolato per $DMG_NAME: $SHA256"
 
-# Aggiornamento automatico Casks/concopy.rb
-if [ -f "Casks/concopy.rb" ]; then
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        sed -i '' -E "s/version \"[^\"]+\"/version \"${VERSION}\"/" Casks/concopy.rb
-        sed -i '' -E "s/sha256 (:no_check|\"[^\"]+\")/sha256 \"${SHA256}\"/" Casks/concopy.rb
-    else
-        sed -i -E "s/version \"[^\"]+\"/version \"${VERSION}\"/" Casks/concopy.rb
-        sed -i -E "s/sha256 (:no_check|\"[^\"]+\")/sha256 \"${SHA256}\"/" Casks/concopy.rb
-    fi
-    echo "==> Casks/concopy.rb aggiornato a v${VERSION} (sha256: ${SHA256})"
-fi
-
 echo "==> Fatto! File DMG creato con successo nella root del progetto: $DMG_NAME"

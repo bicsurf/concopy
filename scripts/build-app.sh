@@ -8,16 +8,6 @@ RAW_VERSION="${VERSION:-${GITHUB_REF_NAME:-$(git describe --tags --abbrev=0 2>/d
 RAW_VERSION="${RAW_VERSION#[vV]}"
 export VERSION="${RAW_VERSION:-1.2.0}"
 
-# Allineamento automatico versione in Casks/concopy.rb
-if [ -f "Casks/concopy.rb" ]; then
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        sed -i '' -E "s/version \"[^\"]+\"/version \"${VERSION}\"/" Casks/concopy.rb
-    else
-        sed -i -E "s/version \"[^\"]+\"/version \"${VERSION}\"/" Casks/concopy.rb
-    fi
-    echo "==> Casks/concopy.rb: version allineata a ${VERSION}"
-fi
-
 echo "==> Compilazione Universal Binary nativa (arm64 + x86_64)..."
 swift build -c release --arch arm64 --arch x86_64
 BUILD_DIR=$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)
