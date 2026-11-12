@@ -26,6 +26,10 @@ public struct PreferencesView: View {
     @State private var manualBundleIdText: String = ""
     @State private var isShowingClearConfirm: Bool = false
     @State private var statusAlertMessage: String? = nil
+    @State private var isImporting: Bool = false
+    @State private var importProgressDescription: String = ""
+    @State private var detectedMaccyURL: URL? = nil
+    @State private var isShowingMaccyAutoDetectAlert: Bool = false
 
     public init(
         settingsManager: AppSettingsManager? = nil,
@@ -82,6 +86,21 @@ public struct PreferencesView: View {
             Button("OK", role: .cancel) { statusAlertMessage = nil }
         } message: {
             Text(statusAlertMessage ?? "")
+        }
+        .alert("Rilevato Database Maccy", isPresented: $isShowingMaccyAutoDetectAlert) {
+            Button("Importa direttamente") {
+                if let url = detectedMaccyURL {
+                    executeImport(importer: MaccyImporter(sourceURL: url))
+                }
+            }
+            Button("Scegli altro file...") {
+                openMaccyFilePicker()
+            }
+            Button("Annulla", role: .cancel) {
+                detectedMaccyURL = nil
+            }
+        } message: {
+            Text("È stato trovato un database Maccy in:\n\(detectedMaccyURL?.path ?? "")\n\nVuoi importarlo direttamente?")
         }
     }
 
@@ -153,6 +172,31 @@ public struct PreferencesView: View {
                 Text("Esporta o ripristina tutte le clip (inclusi blob e immagini) e le liste in formato JSON")
                     .font(.caption)
                     .foregroundColor(.secondary)
+            }
+
+            Section(header: Text("Importa da altre app")) {
+                if isImporting {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text(importProgressDescription.isEmpty ? "Importazione in corso..." : importProgressDescription)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.vertical, 4)
+                } else {
+                    HStack(spacing: 12) {
+                        Button(action: importFromMaccyAction) {
+                            Label("Importa da Maccy...", systemImage: "arrow.down.doc")
+                        }
+                        Button(action: importFromCopyEmAction) {
+                            Label("Importa da Copy 'Em...", systemImage: "arrow.down.doc")
+                        }
+                    }
+                    Text("Importa la cronologia e le categorie da Maccy o Copy 'Em preservando preferiti e deduplicando i contenuti")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
             }
 
             Section(header: Text("Aggiornamenti")) {
@@ -593,6 +637,111 @@ public struct PreferencesView: View {
                     await MainActor.run {
                         self.statusAlertMessage = "Errore durante l'importazione:\n\(error.localizedDescription)"
                     }
+                }
+            }
+        }
+    }
+
+    private func importFromMaccyAction() {
+        if let autoDetected = MaccyImporter.detectStandardDatabaseURL() {
+            detectedMaccyURL = autoDetected
+            isShowingMaccyAutoDetectAlert = true
+            return
+        }
+        openMaccyFilePicker()
+    }
+
+    private func openMaccyFilePicker() {
+        let openPanel = NSOpenPanel()
+        openPanel.allowedContentTypes = [
+            UTType(filenameExtension: "sqlite") ?? .data,
+            UTType(filenameExtension: "db") ?? .data
+        ]
+        openPanel.allowsMultipleSelection = false
+        openPanel.canChooseDirectories = true
+        openPanel.canChooseFiles = true
+        openPanel.prompt = "Importa"
+        if let defaultDir = MaccyImporter.standardLocations.first(where: { FileManager.default.fileExists(atPath: $0.path) }) {
+            openPanel.directoryURL = defaultDir
+        }
+
+        if openPanel.runModal() == .OK, let selectedURL = openPanel.url {
+            executeImport(importer: MaccyImporter(sourceURL: selectedURL), securityScopedURL: selectedURL)
+        }
+    }
+
+    private func importFromCopyEmAction() {
+        let openPanel = NSOpenPanel()
+        var types: [UTType] = [
+            UTType(filenameExtension: "storedata") ?? .data,
+            UTType(filenameExtension: "sqlite") ?? .data,
+            UTType(filenameExtension: "db") ?? .data,
+            .package,
+            .folder
+        ]
+        if let cepType = UTType(filenameExtension: "cep") {
+            types.insert(cepType, at: 0)
+        }
+        openPanel.allowedContentTypes = types
+        openPanel.allowsMultipleSelection = false
+        openPanel.canChooseDirectories = true
+        openPanel.canChooseFiles = true
+        openPanel.treatsFilePackagesAsDirectories = true
+        openPanel.prompt = "Importa"
+        if let defaultDir = CopyEmImporter.standardLocations.first(where: { FileManager.default.fileExists(atPath: $0.path) }) {
+            openPanel.directoryURL = defaultDir
+        }
+
+        if openPanel.runModal() == .OK, let selectedURL = openPanel.url {
+            executeImport(importer: CopyEmImporter(sourceURL: selectedURL), securityScopedURL: selectedURL)
+        }
+    }
+
+    private func executeImport(importer: any ExternalClipboardImporter, securityScopedURL: URL? = nil) {
+        guard let db = databaseManager else {
+            statusAlertMessage = "Database non disponibile"
+            return
+        }
+
+        isImporting = true
+        importProgressDescription = "Avvio importazione da \(importer.displayName)..."
+
+        Task.detached(priority: .utility) {
+            let hasScopedAccess = securityScopedURL?.startAccessingSecurityScopedResource() ?? false
+            defer {
+                if hasScopedAccess {
+                    securityScopedURL?.stopAccessingSecurityScopedResource()
+                }
+            }
+
+            do {
+                let result = try importer.importClips(into: db) { progress in
+                    Task { @MainActor in
+                        if let total = progress.total, total > 0 {
+                            self.importProgressDescription = "\(progress.processed)/\(total) elaborati (\(progress.imported) importati, \(progress.merged) uniti)"
+                        } else {
+                            self.importProgressDescription = "\(progress.processed) elaborati (\(progress.imported) importati, \(progress.merged) uniti)"
+                        }
+                    }
+                }
+
+                await MainActor.run {
+                    self.isImporting = false
+                    self.importProgressDescription = ""
+                    self.onDataChanged?()
+                    self.statusAlertMessage = """
+                    Importazione da \(importer.displayName) completata!
+                    • \(result.importedCount) nuove clip importate
+                    • \(result.mergedDuplicatesCount) clip duplicate unite
+                    • \(result.createdListsCount) nuove liste create
+                    • \(result.errorsCount) errori
+                    """
+                }
+            } catch {
+                await MainActor.run {
+                    self.isImporting = false
+                    self.importProgressDescription = ""
+                    self.statusAlertMessage = "Errore durante l'importazione da \(importer.displayName): \(error.localizedDescription)"
                 }
             }
         }

@@ -38,6 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.viewModel = vm
 
         PreferencesWindowController.shared.configure(databaseManager: db) { [weak vm] in
+            vm?.loadLists()
             vm?.loadClips()
         }
 

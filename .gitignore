@@ -29,3 +29,10 @@ tmp/
 
 .serena/*
 Casks/*
+
+.graphify/
+graphify-out/
+.graphifyignore
+.opencode/
+.opencode/plugins/graphify.js
+.graphify/
