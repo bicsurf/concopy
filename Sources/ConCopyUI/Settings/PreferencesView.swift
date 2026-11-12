@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 
 public enum PreferencesTab: String, CaseIterable, Identifiable {
     case general = "Generale"
+    case shortcuts = "Scorciatoie"
     case blacklist = "App Escluse"
 
     public var id: String { rawValue }
@@ -14,6 +15,7 @@ public enum PreferencesTab: String, CaseIterable, Identifiable {
 @MainActor
 public struct PreferencesView: View {
     @ObservedObject private var settingsManager: AppSettingsManager
+    @ObservedObject private var shortcutsManager = GlobalShortcutsManager.shared
     @ObservedObject private var updateChecker = UpdateChecker.shared
     public var databaseManager: DatabaseManager?
     public var onDataChanged: (() -> Void)?
@@ -43,7 +45,7 @@ public struct PreferencesView: View {
                 }
             }
             .pickerStyle(.segmented)
-            .frame(maxWidth: 260)
+            .frame(maxWidth: 320)
             .padding(.top, 14)
             .padding(.bottom, 10)
 
@@ -53,13 +55,15 @@ public struct PreferencesView: View {
                 switch selectedTab {
                 case .general:
                     generalTabView
+                case .shortcuts:
+                    shortcutsTabView
                 case .blacklist:
                     blacklistTabView
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(minWidth: 500, idealWidth: 540, minHeight: 380, idealHeight: 460)
+        .frame(minWidth: 540, idealWidth: 580, minHeight: 450, idealHeight: 520)
         .sheet(isPresented: $isShowingManualAddSheet) {
             manualAddSheet
         }
@@ -84,17 +88,6 @@ public struct PreferencesView: View {
     // MARK: - General Tab
     private var generalTabView: some View {
         Form {
-            Section(header: Text("Scorciatoia Globale")) {
-                HStack {
-                    Text("Apri/Chiudi ConCopy:")
-                    Spacer()
-                    KeyboardShortcuts.Recorder(for: .toggleConCopyPanel)
-                }
-                Text("Scorciatoia globale di sistema per mostrare o nascondere la finestra flottante di ConCopy (predefinito: ⇧⌘V)")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-
             Section(header: Text("Monitoraggio Appunti")) {
                 Toggle("Pausa registrazione appunti", isOn: $settingsManager.isMonitoringPaused)
                 Text("Quando attiva, ConCopy non registrerà nuovi elementi copiati negli appunti")
@@ -218,6 +211,156 @@ public struct PreferencesView: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    // MARK: - Shortcuts Tab
+    private var shortcutsTabView: some View {
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Personalizzazione Scorciatoie da Tastiera")
+                            .font(.headline)
+                        Text("Configura o rimuovi le scorciatoie di sistema e del pannello. Fai clic sul campo per registrare una combinazione, oppure usa il pulsante Rimuovi per disabilitarla.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 14)
+
+                    // Toggle inversione modificatori numerici
+                    Toggle(isOn: Binding(
+                        get: { shortcutsManager.swapNumericModifiers },
+                        set: { shortcutsManager.setSwapNumericModifiers($0) }
+                    )) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Inverti modificatori numerici (⌘ ⇋ ⌥)")
+                                .font(.system(size: 13, weight: .semibold))
+                            Text(shortcutsManager.swapNumericModifiers
+                                ? "Attivo: ⌥ per selezionare le liste e ⌘ per la copia rapida"
+                                : "Predefinito: ⌘ per selezionare le liste e ⌥ per la copia rapida")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .toggleStyle(.switch)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(ConCopyTheme.Surfaces.pillBackground.opacity(0.6))
+                    )
+                    .padding(.horizontal, 16)
+
+                    Divider().opacity(0.4)
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Comandi Generali")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundColor(ConCopyTheme.Accents.primary)
+                            .padding(.leading, 2)
+
+                        VStack(spacing: 6) {
+                            ForEach(ConCopyShortcutKey.allCases) { key in
+                                shortcutRow(for: key)
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                }
+                .padding(.bottom, 16)
+            }
+
+            Divider()
+
+            HStack {
+                Button(role: .destructive) {
+                    shortcutsManager.resetAll()
+                } label: {
+                    Label("Ripristina tutte ai predefiniti", systemImage: "arrow.counterclockwise")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(ConCopyTheme.Surfaces.pillBackground.opacity(0.3))
+        }
+    }
+
+    @ViewBuilder
+    private func shortcutRow(for key: ConCopyShortcutKey) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: key.systemImage)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(ConCopyTheme.Accents.primary)
+                .frame(width: 26, height: 26)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(ConCopyTheme.Surfaces.pillBackground)
+                )
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(key.displayName)
+                    .font(.system(size: 13, weight: .medium))
+
+                HStack(spacing: 6) {
+                    Text(key.scope.rawValue)
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(key.scope == .global ? ConCopyTheme.Accents.snippet : .secondary)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1.5)
+                        .background(
+                            Capsule()
+                                .fill(key.scope == .global ? ConCopyTheme.Accents.snippet.opacity(0.15) : ConCopyTheme.Surfaces.pillBackground)
+                        )
+
+                    if let def = key.defaultShortcut {
+                        Text("Default: \(def.description)")
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+
+            Spacer()
+
+            KeyboardShortcuts.Recorder(for: key.shortcutName)
+                .id("\(key.rawValue)-\(shortcutsManager.changeVersion)")
+
+            HStack(spacing: 4) {
+                if key.currentShortcut != nil {
+                    Button {
+                        shortcutsManager.removeShortcut(for: key)
+                    } label: {
+                        Image(systemName: "xmark.circle")
+                            .font(.system(size: 13))
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Rimuovi scorciatoia")
+                }
+
+                Button {
+                    shortcutsManager.resetShortcut(for: key)
+                } label: {
+                    Image(systemName: "arrow.counterclockwise")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Ripristina predefinito")
+            }
+            .frame(width: 44, alignment: .trailing)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(ConCopyTheme.Surfaces.pillBackground.opacity(0.45))
+        )
     }
 
     // MARK: - Blacklist Tab

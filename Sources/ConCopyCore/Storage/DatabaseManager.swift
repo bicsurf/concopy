@@ -245,13 +245,13 @@ public final class DatabaseManager: Sendable {
             let orderClause: String
             switch effectiveSortMode {
             case .updatedAtDesc:
-                orderClause = "clips.updatedAt DESC"
+                orderClause = "clips.updatedAt DESC, clips.createdAt DESC, clips.rowid DESC"
             case .createdAtDesc:
-                orderClause = "clips.createdAt DESC"
+                orderClause = "clips.createdAt DESC, clips.rowid DESC"
             case .pasteCountDesc:
-                orderClause = "clips.pasteCount DESC, clips.updatedAt DESC"
+                orderClause = "clips.pasteCount DESC, clips.updatedAt DESC, clips.rowid DESC"
             case .manualOrder:
-                orderClause = "clips.manualSortIndex ASC, clips.updatedAt DESC"
+                orderClause = "clips.manualSortIndex ASC, clips.updatedAt DESC, clips.rowid DESC"
             }
 
             if trimmed.isEmpty {
@@ -271,13 +271,13 @@ public final class DatabaseManager: Sendable {
 
                 switch effectiveSortMode {
                 case .updatedAtDesc:
-                    request = request.order(Column("updatedAt").desc)
+                    request = request.order(Column("updatedAt").desc, Column("createdAt").desc, Column("rowid").desc)
                 case .createdAtDesc:
-                    request = request.order(Column("createdAt").desc)
+                    request = request.order(Column("createdAt").desc, Column("rowid").desc)
                 case .pasteCountDesc:
-                    request = request.order(Column("pasteCount").desc, Column("updatedAt").desc)
+                    request = request.order(Column("pasteCount").desc, Column("updatedAt").desc, Column("rowid").desc)
                 case .manualOrder:
-                    request = request.order(Column("manualSortIndex").asc, Column("updatedAt").desc)
+                    request = request.order(Column("manualSortIndex").asc, Column("updatedAt").desc, Column("rowid").desc)
                 }
 
                 return try request.limit(limit).fetchAll(db)
@@ -562,7 +562,7 @@ public final class DatabaseManager: Sendable {
         try dbWriter.read { db in
             var request = ClipRecord.all()
             if preserveFavorites {
-                request = request.filter(Column("isFavorite") == false)
+                request = request.filter(Column("isFavorite") == false && Column("listId") == nil)
             }
             let clips = try request.fetchAll(db)
             clipsToDelete = clips.map(\.id)
@@ -599,7 +599,7 @@ public final class DatabaseManager: Sendable {
     }
 
     @discardableResult
-    public func assignClip(clipId: UUID, toListId listId: UUID?, markFavorite: Bool = true) throws -> ClipRecord {
+    public func assignClip(clipId: UUID, toListId listId: UUID?, markFavorite: Bool = false) throws -> ClipRecord {
         let idString = clipId.uuidString.lowercased()
         return try dbWriter.write { db in
             guard var clip = try ClipRecord.filter(Column("id") == idString).fetchOne(db) else {
@@ -675,7 +675,7 @@ public final class DatabaseManager: Sendable {
                 : nil
 
             let allNonFavorites = try ClipRecord
-                .filter(Column("isFavorite") == false)
+                .filter(Column("isFavorite") == false && Column("listId") == nil)
                 .order(Column("updatedAt").desc, Column("createdAt").desc)
                 .fetchAll(db)
 

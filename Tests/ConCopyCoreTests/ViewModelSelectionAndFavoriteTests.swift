@@ -236,4 +236,179 @@ final class ViewModelSelectionAndFavoriteTests: XCTestCase {
         viewModel.onOpenSettings?()
         XCTAssertTrue(didOpen)
     }
+
+    func testNewCapturedClipUpdatesSelectionToMostRecent() throws {
+        // 1. Ingest initial clips
+        _ = try databaseManager.ingestCapturedClip(
+            CapturedClip(plainText: "Historical Clip 1", primaryType: .text)
+        )
+        _ = try databaseManager.ingestCapturedClip(
+            CapturedClip(plainText: "Historical Clip 2", primaryType: .text)
+        )
+        viewModel.loadClips()
+        XCTAssertEqual(viewModel.clips.count, 2)
+        XCTAssertEqual(viewModel.selectedIndex, 0)
+
+        // 2. Select historical clip at index 1 (Clip X)
+        let historicalClipX = viewModel.clips[1]
+        viewModel.selectSingle(clipId: historicalClipX.id)
+        XCTAssertEqual(viewModel.selectedIndex, 1)
+        XCTAssertEqual(viewModel.selectedClipId, historicalClipX.id)
+
+        // 3. New acquisition arrives (Clip Y)
+        Thread.sleep(forTimeInterval: 0.05)
+        let clipY = try databaseManager.ingestCapturedClip(
+            CapturedClip(plainText: "New Captured Clip Y", primaryType: .text)
+        )
+        viewModel.loadClips()
+
+        // 4. Must automatically select Clip Y (index 0)
+        XCTAssertEqual(viewModel.clips.first?.id, clipY.id)
+        XCTAssertEqual(viewModel.selectedIndex, 0)
+        XCTAssertEqual(viewModel.selectedClipId, clipY.id)
+        XCTAssertTrue(viewModel.selectedClipIds.isEmpty)
+    }
+
+    func testSelectMostRecentClipResetsSelectionToFirst() throws {
+        _ = try databaseManager.ingestCapturedClip(
+            CapturedClip(plainText: "Clip A", primaryType: .text)
+        )
+        _ = try databaseManager.ingestCapturedClip(
+            CapturedClip(plainText: "Clip B", primaryType: .text)
+        )
+        viewModel.loadClips()
+        viewModel.selectedIndex = 1
+        XCTAssertEqual(viewModel.selectedIndex, 1)
+
+        viewModel.selectMostRecentClip()
+        XCTAssertEqual(viewModel.selectedIndex, 0)
+        XCTAssertEqual(viewModel.selectedClipId, viewModel.clips.first?.id)
+    }
+
+    func testAssignClipToListDoesNotMarkFavoriteAndProtectsFromPruning() throws {
+        // 1. Ingest normal clip
+        let clip = try databaseManager.ingestCapturedClip(
+            CapturedClip(plainText: "List Item Without Star", primaryType: .text)
+        )
+        XCTAssertFalse(clip.isFavorite)
+        XCTAssertNil(clip.listId)
+
+        // 2. Create list and assign clip
+        let list = try databaseManager.createList(name: "Projects")
+        viewModel.loadLists()
+        viewModel.loadClips()
+
+        viewModel.assignClipToList(clip: clip, listId: list.id)
+
+        // Verify clip belongs to list and is NOT favorite
+        let updated = try databaseManager.fetchClip(id: clip.id)
+        XCTAssertNotNil(updated)
+        XCTAssertEqual(updated?.listId, list.id)
+        XCTAssertFalse(updated?.isFavorite ?? true)
+
+        // Verify Favorites tab does NOT contain this clip
+        viewModel.selectFavorites()
+        XCTAssertFalse(viewModel.clips.contains(where: { $0.id == clip.id }))
+
+        // Verify List tab DOES contain this clip
+        viewModel.selectList(list.id)
+        XCTAssertTrue(viewModel.clips.contains(where: { $0.id == clip.id }))
+
+        // 3. Test pruning protection
+        // Backdate clip to 60 days ago
+        let oldDate = Date().addingTimeInterval(-60 * 86400)
+        try databaseManager.dbWriter.write { db in
+            try db.execute(
+                sql: "UPDATE clips SET createdAt = ? WHERE id = ?",
+                arguments: [oldDate, clip.id.uuidString.lowercased()]
+            )
+        }
+
+        // Run pruning olderThanDays: 30
+        let pruned = try databaseManager.pruneClips(olderThanDays: 30)
+        XCTAssertEqual(pruned, 0) // Should NOT prune list item
+
+        let stillExists = try databaseManager.fetchClip(id: clip.id)
+        XCTAssertNotNil(stillExists)
+        XCTAssertEqual(stillExists?.listId, list.id)
+        XCTAssertFalse(stillExists?.isFavorite ?? true)
+    }
+
+    func testSnippetManagementAndFilteringLifecycle() throws {
+        // 1. Create snippets
+        viewModel.saveSnippet(shortcut: ";mail", content: "me@example.com", title: "Email Personale")
+        viewModel.saveSnippet(shortcut: ";tel", content: "+39 123 456789", title: "Numero Telefono")
+        viewModel.saveSnippet(shortcut: ";addr", content: "Via Roma 10, Milano", title: "Indirizzo")
+
+        viewModel.selectSnippets()
+        XCTAssertTrue(viewModel.isSnippetsOnly)
+        XCTAssertEqual(viewModel.snippets.count, 3)
+        XCTAssertEqual(viewModel.filteredSnippets.count, 3)
+
+        // 2. Search filtering
+        viewModel.searchQuery = "email"
+        XCTAssertEqual(viewModel.filteredSnippets.count, 1)
+        XCTAssertEqual(viewModel.filteredSnippets.first?.shortcut, ";mail")
+
+        viewModel.searchQuery = ";tel"
+        XCTAssertEqual(viewModel.filteredSnippets.count, 1)
+        XCTAssertEqual(viewModel.filteredSnippets.first?.shortcut, ";tel")
+
+        viewModel.searchQuery = "Milano"
+        XCTAssertEqual(viewModel.filteredSnippets.count, 1)
+        XCTAssertEqual(viewModel.filteredSnippets.first?.content, "Via Roma 10, Milano")
+
+        viewModel.searchQuery = ""
+        XCTAssertEqual(viewModel.filteredSnippets.count, 3)
+
+        // 3. Keyboard navigation in snippets
+        viewModel.selectedSnippetIndex = 0
+        viewModel.moveSelection(by: 1, extendSelection: false)
+        XCTAssertEqual(viewModel.selectedSnippetIndex, 1)
+
+        viewModel.moveSelection(by: 1, extendSelection: false)
+        XCTAssertEqual(viewModel.selectedSnippetIndex, 2)
+
+        viewModel.moveSelection(by: 1, extendSelection: false) // bounded to max
+        XCTAssertEqual(viewModel.selectedSnippetIndex, 2)
+
+        viewModel.moveSelection(by: -1, extendSelection: false)
+        XCTAssertEqual(viewModel.selectedSnippetIndex, 1)
+
+        // 4. Update snippet
+        let snippetToEdit = viewModel.snippets.first { $0.shortcut == ";mail" }!
+        viewModel.saveSnippet(shortcut: ";email", content: "new@example.com", title: "Nuova Email", existingId: snippetToEdit.id)
+        viewModel.loadSnippets()
+        XCTAssertEqual(viewModel.snippets.count, 3)
+        let updatedSnippet = viewModel.snippets.first { $0.id == snippetToEdit.id }
+        XCTAssertEqual(updatedSnippet?.shortcut, ";email")
+        XCTAssertEqual(updatedSnippet?.content, "new@example.com")
+        XCTAssertEqual(updatedSnippet?.title, "Nuova Email")
+
+        // 5. Delete snippet
+        viewModel.deleteSnippet(updatedSnippet!)
+        XCTAssertEqual(viewModel.snippets.count, 2)
+        XCTAssertFalse(viewModel.snippets.contains(where: { $0.id == snippetToEdit.id }))
+
+        // 6. Convert Clip to Snippet
+        let clip = try databaseManager.ingestCapturedClip(
+            CapturedClip(plainText: "Test snippet from clip", primaryType: .text)
+        )
+        viewModel.createSnippetFromClip(clip)
+        XCTAssertTrue(viewModel.isSnippetEditorPresented)
+        XCTAssertEqual(viewModel.editingSnippet?.content, "Test snippet from clip")
+
+        // 7. Test Move Dialog (⌘M) with Snippet Option (⌥2)
+        viewModel.loadClips()
+        viewModel.selectedIndex = 0
+        viewModel.promptMoveSelectedClipToList()
+        XCTAssertNotNil(viewModel.movingClip)
+        XCTAssertEqual(viewModel.movingClip?.id, clip.id)
+
+        // Select Option 2 (Snippet destination)
+        viewModel.assignMovingClip(toOptionIndex: 2)
+        XCTAssertNil(viewModel.movingClip)
+        XCTAssertTrue(viewModel.isSnippetEditorPresented)
+        XCTAssertEqual(viewModel.editingSnippet?.content, "Test snippet from clip")
+    }
 }

@@ -13,6 +13,7 @@ public final class ScreenshotWatcher: @unchecked Sendable {
     private var isRunning: Bool = false
 
     public static let supportedExtensions: Set<String> = ["png", "jpg", "jpeg", "tiff"]
+    public static let screenshotBundleId = "com.apple.screencapture"
 
     public init(monitoredDirectoryURL: URL = ScreenshotWatcher.resolveDefaultScreenshotDirectory()) {
         self.monitoredDirectoryURL = monitoredDirectoryURL
@@ -167,7 +168,7 @@ public final class ScreenshotWatcher: @unchecked Sendable {
             let clip = CapturedClip(
                 plainText: fileURL.lastPathComponent,
                 primaryType: .image,
-                sourceAppBundleId: "com.apple.screencapture",
+                sourceAppBundleId: Self.screenshotBundleId,
                 representations: representations
             )
 

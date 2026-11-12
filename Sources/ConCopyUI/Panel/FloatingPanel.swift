@@ -4,7 +4,10 @@ import SwiftUI
 
 public final class FloatingPanel: NSPanel {
     public let viewModel: ClipboardViewModel
-    public private(set) var previousApp: NSRunningApplication?
+    public private(set) var previousActiveApp: NSRunningApplication?
+    public var previousApp: NSRunningApplication? {
+        previousActiveApp
+    }
     public var onOpenSettings: (() -> Void)?
 
     public init(viewModel: ClipboardViewModel) {
@@ -35,18 +38,13 @@ public final class FloatingPanel: NSPanel {
         standardWindowButton(.miniaturizeButton)?.isHidden = true
         standardWindowButton(.zoomButton)?.isHidden = true
 
+        if let frontApp = NSWorkspace.shared.frontmostApplication,
+           frontApp.bundleIdentifier != Bundle.main.bundleIdentifier {
+            self.previousActiveApp = frontApp
+        }
+
         viewModel.onClosePanel = { [weak self] in
-            guard let self = self else { return }
-            self.orderOut(nil)
-            if let prev = self.previousApp {
-                if #available(macOS 14.0, *) {
-                    prev.activate()
-                } else {
-                    prev.activate(options: .activateIgnoringOtherApps)
-                }
-            } else {
-                NSApp.hide(nil)
-            }
+            self?.hidePanel(restoreFocus: true)
         }
 
         self.contentView = NSHostingView(rootView: ClipboardListView(viewModel: viewModel))
@@ -78,31 +76,47 @@ public final class FloatingPanel: NSPanel {
         NSWorkspace.shared.notificationCenter.removeObserver(self)
     }
 
+    public func hidePanel(restoreFocus: Bool = true) {
+        orderOut(nil)
+        if restoreFocus {
+            if let targetApp = previousActiveApp, !targetApp.isTerminated {
+                if #available(macOS 14.0, *) {
+                    targetApp.activate()
+                } else {
+                    targetApp.activate(options: [.activateIgnoringOtherApps])
+                }
+            } else {
+                NSApp.hide(nil)
+            }
+        }
+    }
+
     public override func resignKey() {
         super.resignKey()
         if isVisible && attachedSheet == nil {
-            orderOut(nil)
+            hidePanel(restoreFocus: false)
         }
     }
 
     @objc private func handleWindowDidResignKey(_ notification: Notification) {
         guard let window = notification.object as? NSWindow, window === self else { return }
         if isVisible && attachedSheet == nil {
-            orderOut(nil)
+            hidePanel(restoreFocus: false)
         }
     }
 
     @objc private func handleAppResignActive() {
         if isVisible && attachedSheet == nil {
-            orderOut(nil)
+            hidePanel(restoreFocus: false)
         }
     }
 
     @objc private func handleWorkspaceDidActivateApp(_ notification: Notification) {
         guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
         if app.bundleIdentifier != Bundle.main.bundleIdentifier {
+            self.previousActiveApp = app
             if isVisible && attachedSheet == nil {
-                orderOut(nil)
+                hidePanel(restoreFocus: false)
             }
         }
     }
@@ -144,6 +158,34 @@ public final class FloatingPanel: NSPanel {
         NSApp.activate()
     }
 
+    public override func cancelOperation(_ sender: Any?) {
+        if viewModel.isQuickLookVisible {
+            viewModel.isQuickLookVisible = false
+            return
+        }
+        if viewModel.editingClip != nil {
+            viewModel.editingClip = nil
+            return
+        }
+        if viewModel.renamingClip != nil {
+            viewModel.renamingClip = nil
+            return
+        }
+        if viewModel.movingClip != nil {
+            viewModel.movingClip = nil
+            return
+        }
+        if !viewModel.selectedClipIds.isEmpty {
+            viewModel.clearSelection()
+            return
+        }
+        if !viewModel.searchQuery.isEmpty {
+            viewModel.searchQuery = ""
+            return
+        }
+        hidePanel(restoreFocus: true)
+    }
+
     public override func sendEvent(_ event: NSEvent) {
         if attachedSheet != nil {
             if event.type == .keyDown && handleSheetKeyDown(event) {
@@ -166,20 +208,9 @@ public final class FloatingPanel: NSPanel {
                 viewModel.movingClip = nil
                 return true
             }
-            if event.modifierFlags.contains(.option) && !event.modifierFlags.contains(.command) && !event.modifierFlags.contains(.control) {
-                var tabDigit: Int? = nil
-                if let idx = digitIndex(forKeyCode: event.keyCode), idx >= 0 && idx <= 8 {
-                    tabDigit = idx + 1
-                } else if let chars = event.charactersIgnoringModifiers,
-                          let char = chars.first,
-                          let d = char.wholeNumberValue, d >= 1 && d <= 9 {
-                    tabDigit = d
-                }
-
-                if let digit = tabDigit {
-                    viewModel.assignMovingClip(toOptionIndex: digit)
-                    return true
-                }
+            if let digit = GlobalShortcutsManager.shared.matchedListDigit(for: event) {
+                viewModel.assignMovingClip(toOptionIndex: digit)
+                return true
             }
         }
         return false
@@ -212,7 +243,7 @@ public final class FloatingPanel: NSPanel {
                 viewModel.searchQuery = ""
                 return true
             } else {
-                orderOut(nil)
+                hidePanel(restoreFocus: true)
                 return true
             }
         }
@@ -235,10 +266,9 @@ public final class FloatingPanel: NSPanel {
             return true
         }
 
-        // Cmd+,: Open preferences (key code 43 is comma or characters == ",")
-        if event.modifierFlags.contains(.command),
-           event.charactersIgnoringModifiers == "," || event.keyCode == 43 {
-            orderOut(nil)
+        // Configurable shortcut: Open preferences
+        if GlobalShortcutsManager.shared.matches(event: event, for: .openPreferences) {
+            hidePanel(restoreFocus: false)
             if let onOpenSettings = self.onOpenSettings {
                 onOpenSettings()
             } else if let onOpenSettings = viewModel.onOpenSettings {
@@ -250,15 +280,14 @@ public final class FloatingPanel: NSPanel {
             return true
         }
 
-        // Cmd+F: focus search field
-        if event.modifierFlags.contains(.command),
-           event.charactersIgnoringModifiers?.lowercased() == "f" {
+        // Configurable shortcut: Focus search field
+        if GlobalShortcutsManager.shared.matches(event: event, for: .focusSearch) {
             viewModel.isSearchFocused = true
             return false // Let it propagate to focus the field
         }
 
-        // Return / Enter: paste selected
-        if event.keyCode == 36 || event.keyCode == 76 {
+        // Configurable shortcut: Paste selected clip
+        if GlobalShortcutsManager.shared.matches(event: event, for: .pasteSelection) {
             let optionHeld = event.modifierFlags.contains(.option)
             viewModel.pasteSelected(optionHeld: optionHeld)
             return true
@@ -278,8 +307,8 @@ public final class FloatingPanel: NSPanel {
             return true
         }
 
-        // Cmd+D: clear selection if multi-selection active, else toggle favorite on selected clip
-        if event.modifierFlags.contains(.command) && !event.modifierFlags.contains(.shift) && !event.modifierFlags.contains(.control) && (event.charactersIgnoringModifiers == "d" || event.charactersIgnoringModifiers == "D") {
+        // Configurable shortcut: Clear selection if multi-selection active, else toggle favorite
+        if GlobalShortcutsManager.shared.matches(event: event, for: .toggleFavorite) {
             if !viewModel.selectedClipIds.isEmpty {
                 viewModel.clearSelection()
             } else {
@@ -288,106 +317,90 @@ public final class FloatingPanel: NSPanel {
             return true
         }
 
-        // Cmd+M: move selected clip to list
-        if event.modifierFlags.contains(.command) && !event.modifierFlags.contains(.shift) && !event.modifierFlags.contains(.control) && (event.charactersIgnoringModifiers == "m" || event.charactersIgnoringModifiers == "M") {
+        // Configurable shortcut: Move selected clip to list or snippet
+        if GlobalShortcutsManager.shared.matches(event: event, for: .moveToList) {
             viewModel.promptMoveSelectedClipToList()
             return true
         }
 
-        // Cmd+C: copy selected clip or multiple clips to clipboard when not actively editing search
-        if event.modifierFlags.contains(.command) && !event.modifierFlags.contains(.control) && !event.modifierFlags.contains(.shift) {
-            if event.charactersIgnoringModifiers?.lowercased() == "c" && (!viewModel.isSearchFocused || viewModel.searchQuery.isEmpty) {
-                if !viewModel.selectedClipIds.isEmpty {
-                    let ordered = viewModel.clips.filter { viewModel.selectedClipIds.contains($0.id) }
-                    if !ordered.isEmpty {
-                        try? viewModel.pasteInjector.copyBatchToPasteboard(
-                            clips: ordered,
-                            mode: .concatenated(separator: viewModel.batchSeparator),
-                            transformation: viewModel.activeTransformation,
-                            databaseManager: viewModel.databaseManager
-                        )
-                        viewModel.showToast("Copiati \(ordered.count) elementi negli appunti!")
-                        return true
-                    }
-                } else if viewModel.selectedIndex >= 0 && viewModel.selectedIndex < viewModel.clips.count {
-                    let clip = viewModel.clips[viewModel.selectedIndex]
-                    try? viewModel.pasteInjector.copyToPasteboard(
-                        clip: clip,
-                        databaseManager: viewModel.databaseManager,
-                        forcePlainText: viewModel.isPlainTextModeEnabled,
-                        transformation: viewModel.activeTransformation
+        // Configurable shortcut: Copy selected clip or batch to clipboard
+        if GlobalShortcutsManager.shared.matches(event: event, for: .copySelection) && (!viewModel.isSearchFocused || viewModel.searchQuery.isEmpty) {
+            if !viewModel.selectedClipIds.isEmpty {
+                let ordered = viewModel.clips.filter { viewModel.selectedClipIds.contains($0.id) }
+                if !ordered.isEmpty {
+                    try? viewModel.pasteInjector.copyBatchToPasteboard(
+                        clips: ordered,
+                        mode: .concatenated(separator: viewModel.batchSeparator),
+                        transformation: viewModel.activeTransformation,
+                        databaseManager: viewModel.databaseManager
                     )
-                    viewModel.showToast("Copiato negli appunti!")
+                    viewModel.showToast("Copiati \(ordered.count) elementi negli appunti!")
+                    return true
+                }
+            } else if viewModel.selectedIndex >= 0 && viewModel.selectedIndex < viewModel.clips.count {
+                let clip = viewModel.clips[viewModel.selectedIndex]
+                try? viewModel.pasteInjector.copyToPasteboard(
+                    clip: clip,
+                    databaseManager: viewModel.databaseManager,
+                    forcePlainText: viewModel.isPlainTextModeEnabled,
+                    transformation: viewModel.activeTransformation
+                )
+                viewModel.showToast("Copiato negli appunti!")
+                return true
+            }
+        }
+
+        // Numeric shortcuts: List / Tab Selection (Default Cmd + 1..9, or Option + 1..9 if swapped)
+        if let digit = GlobalShortcutsManager.shared.matchedListDigit(for: event) {
+            if digit == 1 {
+                viewModel.selectAllClips()
+                return true
+            } else if digit == 2 {
+                viewModel.selectFavorites()
+                return true
+            } else if digit == 3 {
+                viewModel.selectSnippets()
+                return true
+            } else {
+                let listIndex = digit - 4
+                if listIndex >= 0 && listIndex < viewModel.lists.count {
+                    let list = viewModel.lists[listIndex]
+                    viewModel.selectList(list.id)
                     return true
                 }
             }
         }
 
-        // Option + 1..9: switch list tabs (Tutte, Preferiti, and custom lists)
-        if event.modifierFlags.contains(.option) && !event.modifierFlags.contains(.command) && !event.modifierFlags.contains(.control) {
-            var tabDigit: Int? = nil
-
-            if let idx = digitIndex(forKeyCode: event.keyCode) {
-                if idx >= 0 && idx <= 8 {
-                    tabDigit = idx + 1
+        // Numeric shortcuts: Quick Paste Record (Default Option + 1..9, 0, or Cmd + 1..9, 0 if swapped)
+        if let index = GlobalShortcutsManager.shared.matchedQuickPasteIndex(for: event) {
+            let optionHeld = event.modifierFlags.contains(.option)
+            if viewModel.isSnippetsOnly {
+                let list = viewModel.filteredSnippets
+                if index >= 0 && index < list.count {
+                    viewModel.selectedSnippetIndex = index
+                    viewModel.pasteSnippet(list[index])
+                    return true
                 }
-            } else if let chars = event.charactersIgnoringModifiers,
-                      let char = chars.first,
-                      let d = char.wholeNumberValue, d >= 1 && d <= 9 {
-                tabDigit = d
-            }
-
-            if let digit = tabDigit {
-                if digit == 1 {
-                    viewModel.selectAllClips()
-                    return true
-                } else if digit == 2 {
-                    viewModel.selectFavorites()
-                    return true
-                } else if digit == 3 {
-                    viewModel.selectSnippets()
-                    return true
-                } else {
-                    let listIndex = digit - 4
-                    if listIndex >= 0 && listIndex < viewModel.lists.count {
-                        let list = viewModel.lists[listIndex]
-                        viewModel.selectList(list.id)
-                        return true
-                    }
-                }
+            } else {
+                viewModel.paste(at: index, optionHeld: optionHeld)
+                return true
             }
         }
 
-        // Cmd + Valore: quick paste matching item index (without Shift)
-        if event.modifierFlags.contains(.command) && !event.modifierFlags.contains(.shift) && !event.modifierFlags.contains(.control) {
-            // Check hardware keyCode first to support universal keyboard layouts (US, IT, FR, DE, etc.)
-            var targetIndex = digitIndex(forKeyCode: event.keyCode)
-
-            let charString = event.charactersIgnoringModifiers?.lowercased()
-            let firstChar = charString?.first
-
-            if targetIndex == nil, let char = firstChar {
-                if char >= "1" && char <= "9", let digit = Int(String(char)) {
-                    targetIndex = digit - 1
-                } else if char == "0" {
-                    targetIndex = 9
-                }
-            }
-
-            // Letters a-z (when search is not actively focused), excluding reserved shortcuts (c, d, m, f)
-            if targetIndex == nil && !viewModel.isSearchFocused, let char = firstChar {
-                if char >= "a" && char <= "z",
-                   char != "c" && char != "d" && char != "m" && char != "f" {
-                    targetIndex = QuickPasteShortcutMapper.index(forCharacter: String(char))
-                }
-            }
-
+        // Letters a-z quick paste fallback (when search is not actively focused), excluding reserved shortcuts (c, d, m, f)
+        if !viewModel.isSearchFocused,
+           event.modifierFlags.contains(.command) && !event.modifierFlags.contains(.shift) && !event.modifierFlags.contains(.control),
+           let char = event.charactersIgnoringModifiers?.lowercased().first,
+           char >= "a" && char <= "z",
+           char != "c" && char != "d" && char != "m" && char != "f" {
+            let targetIndex = QuickPasteShortcutMapper.index(forCharacter: String(char))
             if let index = targetIndex {
                 let optionHeld = event.modifierFlags.contains(.option)
                 if viewModel.isSnippetsOnly {
-                    if index >= 0 && index < viewModel.snippets.count {
+                    let list = viewModel.filteredSnippets
+                    if index >= 0 && index < list.count {
                         viewModel.selectedSnippetIndex = index
-                        viewModel.pasteSnippet(viewModel.snippets[index])
+                        viewModel.pasteSnippet(list[index])
                         return true
                     }
                 } else {
@@ -416,17 +429,21 @@ public final class FloatingPanel: NSPanel {
         }
     }
 
+    public func showPanel() {
+        if !isVisible {
+            togglePanel()
+        }
+    }
+
     public func togglePanel() {
         if isVisible {
-            orderOut(nil)
+            hidePanel(restoreFocus: true)
         } else {
             let frontApp = NSWorkspace.shared.frontmostApplication
             if let frontApp, frontApp.bundleIdentifier != Bundle.main.bundleIdentifier {
-                self.previousApp = frontApp
+                self.previousActiveApp = frontApp
             }
-            viewModel.searchQuery = ""
-            viewModel.checkAccessibilityPermissions()
-            viewModel.loadClips()
+            viewModel.prepareForPanelOpen()
             positionNearMouse()
             orderFrontRegardless()
             makeKeyAndOrderFront(nil)
