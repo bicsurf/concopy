@@ -399,7 +399,7 @@ public struct ClipboardListView: View {
     private var scopeNavigation: some View {
         VStack(spacing: 8) {
             HStack(spacing: 6) {
-                ListTabButton(title: "All", icon: "tray.full", isSelected: viewModel.selectedListId == nil && !viewModel.isFavoritesOnly && !viewModel.isSnippetsOnly, shortcutHint: "⌥A") {
+                ListTabButton(title: "All", icon: "tray.full", isSelected: viewModel.selectedListId == nil && !viewModel.isFavoritesOnly && !viewModel.isSnippetsOnly, shortcutHint: "\(shortcutsManager.listModifierSymbol)A") {
                     viewModel.selectAllClips()
                 }
                 ListTabButton(title: "Favorites", icon: "star", isSelected: viewModel.isFavoritesOnly, shortcutHint: "\(shortcutsManager.listModifierSymbol)1") {
