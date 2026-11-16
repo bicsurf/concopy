@@ -326,7 +326,7 @@ public struct ClipboardListView: View {
                                     }
                                 )
                                 .equatable()
-                                .id("\(clip.id)-\(index)-\(clip.updatedAt.timeIntervalSince1970)-\(clip.customName ?? "")-\(clip.isFavorite)-\(shortcutsManager.swapNumericModifiers)-\(viewModel.copiedClipId == clip.id)-\(viewModel.selectedClipIds.contains(clip.id))")
+                                .id(clip.id)
                                 .contextMenu {
                                     rowContextMenu(for: clip)
                                 }

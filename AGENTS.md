@@ -89,8 +89,10 @@ Il pannello deve chiudersi immediatamente al cambio di contesto:
    - Nessuna operazione di I/O o hashing (SHA-256) deve essere eseguita sul thread principale.
    - Usare `Task.detached(priority: .utility)` per l'elaborazione dei blob, il download dei metadati URL e l'ingestione degli screenshot.
 
-3. **Rendering Reattivo a $O(N)$**:
-   - Nella lista SwiftUI (`ClipboardListView`), utilizzare identità composte stabili `.id("\(clip.id)-\(index)-\(clip.updatedAt.timeIntervalSince1970)-...")` per forzare l'aggiornamento reattivo dei badge delle scorciatoie senza invalidare l'intero albero delle viste.
+3. **Identità Stabile e Rendering Reattivo**:
+   - Nella lista SwiftUI (`ClipboardListView`), utilizzare l'identificatore persistente `clip.id` nel `ForEach` e in `.id(clip.id)` per mantenere stabili le righe e i riferimenti di `ScrollViewReader`.
+   - Non includere nell'identità indice, timestamp, nome, preferiti o stati transitori di copia e selezione: il loro aggiornamento non deve ricreare la riga e azzerarne lo stato locale.
+   - Passare gli stati e i badge come proprietà reattive di `ClipRowView` e considerarli nel confronto `Equatable`, inclusi indice, selezione, copia e modificatore delle scorciatoie.
    - Mantenere la conformità `.equatable()` su `ClipRowView` per evitare re-render non necessari durante lo scorrimento.
 
 4. **Sicurezza dei Descrittori di File (File Descriptor Leaks)**:
