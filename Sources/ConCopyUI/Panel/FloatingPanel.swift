@@ -346,12 +346,8 @@ public final class FloatingPanel: NSPanel {
             }
         }
 
-        // List / Tab Selection: All Clips (Option + A, or Cmd + A when not editing search text)
+        // List / Tab Selection: All Clips (Option + A, or Cmd + A matching list shortcuts)
         if GlobalShortcutsManager.shared.matchesAllClips(event: event) {
-            let isCommandHeld = event.modifierFlags.contains(.command)
-            if isCommandHeld && viewModel.isSearchFocused {
-                return false // Propagate Cmd+A to text field for standard selectAll:
-            }
             viewModel.selectAllClips()
             return true
         }
