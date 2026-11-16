@@ -43,12 +43,7 @@ public struct QuickLookPopoverView: View {
                     .font(.headline)
                     .lineLimit(1)
                 Spacer()
-                Button(action: onClose) {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 16))
-                        .foregroundColor(.secondary)
-                }
-                .buttonStyle(.plain)
+                PanelIconButton(title: "Close preview", systemImage: "xmark", action: onClose)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)

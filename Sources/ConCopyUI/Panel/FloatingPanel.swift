@@ -13,7 +13,7 @@ public final class FloatingPanel: NSPanel {
     public init(viewModel: ClipboardViewModel) {
         self.viewModel = viewModel
         super.init(
-            contentRect: NSRect(x: 0, y: 0, width: 340, height: 460),
+            contentRect: NSRect(x: 0, y: 0, width: 400, height: 560),
             styleMask: [.titled, .nonactivatingPanel, .fullSizeContentView, .resizable],
             backing: .buffered,
             defer: false
@@ -32,6 +32,7 @@ public final class FloatingPanel: NSPanel {
         self.isOpaque = false
         self.backgroundColor = .clear
         self.hasShadow = true
+        self.contentMinSize = NSSize(width: 360, height: 480)
         self.setFrameAutosaveName("ConCopyFloatingPanelFrame")
 
         standardWindowButton(.closeButton)?.isHidden = true
@@ -47,7 +48,10 @@ public final class FloatingPanel: NSPanel {
             self?.hidePanel(restoreFocus: true)
         }
 
-        self.contentView = NSHostingView(rootView: ClipboardListView(viewModel: viewModel))
+        self.contentView = NSHostingView(
+            rootView: ClipboardListView(viewModel: viewModel)
+                .ignoresSafeArea(.container, edges: .top)
+        )
 
         NotificationCenter.default.addObserver(
             self,

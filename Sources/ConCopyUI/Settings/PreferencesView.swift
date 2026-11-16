@@ -6,8 +6,9 @@ import UniformTypeIdentifiers
 
 public enum PreferencesTab: String, CaseIterable, Identifiable {
     case general = "General"
+    case history = "History"
     case shortcuts = "Shortcuts"
-    case blacklist = "Excluded Apps"
+    case blacklist = "Privacy"
 
     public var id: String { rawValue }
 }
@@ -43,13 +44,14 @@ public struct PreferencesView: View {
 
     public var body: some View {
         VStack(spacing: 0) {
-            Picker("", selection: $selectedTab) {
+            Picker("Settings section", selection: $selectedTab) {
                 ForEach(PreferencesTab.allCases) { tab in
                     Text(tab.rawValue).tag(tab)
                 }
             }
             .pickerStyle(.segmented)
-            .frame(maxWidth: 320)
+            .labelsHidden()
+            .frame(maxWidth: 420)
             .padding(.top, 14)
             .padding(.bottom, 10)
 
@@ -59,6 +61,8 @@ public struct PreferencesView: View {
                 switch selectedTab {
                 case .general:
                     generalTabView
+                case .history:
+                    historyTabView
                 case .shortcuts:
                     shortcutsTabView
                 case .blacklist:
@@ -67,6 +71,7 @@ public struct PreferencesView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .tint(ConCopyTheme.Accents.primary)
         .frame(minWidth: 540, idealWidth: 580, minHeight: 450, idealHeight: 520)
         .sheet(isPresented: $isShowingManualAddSheet) {
             manualAddSheet
@@ -108,93 +113,46 @@ public struct PreferencesView: View {
     private var generalTabView: some View {
         Form {
             Section(header: Text("Clipboard Monitoring")) {
-                Toggle("Pause clipboard recording", isOn: $settingsManager.isMonitoringPaused)
-                Text("When active, ConCopy will not record new items copied to the clipboard")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-
-                Toggle("Capture macOS screenshots", isOn: $settingsManager.autoCaptureScreenshots)
-                Text("Automatically save newly captured screenshots to the screenshots folder")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                Toggle(isOn: Binding(
+                    get: { !settingsManager.isMonitoringPaused },
+                    set: { settingsManager.isMonitoringPaused = !$0 }
+                )) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Record clipboard history")
+                        Text("Save copied items so you can use them again later.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .accessibilityLabel("Record clipboard history")
+                .accessibilityHint("Save copied items so you can use them again later.")
+                Toggle(isOn: $settingsManager.autoCaptureScreenshots) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Capture macOS screenshots")
+                        Text("Add new screenshots to your clipboard history.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .accessibilityLabel("Capture macOS screenshots")
+                .accessibilityHint("Add new screenshots to your clipboard history.")
             }
 
             Section(header: Text("General")) {
                 Toggle("Launch automatically at login", isOn: $settingsManager.launchAtLogin)
-                Toggle("Paste directly into active application", isOn: $settingsManager.isDirectPasteEnabled)
-                Text("When enabled, selecting a clip pastes it immediately into the active app. When disabled, it is only copied to the clipboard (press Cmd+V to paste)")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-
-            Section(header: Text("History & Cleanup")) {
-                Toggle("Automatic cleanup", isOn: $settingsManager.autoCleanupEnabled)
-
-                if settingsManager.autoCleanupEnabled {
-                    Picker("Delete clips older than:", selection: $settingsManager.retentionDays) {
-                        Text("7 days").tag(7)
-                        Text("14 days").tag(14)
-                        Text("30 days").tag(30)
-                        Text("90 days").tag(90)
+                VStack(alignment: .leading, spacing: 6) {
+                    Picker("When clicking a clip", selection: $settingsManager.isDirectPasteEnabled) {
+                        Text("Copy to clipboard").tag(false)
+                        Text("Paste into active app").tag(true)
                     }
-
-                    Picker("Maximum history size:", selection: $settingsManager.maxHistoryCount) {
-                        Text("200 items").tag(200)
-                        Text("500 items").tag(500)
-                        Text("1000 items").tag(1000)
-                        Text("5000 items").tag(5000)
-                    }
-                }
-
-                Text("Note: Favorite items (★) are never deleted automatically")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-
-                Button(role: .destructive, action: {
-                    isShowingClearConfirm = true
-                }) {
-                    Label("Clear History", systemImage: "trash")
-                        .foregroundColor(.red)
-                }
-            }
-
-            Section(header: Text("Backup & Restore")) {
-                HStack(spacing: 12) {
-                    Button(action: exportBackupAction) {
-                        Label("Export Archive...", systemImage: "square.and.arrow.up")
-                    }
-                    Button(action: importBackupAction) {
-                        Label("Import Archive...", systemImage: "square.and.arrow.down")
-                    }
-                }
-                Text("Export or restore all clips (including blobs and images) and lists in JSON format")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-
-            Section(header: Text("Import from Other Apps")) {
-                if isImporting {
-                    HStack(spacing: 8) {
-                        ProgressView()
-                            .controlSize(.small)
-                        Text(importProgressDescription.isEmpty ? "Importing..." : importProgressDescription)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    .padding(.vertical, 4)
-                } else {
-                    HStack(spacing: 12) {
-                        Button(action: importFromMaccyAction) {
-                            Label("Import from Maccy...", systemImage: "arrow.down.doc")
-                        }
-                        Button(action: importFromCopyEmAction) {
-                            Label("Import from Copy 'Em...", systemImage: "arrow.down.doc")
-                        }
-                    }
-                    Text("Import history and categories from Maccy or Copy 'Em while preserving favorites and deduplicating content")
+                    Text(settingsManager.isDirectPasteEnabled
+                        ? "A click pastes the clip into the app you were using and closes the panel."
+                        : "A click copies the clip and keeps the panel open. Paste with ⌘V when you’re ready.")
                         .font(.caption)
-                        .foregroundColor(.secondary)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
+                .padding(.vertical, 4)
             }
 
             Section(header: Text("Updates")) {
@@ -205,10 +163,17 @@ public struct PreferencesView: View {
                         .foregroundColor(.secondary)
                 }
 
-                Toggle("Check for updates automatically", isOn: $settingsManager.isAutoCheckUpdatesEnabled)
-                Text("Periodically check GitHub for new versions of ConCopy")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                Toggle(isOn: $settingsManager.isAutoCheckUpdatesEnabled) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Check for updates automatically")
+                        Text("Periodically check for new versions of ConCopy.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                .accessibilityLabel("Check for updates automatically")
+                .accessibilityHint("Periodically check for new versions of ConCopy.")
 
                 HStack {
                     Button(action: {
@@ -251,6 +216,83 @@ public struct PreferencesView: View {
                         .foregroundColor(.secondary)
                 }
             }
+        }
+        .formStyle(.grouped)
+    }
+
+    // MARK: - History Tab
+    private var historyTabView: some View {
+        Form {
+            Section(header: Text("History & Cleanup")) {
+                Toggle("Automatic cleanup", isOn: $settingsManager.autoCleanupEnabled)
+
+                if settingsManager.autoCleanupEnabled {
+                    Picker("Delete clips older than:", selection: $settingsManager.retentionDays) {
+                        Text("7 days").tag(7)
+                        Text("14 days").tag(14)
+                        Text("30 days").tag(30)
+                        Text("90 days").tag(90)
+                    }
+
+                    Picker("Maximum history size:", selection: $settingsManager.maxHistoryCount) {
+                        Text("200 items").tag(200)
+                        Text("500 items").tag(500)
+                        Text("1000 items").tag(1000)
+                        Text("5000 items").tag(5000)
+                    }
+                }
+
+                Text("Favorites and clips in your lists are kept during automatic cleanup.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+                Button(role: .destructive, action: {
+                    isShowingClearConfirm = true
+                }) {
+                    Label("Clear History", systemImage: "trash")
+                        .foregroundColor(.red)
+                }
+            }
+
+            Section(header: Text("Backup & Restore")) {
+                HStack(spacing: 12) {
+                    Button(action: exportBackupAction) {
+                        Label("Export Archive...", systemImage: "square.and.arrow.up")
+                    }
+                    Button(action: importBackupAction) {
+                        Label("Import Archive...", systemImage: "square.and.arrow.down")
+                    }
+                }
+                Text("Save or restore your clips, images and lists in a single backup archive.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            Section(header: Text("Import from Other Apps")) {
+                if isImporting {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text(importProgressDescription.isEmpty ? "Importing..." : importProgressDescription)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.vertical, 4)
+                } else {
+                    HStack(spacing: 12) {
+                        Button(action: importFromMaccyAction) {
+                            Label("Import from Maccy...", systemImage: "arrow.down.doc")
+                        }
+                        Button(action: importFromCopyEmAction) {
+                            Label("Import from Copy 'Em...", systemImage: "arrow.down.doc")
+                        }
+                    }
+                    Text("Bring over history, lists and favorites without creating duplicates.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+
         }
         .formStyle(.grouped)
     }
@@ -413,7 +455,7 @@ public struct PreferencesView: View {
     // MARK: - Blacklist Tab
     private var blacklistTabView: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Applications in this list will not be monitored. Content copied from them will be ignored.")
+            Text("Keep sensitive content out of your history. Anything copied from these apps is ignored.")
                 .font(.subheadline)
                 .foregroundColor(.secondary)
                 .padding(.horizontal, 20)

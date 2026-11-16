@@ -25,8 +25,13 @@ public enum ConCopyTheme {
     public enum Surfaces {
         /// Tinta di fondo della finestra HUD (grigio ardesia/grafite calibrato per staccare su sfondi bianchi)
         public static let windowBackgroundTint = ConCopyTheme.dynamicColor(
-            light: NSColor(white: 0.88, alpha: 0.94),
-            dark: NSColor(white: 0.11, alpha: 0.90)
+            light: NSColor(red: 0.97, green: 0.965, blue: 0.955, alpha: 0.97),
+            dark: NSColor(red: 0.105, green: 0.11, blue: 0.12, alpha: 0.97)
+        )
+
+        public static let searchBackground = ConCopyTheme.dynamicColor(
+            light: NSColor.white.withAlphaComponent(0.85),
+            dark: NSColor.white.withAlphaComponent(0.055)
         )
 
         /// Bordo perimetrale della finestra HUD (più definito in light mode per staccare su sfondi chiari)
@@ -88,13 +93,14 @@ public enum ConCopyTheme {
 
         /// Sfondo riga in multi-selezione (batch)
         public static let batchSelectedBackground = ConCopyTheme.dynamicColor(
-            light: NSColor(red: 0.80, green: 0.35, blue: 0.18, alpha: 0.34),
-            dark: NSColor(red: 0.90, green: 0.46, blue: 0.30, alpha: 0.32)
+            light: NSColor(red: 0.80, green: 0.35, blue: 0.18, alpha: 0.19),
+            dark: NSColor(red: 0.90, green: 0.46, blue: 0.30, alpha: 0.23)
         )
     }
 
     // MARK: - Accenti e Stati Funzionali (Accents & Brand)
     public enum Accents {
+        public static let success = Color(nsColor: .systemGreen)
         /// Accento Primario ConCopy: Artisan Terracotta (caldo, profondo e conforme a WCAG AA in light mode)
         public static let primary = ConCopyTheme.dynamicColor(
             light: NSColor(red: 0.72, green: 0.28, blue: 0.12, alpha: 1.0),

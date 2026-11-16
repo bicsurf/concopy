@@ -222,6 +222,7 @@ public final class ClipboardViewModel: ObservableObject {
     }
 
     public func selectAllClips() {
+        clearSelection()
         selectedListId = nil
         isFavoritesOnly = false
         isSnippetsOnly = false
@@ -229,6 +230,7 @@ public final class ClipboardViewModel: ObservableObject {
     }
 
     public func selectFavorites() {
+        clearSelection()
         selectedListId = nil
         isFavoritesOnly = true
         isSnippetsOnly = false
@@ -236,6 +238,7 @@ public final class ClipboardViewModel: ObservableObject {
     }
 
     public func selectSnippets() {
+        clearSelection()
         selectedListId = nil
         isFavoritesOnly = false
         isSnippetsOnly = true
@@ -243,6 +246,7 @@ public final class ClipboardViewModel: ObservableObject {
     }
 
     public func selectList(_ listId: UUID) {
+        clearSelection()
         selectedListId = listId
         isFavoritesOnly = false
         isSnippetsOnly = false
