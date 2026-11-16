@@ -9,111 +9,17 @@ public struct ClipboardListView: View {
     @FocusState private var isFieldFocused: Bool
     @State private var editTextValue: String = ""
     @State private var editNameValue: String = ""
-    @State private var isClearButtonHovered: Bool = false
+    @ObservedObject private var settings: AppSettingsManager
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     public init(viewModel: ClipboardViewModel) {
         self.viewModel = viewModel
+        self.settings = viewModel.appSettings
     }
 
     public var body: some View {
         VStack(spacing: 0) {
-            // Drag Handle Indicator
-            HStack {
-                Spacer()
-                RoundedRectangle(cornerRadius: 2, style: .continuous)
-                    .fill(ConCopyTheme.Surfaces.dragHandle)
-                    .frame(width: 36, height: 4)
-                Spacer()
-            }
-            .padding(.top, 6)
-            .padding(.bottom, 2)
-            .background(WindowDragGestureArea())
-
-            // Header: Search & Controls
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 13, weight: .regular))
-                    .foregroundColor(.secondary)
-
-                TextField("Search (Cmd+F)...", text: $viewModel.searchQuery)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 13))
-                    .focused($isFieldFocused)
-                    .onChange(of: isFieldFocused) { _, focused in
-                        viewModel.isSearchFocused = focused
-                    }
-                    .onSubmit {
-                        viewModel.pasteSelected()
-                    }
-
-                if !viewModel.searchQuery.isEmpty {
-                    Button(action: { viewModel.searchQuery = "" }) {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 12))
-                            .foregroundColor(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                }
-
-                // Sort Mode Menu
-                Menu {
-                    ForEach(ClipSortMode.allCases, id: \.self) { mode in
-                        Button(action: {
-                            viewModel.currentSortMode = mode
-                            viewModel.loadClips()
-                        }) {
-                            HStack {
-                                Text(mode.displayName)
-                                if viewModel.currentSortMode == mode {
-                                    Image(systemName: "checkmark")
-                                }
-                            }
-                        }
-                    }
-                } label: {
-                    Image(systemName: "arrow.up.arrow.down")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.secondary)
-                }
-                .menuIndicator(.hidden)
-                .buttonStyle(.plain)
-                .help("Sorting")
-
-                // Auto-Star toggle for selected list
-                if let listId = viewModel.selectedListId,
-                   let list = viewModel.lists.first(where: { $0.id == listId }) {
-                    Button(action: {
-                        viewModel.toggleAutoStar(for: listId)
-                    }) {
-                        Image(systemName: list.isAutoStarActive ? "star.circle.fill" : "star.circle")
-                            .foregroundColor(list.isAutoStarActive ? .yellow : .secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Auto-Star on this list")
-                }
-                // Preferences button
-                Button(action: {
-                    if let onOpenSettings = viewModel.onOpenSettings {
-                        onOpenSettings()
-                    } else {
-                        PreferencesWindowController.shared.showWindow()
-                    }
-                }) {
-                    Image(systemName: "gearshape")
-                        .font(.system(size: 12))
-                        .foregroundColor(.secondary)
-                }
-                .buttonStyle(.plain)
-                .help("Settings (⌘,)")
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(
-                ZStack {
-                    Color.primary.opacity(0.02)
-                    WindowDragGestureArea()
-                }
-            )
+            panelHeader
 
             // Update Available Banner
             if let update = updateChecker.availableUpdate {
@@ -151,131 +57,30 @@ public struct ClipboardListView: View {
                 .background(ConCopyTheme.Badges.tabShortcutBackground(isSelected: true))
             }
 
-            // Accessibility Permission Banner
             if !viewModel.isAccessibilityTrusted {
-                HStack(spacing: 6) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundColor(.yellow)
-                    Text("Accessibility permissions missing (paste disabled)")
-                        .font(.caption.bold())
-                    Spacer()
-                    Button("Settings") {
-                        viewModel.openAccessibilitySettings()
-                    }
-                    .buttonStyle(.plain)
-                    .font(.caption.bold())
-                    .foregroundColor(.accentColor)
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 5)
-                .background(Color.yellow.opacity(0.12))
+                PanelNotice(
+                    title: "Copying is available",
+                    message: "Allow Accessibility to paste directly into other apps.",
+                    systemImage: "hand.raised",
+                    actionTitle: "Allow paste",
+                    action: viewModel.openAccessibilitySettings
+                )
             }
 
-            // Pause Warning Banner
-            if AppSettingsManager.shared.isMonitoringPaused {
-                HStack(spacing: 6) {
-                    Image(systemName: "pause.circle.fill")
-                        .foregroundColor(.orange)
-                    Text("Recording paused")
-                        .font(.caption.bold())
-                    Spacer()
-                    Button("Resume") {
-                        AppSettingsManager.shared.isMonitoringPaused = false
-                    }
-                    .buttonStyle(.plain)
-                    .font(.caption.bold())
-                    .foregroundColor(.accentColor)
+            if settings.isMonitoringPaused {
+                PanelNotice(
+                    title: "Clipboard history is paused",
+                    message: "Your saved clips are still available.",
+                    systemImage: "pause.circle",
+                    actionTitle: "Resume"
+                ) {
+                    settings.isMonitoringPaused = false
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 5)
-                .background(Color.orange.opacity(0.12))
             }
 
             Divider().opacity(0.3)
 
-            // Horizontal Lists Bar
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    ListTabButton(
-                        title: "All",
-                        icon: "tray.full",
-                        isSelected: viewModel.selectedListId == nil && !viewModel.isFavoritesOnly && !viewModel.isSnippetsOnly,
-                        shortcutHint: "\(shortcutsManager.listModifierSymbol)A"
-                    ) {
-                        viewModel.selectAllClips()
-                    }
-
-                    ListTabButton(
-                        title: "Favorites",
-                        icon: "star.fill",
-                        isSelected: viewModel.selectedListId == nil && viewModel.isFavoritesOnly && !viewModel.isSnippetsOnly,
-                        shortcutHint: "\(shortcutsManager.listModifierSymbol)1"
-                    ) {
-                        viewModel.selectFavorites()
-                    }
-
-                    ListTabButton(
-                        title: "Snippets",
-                        icon: "curlybraces",
-                        isSelected: viewModel.isSnippetsOnly,
-                        shortcutHint: "\(shortcutsManager.listModifierSymbol)2"
-                    ) {
-                        viewModel.selectSnippets()
-                    }
-
-                    ForEach(Array(viewModel.lists.enumerated()), id: \.element.id) { index, list in
-                        let digit = index + 3
-                        let hint = digit <= 9 ? "\(shortcutsManager.listModifierSymbol)\(digit)" : (digit == 10 ? "\(shortcutsManager.listModifierSymbol)0" : nil)
-                        ListTabButton(
-                            title: list.name,
-                            icon: list.isAutoStarActive ? "star.circle.fill" : "folder",
-                            isSelected: !viewModel.isSnippetsOnly && viewModel.selectedListId == list.id,
-                            shortcutHint: hint
-                        ) {
-                            viewModel.selectList(list.id)
-                        }
-                        .contextMenu {
-                            Button {
-                                viewModel.toggleAutoStar(for: list.id)
-                            } label: {
-                                Label(
-                                    list.isAutoStarActive ? "Disable Auto-Star" : "Enable Auto-Star",
-                                    systemImage: list.isAutoStarActive ? "star.slash" : "star"
-                                )
-                            }
-
-                            Divider()
-
-                            Button(role: .destructive) {
-                                viewModel.deleteList(list.id, deleteContainedClips: false)
-                            } label: {
-                                Label("Delete List", systemImage: "trash")
-                            }
-                        }
-                    }
-
-                    Button(action: promptCreateNewList) {
-                        Image(systemName: "plus")
-                            .font(.system(size: 10, weight: .bold))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 5)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                    .fill(ConCopyTheme.Surfaces.pillBackground)
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                    .stroke(ConCopyTheme.Surfaces.pillBorder, lineWidth: 0.5)
-                            )
-                            .foregroundColor(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Create new list")
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-            }
-            .background(Color.primary.opacity(0.015))
+            scopeNavigation
 
             Divider().opacity(0.3)
 
@@ -283,21 +88,7 @@ public struct ClipboardListView: View {
             if viewModel.isSnippetsOnly {
                 SnippetsListView(viewModel: viewModel)
             } else if viewModel.clips.isEmpty {
-                VStack(spacing: 8) {
-                    Image(systemName: "doc.on.clipboard")
-                        .font(.system(size: 28, weight: .light))
-                        .foregroundColor(.secondary.opacity(0.6))
-                        .padding(.bottom, 4)
-                    Text("No items in clipboard")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(.secondary)
-                    Text("Copy text or images to save them automatically")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary.opacity(0.6))
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(WindowDragGestureArea())
-                .padding(.vertical, 40)
+                emptyClipsView
             } else {
                 ScrollViewReader { proxy in
                     ScrollView {
@@ -310,6 +101,7 @@ public struct ClipboardListView: View {
                                     isChecked: viewModel.selectedClipIds.contains(clip.id),
                                     isPasting: viewModel.pastingClipId == clip.id,
                                     isCopied: viewModel.copiedClipId == clip.id,
+                                    actionTitle: settings.isDirectPasteEnabled ? "Paste" : "Copy",
                                     shortcutLabel: QuickPasteShortcutMapper.label(forIndex: index),
                                     quickPasteModifier: shortcutsManager.quickPasteModifierSystemImage,
                                     thumbnailImage: clip.primaryType == .image ? viewModel.imageThumbnail(for: clip) : nil,
@@ -326,7 +118,7 @@ public struct ClipboardListView: View {
                                     }
                                 )
                                 .equatable()
-                                .id("\(clip.id)-\(index)-\(clip.updatedAt.timeIntervalSince1970)-\(clip.customName ?? "")-\(clip.isFavorite)-\(shortcutsManager.swapNumericModifiers)-\(viewModel.copiedClipId == clip.id)-\(viewModel.selectedClipIds.contains(clip.id))")
+                                .id(clip.id)
                                 .contextMenu {
                                     rowContextMenu(for: clip)
                                 }
@@ -357,73 +149,16 @@ public struct ClipboardListView: View {
                 }
             }
 
-            // Bottom Batch Actions Bar (when multi-selection is active)
+            Divider().opacity(0.3)
             if !viewModel.selectedClipIds.isEmpty {
-                Divider().opacity(0.3)
-                HStack(spacing: 8) {
-                    // Selected counter
-                    Text("\(viewModel.selectedClipIds.count) selected")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(.secondary)
-                        .padding(.leading, 2)
-
-                    // Minimal X button for deselection
-                    Button(action: {
-                        viewModel.clearSelection()
-                    }) {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(isClearButtonHovered ? .primary : .secondary)
-                            .frame(width: 24, height: 24)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                    .fill(isClearButtonHovered ? ConCopyTheme.Rows.hoverBackground : ConCopyTheme.Surfaces.pillBackground)
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                    .stroke(ConCopyTheme.Surfaces.pillBorder, lineWidth: 0.5)
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .help("Deselect all (Esc / ⌘D)")
-                    .onHover { hovering in
-                        isClearButtonHovered = hovering
-                    }
-
-                    Spacer()
-
-                    if viewModel.selectedClipIds.count >= 2 {
-                        Picker("", selection: $viewModel.batchSeparator) {
-                            ForEach(BatchPasteSeparator.allCases, id: \.self) { sep in
-                                Text(sep.displayName).tag(sep)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .frame(maxWidth: 120)
-
-                        Button(viewModel.appSettings.isDirectPasteEnabled ? "Paste Together" : "Copy Together") {
-                            viewModel.pasteSelectedBatch(mode: .concatenated(separator: viewModel.batchSeparator))
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
-
-                        Button("Form Tab") {
-                            viewModel.pasteSelectedBatch(mode: .sequentialFormFields(delayMs: 60))
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                    } else {
-                        Button(viewModel.appSettings.isDirectPasteEnabled ? "Paste" : "Copy") {
-                            viewModel.pasteSelected()
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
-                    }
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(Color.primary.opacity(0.03))
+                batchActions
+            } else {
+                statusFooter
             }
+        }
+        .tint(ConCopyTheme.Accents.primary)
+        .transaction { transaction in
+            if reduceMotion { transaction.disablesAnimations = true }
         }
         .frame(minWidth: 360, minHeight: 480)
         .background(
@@ -437,39 +172,17 @@ public struct ClipboardListView: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(ConCopyTheme.Surfaces.windowBorder, lineWidth: 1)
         )
-        .overlay(alignment: .top) {
-            if let toast = viewModel.toastMessage {
-                HStack(spacing: 8) {
-                    Image(systemName: "doc.on.clipboard.fill")
-                        .foregroundColor(.accentColor)
-                    Text(toast)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(.primary)
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(
-                    Capsule()
-                        .fill(Color(nsColor: .windowBackgroundColor))
-                        .shadow(color: .black.opacity(0.35), radius: 8, x: 0, y: 3)
-                )
-                .overlay(
-                    Capsule()
-                        .stroke(Color.primary.opacity(0.15), lineWidth: 1)
-                )
-                .padding(.top, 40)
-                .transition(.opacity.combined(with: .move(edge: .top)))
-                .animation(.easeInOut(duration: 0.2), value: viewModel.toastMessage)
-            }
-        }
         .onAppear {
             DispatchQueue.main.async {
                 isFieldFocused = true
                 viewModel.isSearchFocused = true
             }
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notification in
+            guard let panel = notification.object as? FloatingPanel,
+                  panel.viewModel === viewModel else { return }
             DispatchQueue.main.async {
+                guard panel.isKeyWindow, panel.attachedSheet == nil else { return }
                 isFieldFocused = true
                 viewModel.isSearchFocused = true
             }
@@ -481,7 +194,7 @@ public struct ClipboardListView: View {
         }
         // QuickLook Popover
         .sheet(isPresented: $viewModel.isQuickLookVisible) {
-            if viewModel.selectedIndex < viewModel.clips.count {
+            if viewModel.selectedIndex >= 0 && viewModel.selectedIndex < viewModel.clips.count {
                 let currentClip = viewModel.clips[viewModel.selectedIndex]
                 QuickLookPopoverView(
                     clip: currentClip,
@@ -580,6 +293,269 @@ public struct ClipboardListView: View {
                 }
             )
         }
+    }
+
+    private var scopeName: String {
+        if viewModel.isSnippetsOnly { return "Snippets" }
+        if viewModel.isFavoritesOnly { return "Favorites" }
+        if let id = viewModel.selectedListId,
+           let list = viewModel.lists.first(where: { $0.id == id }) {
+            return list.name
+        }
+        return "All clips"
+    }
+
+    private var itemCount: Int {
+        viewModel.isSnippetsOnly ? viewModel.filteredSnippets.count : viewModel.clips.count
+    }
+
+    private var panelHeader: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "doc.on.clipboard")
+                    .foregroundStyle(ConCopyTheme.Accents.primary)
+                    .accessibilityHidden(true)
+                Text("ConCopy")
+                    .font(.system(size: 14, weight: .semibold))
+                Spacer(minLength: 8)
+                Text(viewModel.isSnippetsOnly ? "Select, then paste" : (settings.isDirectPasteEnabled ? "Paste on click" : "Copy on click"))
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .help(settings.isDirectPasteEnabled
+                        ? "Click a clip to paste it into the active app. Change this in Settings."
+                        : "Click a clip to copy it and keep this panel open. Change this in Settings.")
+                Menu {
+                    ForEach(ClipSortMode.allCases, id: \.self) { mode in
+                        Button {
+                            viewModel.currentSortMode = mode
+                            viewModel.loadClips()
+                        } label: {
+                            if viewModel.currentSortMode == mode {
+                                Label(mode.displayName, systemImage: "checkmark")
+                            } else {
+                                Text(mode.displayName)
+                            }
+                        }
+                    }
+                } label: {
+                    Image(systemName: "arrow.up.arrow.down")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 28, height: 28)
+                        .contentShape(Rectangle())
+                }
+                .menuIndicator(.hidden)
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .disabled(viewModel.isSnippetsOnly)
+                .accessibilityLabel("Sort clips")
+                .help("Sort: \(viewModel.currentSortMode.displayName)")
+                PanelIconButton(title: "Settings", systemImage: "gearshape") {
+                    if let action = viewModel.onOpenSettings {
+                        action()
+                    } else {
+                        PreferencesWindowController.shared.showWindow()
+                    }
+                }
+            }
+            .background(WindowDragGestureArea())
+
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
+                TextField("Search \(scopeName.lowercased())…", text: $viewModel.searchQuery)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13))
+                    .focused($isFieldFocused)
+                    .accessibilityLabel("Search \(scopeName)")
+                    .onChange(of: isFieldFocused) { _, focused in
+                        viewModel.isSearchFocused = focused
+                    }
+                    .onSubmit { viewModel.pasteSelected() }
+                if !viewModel.searchQuery.isEmpty {
+                    PanelIconButton(title: "Clear search", systemImage: "xmark.circle.fill") {
+                        viewModel.searchQuery = ""
+                        isFieldFocused = true
+                    }
+                } else if let shortcut = shortcutsManager.shortcut(for: .focusSearch) {
+                    PanelShortcutBadge(text: shortcut.description)
+                }
+            }
+            .padding(.leading, 10)
+            .padding(.trailing, 6)
+            .frame(height: 36)
+            .background(ConCopyTheme.Surfaces.searchBackground, in: RoundedRectangle(cornerRadius: 9))
+            .overlay {
+                RoundedRectangle(cornerRadius: 9)
+                    .stroke(isFieldFocused ? ConCopyTheme.Rows.selectedBorder : ConCopyTheme.Surfaces.pillBorder, lineWidth: 1)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 10)
+        .padding(.bottom, 12)
+    }
+
+    private var scopeNavigation: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 6) {
+                ListTabButton(title: "All", icon: "tray.full", isSelected: viewModel.selectedListId == nil && !viewModel.isFavoritesOnly && !viewModel.isSnippetsOnly, shortcutHint: "⌥A") {
+                    viewModel.selectAllClips()
+                }
+                ListTabButton(title: "Favorites", icon: "star", isSelected: viewModel.isFavoritesOnly, shortcutHint: "\(shortcutsManager.listModifierSymbol)1") {
+                    viewModel.selectFavorites()
+                }
+                ListTabButton(title: "Snippets", icon: "curlybraces", isSelected: viewModel.isSnippetsOnly, shortcutHint: "\(shortcutsManager.listModifierSymbol)2") {
+                    viewModel.selectSnippets()
+                }
+                PanelIconButton(title: "Create a list", systemImage: "plus", action: promptCreateNewList)
+            }
+            if !viewModel.lists.isEmpty {
+                HStack(spacing: 8) {
+                    Text("Lists")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.secondary)
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 6) {
+                            ForEach(Array(viewModel.lists.enumerated()), id: \.element.id) { index, list in
+                                let digit = index + 3
+                                ListTabButton(
+                                    title: list.name,
+                                    icon: list.isAutoStarActive ? "star.circle.fill" : "folder",
+                                    isSelected: viewModel.selectedListId == list.id && !viewModel.isSnippetsOnly,
+                                    shortcutHint: digit <= 10 ? "\(shortcutsManager.listModifierSymbol)\(digit == 10 ? 0 : digit)" : nil
+                                ) {
+                                    viewModel.selectList(list.id)
+                                }
+                                .contextMenu {
+                                    Button {
+                                        viewModel.toggleAutoStar(for: list.id)
+                                    } label: {
+                                        Label(list.isAutoStarActive ? "Disable Auto-Star" : "Enable Auto-Star", systemImage: list.isAutoStarActive ? "star.slash" : "star")
+                                    }
+                                    Divider()
+                                    Button(role: .destructive) {
+                                        viewModel.deleteList(list.id, deleteContainedClips: false)
+                                    } label: {
+                                        Label("Delete List", systemImage: "trash")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if let id = viewModel.selectedListId,
+                       let list = viewModel.lists.first(where: { $0.id == id }) {
+                        PanelIconButton(title: list.isAutoStarActive ? "Disable Auto-Star" : "Enable Auto-Star", systemImage: list.isAutoStarActive ? "star.circle.fill" : "star.circle") {
+                            viewModel.toggleAutoStar(for: id)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+    }
+
+    @ViewBuilder
+    private var emptyClipsView: some View {
+        if !viewModel.searchQuery.isEmpty {
+            ClipboardEmptyState(title: "No matches", message: "Try another search in \(scopeName), or clear the search to see everything.", systemImage: "magnifyingglass", actionTitle: "Clear search") {
+                viewModel.searchQuery = ""
+                isFieldFocused = true
+            }
+        } else if viewModel.isFavoritesOnly {
+            ClipboardEmptyState(title: "Keep the useful ones", message: "Star a clip in your history to find it here whenever you need it.", systemImage: "star")
+        } else if viewModel.selectedListId != nil {
+            ClipboardEmptyState(title: "This list is ready", message: "Move clips here from your history to keep related items together.", systemImage: "folder")
+        } else {
+            ClipboardEmptyState(title: "Your clipboard starts here", message: "Copy text, links or images. They’ll be ready here the next time you need them.", systemImage: "doc.on.clipboard")
+        }
+    }
+
+    private var statusFooter: some View {
+        HStack(spacing: 10) {
+            if let toast = viewModel.toastMessage {
+                Label(toast, systemImage: "info.circle")
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+            } else {
+                Text("\(itemCount) \(itemCount == 1 ? "item" : "items")")
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 4)
+            Button { viewModel.toggleQuickLook() } label: {
+                Text("Preview")
+                    .frame(minHeight: 28)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .help("Preview selected clip (Space)")
+            .disabled(viewModel.isSnippetsOnly || viewModel.clips.isEmpty)
+            Button { viewModel.pasteSelected() } label: {
+                HStack(spacing: 5) {
+                    if let shortcut = shortcutsManager.shortcut(for: .pasteSelection) {
+                        Text(shortcut.description).fontDesign(.monospaced)
+                    }
+                    Text(viewModel.isSnippetsOnly || settings.isDirectPasteEnabled ? "Paste" : "Copy")
+                        .fontWeight(.semibold)
+                }
+                .frame(minHeight: 28)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(itemCount == 0)
+        }
+        .font(.system(size: 11))
+        .padding(.horizontal, 14)
+        .frame(height: 36)
+    }
+
+    private var batchActions: some View {
+        VStack(spacing: 10) {
+            HStack {
+                Label("\(viewModel.selectedClipIds.count) selected", systemImage: "checkmark.circle.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                Spacer()
+                Button("Deselect", action: viewModel.clearSelection)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .help("Deselect all (Esc)")
+                if settings.isDirectPasteEnabled && viewModel.selectedClipIds.count > 1 {
+                    Menu {
+                        Button("Paste into form fields") {
+                            viewModel.pasteSelectedBatch(mode: .sequentialFormFields(delayMs: 60))
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis").frame(width: 28, height: 24)
+                    }
+                    .menuIndicator(.hidden)
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .accessibilityLabel("More batch actions")
+                }
+            }
+            HStack(spacing: 8) {
+                if viewModel.selectedClipIds.count > 1 {
+                    Picker("Join with", selection: $viewModel.batchSeparator) {
+                        ForEach(BatchPasteSeparator.allCases, id: \.self) { separator in
+                            Text(separator.displayName).tag(separator)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .frame(maxWidth: 180)
+                }
+                Spacer(minLength: 4)
+                Button(settings.isDirectPasteEnabled ? "Paste selected" : "Copy selected") {
+                    viewModel.pasteSelected()
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.regular)
+            }
+        }
+        .font(.system(size: 12))
+        .padding(12)
+        .background(ConCopyTheme.Surfaces.footerBackground)
     }
 
     private func promptCreateNewList() {
@@ -747,37 +723,39 @@ struct ListTabButton: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 5) {
-                Image(systemName: icon)
-                    .font(.system(size: 10, weight: isSelected ? .bold : .medium))
-                Text(title)
-                    .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
-                if let hint = shortcutHint {
-                    Text(hint)
-                        .font(.system(size: 8.5, weight: .semibold, design: .monospaced))
-                        .foregroundColor(isSelected ? ConCopyTheme.Accents.primary : .secondary.opacity(0.7))
-                        .padding(.horizontal, 3.5)
-                        .padding(.vertical, 1.5)
-                        .background(
-                            RoundedRectangle(cornerRadius: 3.5, style: .continuous)
-                                .fill(ConCopyTheme.Badges.tabShortcutBackground(isSelected: isSelected))
-                        )
-                }
+            ViewThatFits(in: .horizontal) {
+                tabLabel(showShortcut: true)
+                tabLabel(showShortcut: false)
             }
-            .padding(.horizontal, 9)
-            .padding(.vertical, 5)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(isSelected ? ConCopyTheme.Rows.selectedBackground : ConCopyTheme.Surfaces.pillBackground)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .stroke(isSelected ? ConCopyTheme.Rows.selectedBorder : ConCopyTheme.Surfaces.pillBorder, lineWidth: 1)
-            )
-            .foregroundColor(isSelected ? ConCopyTheme.Accents.primary : .secondary)
+            .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 8)
+            .frame(minHeight: 30)
+            .foregroundStyle(isSelected ? ConCopyTheme.Accents.primary : Color.primary)
+            .background(isSelected ? ConCopyTheme.Rows.selectedBackground : Color.clear,
+                        in: RoundedRectangle(cornerRadius: 7))
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(title)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .help(shortcutHint.map { "\(title) (\($0))" } ?? title)
     }
+
+    private func tabLabel(showShortcut: Bool) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: icon).accessibilityHidden(true)
+            Text(title).fixedSize()
+            if showShortcut, let shortcutHint {
+                Text(shortcutHint)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .fixedSize()
+                    .accessibilityHidden(true)
+            }
+        }
+    }
+
 }
 
 struct ClipRowView: View, Equatable {
@@ -787,6 +765,7 @@ struct ClipRowView: View, Equatable {
     let isChecked: Bool
     let isPasting: Bool
     var isCopied: Bool = false
+    var actionTitle: String = "Copy"
     let shortcutLabel: String?
     var quickPasteModifier: String = GlobalShortcutsManager.shared.quickPasteModifierSystemImage
     var thumbnailImage: NSImage? = nil
@@ -797,6 +776,7 @@ struct ClipRowView: View, Equatable {
     var onRowClick: (() -> Void)? = nil
 
     @State private var isHovered = false
+    @Environment(\.colorSchemeContrast) private var contrast
 
     static func == (lhs: ClipRowView, rhs: ClipRowView) -> Bool {
         lhs.clip == rhs.clip &&
@@ -805,24 +785,32 @@ struct ClipRowView: View, Equatable {
         lhs.isChecked == rhs.isChecked &&
         lhs.isPasting == rhs.isPasting &&
         lhs.isCopied == rhs.isCopied &&
+        lhs.actionTitle == rhs.actionTitle &&
         lhs.shortcutLabel == rhs.shortcutLabel &&
         lhs.quickPasteModifier == rhs.quickPasteModifier
     }
 
+    private var accessibilityTitle: String {
+        if let name = clip.customName, !name.isEmpty { return name }
+        return String((clip.plainText ?? clip.primaryType.rawValue).prefix(160))
+    }
+
     var body: some View {
-        HStack(spacing: 8) {
-            // Checkbox for batch
+        HStack(spacing: 4) {
             Button(action: onToggleCheck) {
                 Image(systemName: isChecked ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 13, weight: isChecked ? .semibold : .regular))
-                    .foregroundColor(isChecked ? .accentColor : .secondary.opacity(0.35))
-                    .frame(width: 28, height: 28)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(isChecked ? ConCopyTheme.Accents.primary : Color.secondary)
+                    .frame(width: 28, height: 36)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("\(isChecked ? "Deselect" : "Select") \(accessibilityTitle)")
+            .accessibilityValue(isChecked ? "Selected" : "Not selected")
+            .help("Select for batch actions")
 
-            // Clickable body of the row
-            HStack(spacing: 8) {
+            Button { onRowClick?() } label: {
+                HStack(spacing: 10) {
                 // Type Icon Badge or Preview
                 if let thumb = thumbnailImage {
                     ZStack(alignment: .bottomTrailing) {
@@ -879,120 +867,70 @@ struct ClipRowView: View, Equatable {
                     }
                 }
 
-                // Title and Preview
-                VStack(alignment: .leading, spacing: 2) {
-                    if let custom = clip.customName, !custom.isEmpty {
-                        Text(custom)
-                            .font(.system(size: 12.5, weight: .semibold))
-                            .foregroundColor(.primary)
-                            .lineLimit(1)
-                        if let text = clip.plainText?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
-                            Text(text)
-                                .font(.system(size: 11, weight: .regular))
-                                .foregroundColor(.secondary)
+                    VStack(alignment: .leading, spacing: 3) {
+                        if let name = clip.customName, !name.isEmpty {
+                            Text(name)
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(.primary)
                                 .lineLimit(1)
+                            if let text = clip.plainText, !text.isEmpty {
+                                Text(text.trimmingCharacters(in: .whitespacesAndNewlines))
+                                    .font(.system(size: 11.5))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                        } else {
+                            Text(clip.plainText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "No preview available")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(.primary)
+                                .lineLimit(2)
                         }
-                    } else {
-                        let text = clip.plainText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "[No content]"
-                        Text(text)
-                            .font(.system(size: 12.5, weight: .medium))
-                            .foregroundColor(.primary)
-                            .lineLimit(1)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    if isPasting {
+                        ProgressView().controlSize(.mini)
+                    } else if isCopied {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(ConCopyTheme.Accents.success)
+                            .help("Copied to clipboard")
+                    }
+                    if let shortcutLabel {
+                        PanelShortcutBadge(text: shortcutLabel, modifier: quickPasteModifier, isSelected: isSelected)
                     }
                 }
-
-                Spacer(minLength: 6)
-            }
-            .contentShape(Rectangle())
-            .onTapGesture {
-                onRowClick?()
-            }
-
-            // Star Button (Favorite)
-            Button(action: {
-                onToggleFavorite?()
-            }) {
-                Image(systemName: clip.isFavorite ? "star.fill" : "star")
-                    .font(.system(size: 10, weight: clip.isFavorite ? .bold : .regular))
-                    .foregroundColor(
-                        clip.isFavorite
-                        ? ConCopyTheme.Accents.star
-                        : (isHovered ? Color.secondary : Color.secondary.opacity(0.35))
-                    )
-                    .frame(width: 18, height: 18)
-                    .background(
-                        clip.isFavorite
-                        ? ConCopyTheme.Accents.starBackground
-                        : (isHovered ? Color.primary.opacity(0.06) : Color.clear)
-                    )
-                    .clipShape(Circle())
-                    .contentShape(Circle())
+                .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+                .padding(.vertical, 6)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help(clip.isFavorite ? "Remove from Favorites (Cmd+D)" : "Add to Favorites (Cmd+D)")
+            .accessibilityLabel("\(actionTitle) \(accessibilityTitle)")
+            .accessibilityValue(isCopied ? "Copied" : "")
+            .accessibilityAddTraits(isSelected ? .isSelected : [])
 
-            // Shortcut Pill Badge or Copied Feedback
-            if isCopied {
-                HStack(spacing: 3) {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 8.5, weight: .bold))
-                    Text("Copied")
-                        .font(.system(size: 9.5, weight: .semibold))
-                }
-                .foregroundColor(ConCopyTheme.Accents.primary)
-                .padding(.horizontal, 5)
-                .padding(.vertical, 2.5)
-                .background(
-                    RoundedRectangle(cornerRadius: 4, style: .continuous)
-                        .fill(ConCopyTheme.Accents.primary.opacity(0.12))
-                )
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    onRowClick?()
-                }
-            } else if let label = shortcutLabel {
-                HStack(spacing: 2) {
-                    Image(systemName: quickPasteModifier)
-                        .font(.system(size: 8.5, weight: .medium))
-                    Text(label)
-                        .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
-                }
-                .foregroundColor(ConCopyTheme.Badges.quickPasteForeground(isSelected: isSelected))
-                .padding(.horizontal, 4.5)
-                .padding(.vertical, 2.5)
-                .background(
-                    RoundedRectangle(cornerRadius: 4, style: .continuous)
-                        .fill(ConCopyTheme.Badges.quickPasteBackground(isSelected: isSelected))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 4, style: .continuous)
-                        .stroke(ConCopyTheme.Badges.quickPasteBorder(isSelected: isSelected), lineWidth: 0.5)
-                )
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    onRowClick?()
-                }
+            Button { onToggleFavorite?() } label: {
+                Image(systemName: clip.isFavorite ? "star.fill" : "star")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(clip.isFavorite ? ConCopyTheme.Accents.star : Color.secondary)
+                    .frame(width: 28, height: 36)
+                    .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(clip.isFavorite ? "Remove favorite" : "Favorite") \(accessibilityTitle)")
+            .help(clip.isFavorite ? "Remove from Favorites" : "Add to Favorites")
         }
-        .padding(.leading, 4)
-        .padding(.trailing, 10)
-        .padding(.vertical, 5)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(
-                    (isPasting || isCopied || isChecked)
-                    ? ConCopyTheme.Rows.batchSelectedBackground
-                    : (isSelected ? ConCopyTheme.Rows.selectedBackground : Color.clear)
-                )
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke((isSelected || isChecked) ? ConCopyTheme.Rows.selectedBorder : Color.clear, lineWidth: 1)
-        )
-        .scaleEffect((isPasting || isCopied) ? 0.98 : 1.0)
-        .animation(.easeOut(duration: 0.12), value: isPasting)
-        .animation(.easeOut(duration: 0.12), value: isCopied)
         .padding(.horizontal, 6)
+        .background(
+            isChecked ? ConCopyTheme.Rows.batchSelectedBackground :
+                (isSelected ? ConCopyTheme.Rows.selectedBackground :
+                    (isHovered ? ConCopyTheme.Rows.hoverBackground : Color.clear)),
+            in: RoundedRectangle(cornerRadius: 9)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 9)
+                .stroke((isSelected || isChecked) ? (contrast == .increased ? Color.primary : ConCopyTheme.Rows.selectedBorder) : Color.clear,
+                        lineWidth: contrast == .increased ? 2 : 1)
+        }
+        .padding(.horizontal, 8)
         .onHover { isHovered = $0 }
     }
 
@@ -1292,33 +1230,16 @@ struct SnippetsListView: View {
             let displayedSnippets = viewModel.filteredSnippets
 
             if displayedSnippets.isEmpty {
-                VStack(spacing: 8) {
-                    Image(systemName: "curlybraces")
-                        .font(.system(size: 28, weight: .light))
-                        .foregroundColor(ConCopyTheme.Accents.snippet.opacity(0.7))
-                        .padding(.bottom, 4)
-
-                    if !viewModel.searchQuery.isEmpty {
-                        Text("No snippets match \"\(viewModel.searchQuery)\"")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(.secondary)
-                        Text("Press Esc to clear search or create a new snippet.")
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary.opacity(0.6))
-                    } else {
-                        Text("No saved snippets")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(.secondary)
-                        Text("Create shortcuts like ';email' or ';address' to expand frequent text.")
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary.opacity(0.6))
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal, 24)
+                if !viewModel.searchQuery.isEmpty {
+                    ClipboardEmptyState(title: "No matching snippets", message: "Try a different word or clear the search to see your saved snippets.", systemImage: "magnifyingglass", actionTitle: "Clear search") {
+                        viewModel.searchQuery = ""
+                    }
+                } else {
+                    ClipboardEmptyState(title: "Less typing, more doing", message: "Save the replies, signatures and text you use often.", systemImage: "curlybraces", actionTitle: "Create a snippet") {
+                        viewModel.editingSnippet = nil
+                        viewModel.isSnippetEditorPresented = true
                     }
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(WindowDragGestureArea())
-                .padding(.vertical, 40)
             } else {
                 ScrollViewReader { proxy in
                     ScrollView {
@@ -1329,6 +1250,7 @@ struct SnippetsListView: View {
                                     index: index,
                                     isSelected: viewModel.selectedSnippetIndex == index,
                                     shortcutLabel: QuickPasteShortcutMapper.label(forIndex: index),
+                                    onSelect: { viewModel.selectedSnippetIndex = index },
                                     onPaste: {
                                         viewModel.selectedSnippetIndex = index
                                         viewModel.pasteSnippet(snippet)
@@ -1342,10 +1264,7 @@ struct SnippetsListView: View {
                                     },
                                     quickPasteModifier: shortcutsManager.quickPasteModifierSystemImage
                                 )
-                                .id("\(snippet.id)-\(index)-\(shortcutsManager.swapNumericModifiers)")
-                                .onTapGesture {
-                                    viewModel.selectedSnippetIndex = index
-                                }
+                                .id(snippet.id)
                             }
                         }
                         .padding(.vertical, 4)
@@ -1369,145 +1288,90 @@ struct SnippetRowView: View {
     let index: Int
     let isSelected: Bool
     let shortcutLabel: String?
+    let onSelect: () -> Void
     let onPaste: () -> Void
     let onEdit: () -> Void
     let onDelete: () -> Void
     var quickPasteModifier: String = GlobalShortcutsManager.shared.quickPasteModifierSystemImage
-
     @State private var isHovered = false
 
     var body: some View {
-        HStack(spacing: 8) {
-            // Icona Snippet coerente (curlybraces in ambra)
-            ZStack {
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(ConCopyTheme.Accents.snippetBackground)
-                    .frame(width: 24, height: 24)
-                Image(systemName: "curlybraces")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(ConCopyTheme.Accents.snippet)
-            }
-
-            // Titolo, Keyword Badge e Anteprima del Contenuto
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    if let title = snippet.title, !title.isEmpty {
-                        Text(title)
-                            .font(.system(size: 12.5, weight: .semibold))
-                            .foregroundColor(.primary)
-                            .lineLimit(1)
-                    } else {
-                        Text(snippet.shortcut)
-                            .font(.system(size: 12.5, weight: .semibold))
-                            .foregroundColor(.primary)
-                            .lineLimit(1)
+        HStack(spacing: 6) {
+            Button(action: onSelect) {
+                HStack(spacing: 10) {
+                    Image(systemName: "curlybraces")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(ConCopyTheme.Accents.snippet)
+                        .frame(width: 30, height: 30)
+                        .background(ConCopyTheme.Accents.snippetBackground, in: RoundedRectangle(cornerRadius: 7))
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 6) {
+                            Text(snippet.title?.isEmpty == false ? (snippet.title ?? snippet.shortcut) : snippet.shortcut)
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(.primary)
+                                .lineLimit(1)
+                            if snippet.title?.isEmpty == false {
+                                Text(snippet.shortcut)
+                                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                    .foregroundStyle(ConCopyTheme.Accents.snippet)
+                                    .fixedSize()
+                            }
+                        }
+                        Text(snippet.content.trimmingCharacters(in: .whitespacesAndNewlines))
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
                     }
-
-                    // Keyword / Trigger badge
-                    Text(snippet.shortcut)
-                        .font(.system(size: 10, weight: .bold, design: .monospaced))
-                        .foregroundColor(ConCopyTheme.Accents.snippet)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1.5)
-                        .background(
-                            RoundedRectangle(cornerRadius: 4, style: .continuous)
-                                .fill(ConCopyTheme.Accents.snippetBackground)
-                        )
-                }
-
-                Text(snippet.content.trimmingCharacters(in: .whitespacesAndNewlines))
-                    .font(.system(size: 11.5, weight: .regular))
-                    .foregroundColor(.secondary)
-                    .lineLimit(2)
-            }
-
-            Spacer(minLength: 6)
-
-            // Azioni rapide visibili in hover
-            if isHovered {
-                HStack(spacing: 4) {
-                    Button(action: onEdit) {
-                        Image(systemName: "pencil")
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
-                            .frame(width: 22, height: 22)
-                            .background(
-                                RoundedRectangle(cornerRadius: 4, style: .continuous)
-                                    .fill(ConCopyTheme.Surfaces.pillBackground)
-                            )
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    if let shortcutLabel {
+                        PanelShortcutBadge(text: shortcutLabel, modifier: quickPasteModifier, isSelected: isSelected)
                     }
-                    .buttonStyle(.plain)
-                    .help("Edit Snippet...")
-
-                    Button(action: onDelete) {
-                        Image(systemName: "trash")
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
-                            .frame(width: 22, height: 22)
-                            .background(
-                                RoundedRectangle(cornerRadius: 4, style: .continuous)
-                                    .fill(ConCopyTheme.Surfaces.pillBackground)
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .help("Delete Snippet")
                 }
+                .padding(.vertical, 8)
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Select snippet \(snippet.title ?? snippet.shortcut)")
+            .accessibilityAddTraits(isSelected ? .isSelected : [])
+            .help("Select this snippet, then press Return to paste")
 
-            // Shortcut Pill Badge (for quick paste)
-            if let label = shortcutLabel {
-                HStack(spacing: 2) {
-                    Image(systemName: quickPasteModifier)
-                        .font(.system(size: 8.5, weight: .medium))
-                    Text(label)
-                        .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
-                }
-                .foregroundColor(ConCopyTheme.Badges.quickPasteForeground(isSelected: isSelected))
-                .padding(.horizontal, 4.5)
-                .padding(.vertical, 2.5)
-                .background(
-                    RoundedRectangle(cornerRadius: 4, style: .continuous)
-                        .fill(ConCopyTheme.Badges.quickPasteBackground(isSelected: isSelected))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 4, style: .continuous)
-                        .stroke(ConCopyTheme.Badges.quickPasteBorder(isSelected: isSelected), lineWidth: 0.5)
-                )
+            Menu {
+                Button("Paste", action: onPaste)
+                Button("Copy to clipboard", action: copySnippet)
+                Button("Edit…", action: onEdit)
+                Divider()
+                Button("Delete snippet", role: .destructive, action: onDelete)
+            } label: {
+                Image(systemName: "ellipsis")
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
             }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .accessibilityLabel("Actions for \(snippet.title ?? snippet.shortcut)")
         }
-        .padding(.leading, 10)
-        .padding(.trailing, 10)
-        .padding(.vertical, 6)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(isSelected ? ConCopyTheme.Rows.selectedBackground : Color.clear)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+        .padding(.horizontal, 10)
+        .background(isSelected ? ConCopyTheme.Rows.selectedBackground : (isHovered ? ConCopyTheme.Rows.hoverBackground : Color.clear), in: RoundedRectangle(cornerRadius: 9))
+        .overlay {
+            RoundedRectangle(cornerRadius: 9)
                 .stroke(isSelected ? ConCopyTheme.Rows.selectedBorder : Color.clear, lineWidth: 1)
-        )
-        .contentShape(Rectangle())
-        .padding(.horizontal, 6)
-        .onHover { hovering in
-            isHovered = hovering
         }
+        .padding(.horizontal, 8)
+        .onHover { isHovered = $0 }
         .contextMenu {
-            Button("Copy to clipboard") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setData(Data(), forType: PasteInjector.internalPasteMarker)
-                NSPasteboard.general.setString(snippet.content, forType: .string)
-            }
-            Button("Paste") {
-                onPaste()
-            }
-            Button("Edit Snippet...") {
-                onEdit()
-            }
+            Button("Copy to clipboard", action: copySnippet)
+            Button("Paste", action: onPaste)
+            Button("Edit…", action: onEdit)
             Divider()
-            Button("Delete Snippet", role: .destructive) {
-                onDelete()
-            }
+            Button("Delete snippet", role: .destructive, action: onDelete)
         }
+    }
+
+    private func copySnippet() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setData(Data(), forType: PasteInjector.internalPasteMarker)
+        NSPasteboard.general.setString(snippet.content, forType: .string)
     }
 }
 

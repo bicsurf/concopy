@@ -52,6 +52,32 @@ final class ViewModelSelectionAndFavoriteTests: XCTestCase {
         XCTAssertTrue(viewModel.selectedClipIds.isEmpty)
     }
 
+    func testChangingScopeClearsBatchSelection() throws {
+        let first = try databaseManager.ingestCapturedClip(CapturedClip(plainText: "First scope item"))
+        let second = try databaseManager.ingestCapturedClip(CapturedClip(plainText: "Second scope item"))
+        let list = try databaseManager.createList(name: "Work")
+        viewModel.loadLists()
+
+        let scopeChanges: [(String, () -> Void)] = [
+            ("All", { self.viewModel.selectAllClips() }),
+            ("Favorites", { self.viewModel.selectFavorites() }),
+            ("Snippets", { self.viewModel.selectSnippets() }),
+            ("Personal list", { self.viewModel.selectList(list.id) })
+        ]
+
+        for (name, changeScope) in scopeChanges {
+            viewModel.clearSelection()
+            viewModel.selectAllClips()
+            viewModel.toggleSelection(clipId: first.id)
+            viewModel.toggleSelection(clipId: second.id)
+            XCTAssertEqual(viewModel.selectedClipIds.count, 2)
+
+            changeScope()
+
+            XCTAssertTrue(viewModel.selectedClipIds.isEmpty, "Switching to \(name) must not retain a hidden batch")
+        }
+    }
+
     func testToggleSelectionWhenEmptyDoesNotIncludeDefaultActiveIndex() throws {
         for i in 1...5 {
             _ = try databaseManager.ingestCapturedClip(

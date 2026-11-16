@@ -75,6 +75,7 @@ public final class ClipboardViewModel: ObservableObject {
     @Published public var editingSnippet: SnippetRecord? = nil
 
     private var thumbnailCache = NSCache<NSUUID, NSImage>()
+    private var copyFeedbackTask: Task<Void, Never>?
 
     public let databaseManager: DatabaseManager
     public let pasteInjector: PasteInjector
@@ -105,6 +106,10 @@ public final class ClipboardViewModel: ObservableObject {
             pasteInjector: pasteInjector,
             appSettings: .shared
         )
+    }
+
+    deinit {
+        copyFeedbackTask?.cancel()
     }
 
     public func checkAccessibilityPermissions() {
@@ -217,6 +222,7 @@ public final class ClipboardViewModel: ObservableObject {
     }
 
     public func selectAllClips() {
+        clearSelection()
         selectedListId = nil
         isFavoritesOnly = false
         isSnippetsOnly = false
@@ -224,6 +230,7 @@ public final class ClipboardViewModel: ObservableObject {
     }
 
     public func selectFavorites() {
+        clearSelection()
         selectedListId = nil
         isFavoritesOnly = true
         isSnippetsOnly = false
@@ -231,6 +238,7 @@ public final class ClipboardViewModel: ObservableObject {
     }
 
     public func selectSnippets() {
+        clearSelection()
         selectedListId = nil
         isFavoritesOnly = false
         isSnippetsOnly = true
@@ -238,6 +246,7 @@ public final class ClipboardViewModel: ObservableObject {
     }
 
     public func selectList(_ listId: UUID) {
+        clearSelection()
         selectedListId = listId
         isFavoritesOnly = false
         isSnippetsOnly = false
@@ -481,13 +490,22 @@ public final class ClipboardViewModel: ObservableObject {
                 forcePlainText: forcePlainText,
                 transformation: transformation
             )
+            copyFeedbackTask?.cancel()
             copiedClipId = clip.id
             showToast("Copied to clipboard!")
-            Task { @MainActor [weak self] in
-                try? await Task.sleep(nanoseconds: 1_200_000_000)
-                if self?.copiedClipId == clip.id {
-                    self?.copiedClipId = nil
+            copyFeedbackTask = Task { @MainActor [weak self] in
+                do {
+                    try await Task.sleep(nanoseconds: 1_200_000_000)
+                    try Task.checkCancellation()
+                } catch {
+                    return
                 }
+
+                guard let self else { return }
+                if self.copiedClipId == clip.id {
+                    self.copiedClipId = nil
+                }
+                self.copyFeedbackTask = nil
             }
             loadClips()
         } catch {

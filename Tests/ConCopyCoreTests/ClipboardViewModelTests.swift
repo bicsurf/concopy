@@ -72,6 +72,48 @@ final class ClipboardViewModelTests: XCTestCase {
         XCTAssertEqual(NSPasteboard.general.string(forType: .string), "Copy Only Mode")
     }
 
+    func testRepeatedCopyOfSameClipRestartsFeedbackDuration() async throws {
+        let vm = try makeCopyOnlyViewModel()
+        let clip = try databaseManager.ingestCapturedClip(
+            CapturedClip(plainText: "Repeated copy", primaryType: .text)
+        )
+        vm.loadClips()
+
+        vm.handleRowClick(clip: clip)
+        try await Task.sleep(nanoseconds: 700_000_000)
+        vm.handleRowClick(clip: clip)
+        XCTAssertEqual(vm.copiedClipId, clip.id)
+
+        // The original deadline has elapsed, but the latest copy is still within 1.2 seconds.
+        try await Task.sleep(nanoseconds: 700_000_000)
+        XCTAssertEqual(vm.copiedClipId, clip.id, "An earlier copy must not clear the latest feedback")
+
+        try await Task.sleep(nanoseconds: 700_000_000)
+        XCTAssertNil(vm.copiedClipId, "Feedback must clear after the latest copy's deadline")
+    }
+
+    func testCopyingDifferentClipRestartsFeedbackDuration() async throws {
+        let vm = try makeCopyOnlyViewModel()
+        let firstClip = try databaseManager.ingestCapturedClip(
+            CapturedClip(plainText: "First copy", primaryType: .text)
+        )
+        let secondClip = try databaseManager.ingestCapturedClip(
+            CapturedClip(plainText: "Second copy", primaryType: .text)
+        )
+        vm.loadClips()
+
+        vm.handleRowClick(clip: firstClip)
+        try await Task.sleep(nanoseconds: 700_000_000)
+        vm.handleRowClick(clip: secondClip)
+        XCTAssertEqual(vm.copiedClipId, secondClip.id)
+
+        try await Task.sleep(nanoseconds: 700_000_000)
+        XCTAssertEqual(vm.copiedClipId, secondClip.id, "Canceling the previous timer must preserve the latest feedback")
+
+        try await Task.sleep(nanoseconds: 700_000_000)
+        XCTAssertNil(vm.copiedClipId, "Feedback must clear after the latest copy's deadline")
+    }
+
     func testShiftClickUpdatesSelectedClipIdsWithoutCopyOrClosing() throws {
         let settings = AppSettingsManager(userDefaults: UserDefaults(suiteName: "Test_\(UUID().uuidString)")!)
         let mockPoster = MockCGEventPoster()
@@ -149,5 +191,16 @@ final class ClipboardViewModelTests: XCTestCase {
         vm.handleRowClick(clip: clip1, commandHeld: true)
         XCTAssertFalse(panelClosed)
         XCTAssertFalse(vm.selectedClipIds.contains(clip1.id))
+    }
+
+    private func makeCopyOnlyViewModel() throws -> ClipboardViewModel {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "Test_\(UUID().uuidString)"))
+        let settings = AppSettingsManager(userDefaults: defaults)
+        settings.isDirectPasteEnabled = false
+        return ClipboardViewModel(
+            databaseManager: databaseManager,
+            pasteInjector: PasteInjector(eventPoster: MockCGEventPoster()),
+            appSettings: settings
+        )
     }
 }
