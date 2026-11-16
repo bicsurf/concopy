@@ -68,20 +68,20 @@ public final class UpdateChecker: ObservableObject {
         do {
             let (data, response) = try await session.data(for: request)
             guard let httpResponse = response as? HTTPURLResponse else {
-                let msg = "Risposta non valida dal server."
+                let msg = "Invalid server response."
                 self.statusMessage = msg
                 return .failed(msg)
             }
 
             if httpResponse.statusCode == 404 {
-                // Nessuna release ancora pubblicata sul repo
+                // No release published yet on repo
                 self.availableUpdate = nil
-                self.statusMessage = "Nessun aggiornamento pubblicato."
+                self.statusMessage = "No published releases found."
                 return .upToDate
             }
 
             guard (200...299).contains(httpResponse.statusCode) else {
-                let msg = "Errore HTTP \(httpResponse.statusCode)"
+                let msg = "HTTP error \(httpResponse.statusCode)"
                 self.statusMessage = msg
                 return .failed(msg)
             }
@@ -112,21 +112,21 @@ public final class UpdateChecker: ObservableObject {
 
                 if !isUserInitiated && cleanTag == appSettings.skippedUpdateVersion {
                     self.availableUpdate = nil
-                    self.statusMessage = "Versione v\(cleanTag) ignorata"
+                    self.statusMessage = "Version v\(cleanTag) skipped"
                     return .upToDate
                 }
 
                 self.availableUpdate = update
-                self.statusMessage = "Disponibile v\(cleanTag)"
+                self.statusMessage = "Available v\(cleanTag)"
                 return .updateAvailable(update)
             } else {
                 self.availableUpdate = nil
-                self.statusMessage = "Sei all'ultima versione (v\(currentVersion))"
+                self.statusMessage = "You are on the latest version (v\(currentVersion))"
                 return .upToDate
             }
         } catch {
             let msg = error.localizedDescription
-            self.statusMessage = "Errore: \(msg)"
+            self.statusMessage = "Error: \(msg)"
             return .failed(msg)
         }
     }
@@ -137,12 +137,12 @@ public final class UpdateChecker: ObservableObject {
         switch result {
         case .updateAvailable(let update):
             let alert = NSAlert()
-            alert.messageText = "Nuova versione disponibile: v\(update.version)"
-            alert.informativeText = "\(update.title)\n\n\(update.releaseNotes.isEmpty ? "Nessuna nota di rilascio fornita." : update.releaseNotes)"
+            alert.messageText = "New version available: v\(update.version)"
+            alert.informativeText = "\(update.title)\n\n\(update.releaseNotes.isEmpty ? "No release notes provided." : update.releaseNotes)"
             alert.alertStyle = .informational
-            alert.addButton(withTitle: update.dmgDownloadURL != nil ? "Scarica DMG" : "Apri Release")
-            alert.addButton(withTitle: "Ignora questa versione")
-            alert.addButton(withTitle: "Più tardi")
+            alert.addButton(withTitle: update.dmgDownloadURL != nil ? "Download DMG" : "Open Release")
+            alert.addButton(withTitle: "Skip this version")
+            alert.addButton(withTitle: "Later")
 
             let response = alert.runModal()
             if response == .alertFirstButtonReturn {
@@ -155,16 +155,16 @@ public final class UpdateChecker: ObservableObject {
 
         case .upToDate:
             let alert = NSAlert()
-            alert.messageText = "ConCopy è aggiornato"
-            alert.informativeText = "Stai già utilizzando l'ultima versione disponibile (v\(currentVersion))."
+            alert.messageText = "ConCopy is up to date"
+            alert.informativeText = "You are already using the latest version (v\(currentVersion))."
             alert.alertStyle = .informational
             alert.addButton(withTitle: "OK")
             alert.runModal()
 
         case .failed(let reason):
             let alert = NSAlert()
-            alert.messageText = "Controllo aggiornamenti fallito"
-            alert.informativeText = "Impossibile verificare la presenza di aggiornamenti.\n\n\(reason)"
+            alert.messageText = "Update check failed"
+            alert.informativeText = "Unable to check for updates.\n\n\(reason)"
             alert.alertStyle = .warning
             alert.addButton(withTitle: "OK")
             alert.runModal()

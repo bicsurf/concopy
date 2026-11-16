@@ -75,7 +75,7 @@ public struct CopyEmImporter: ExternalClipboardImporter {
         return try sourceDB.queue.read { db in
             let tables = try fetchUserTables(in: db)
             guard !tables.isEmpty else {
-                throw DatabaseError(message: "Database vuoto o non leggibile.")
+                throw DatabaseError(message: "Database is empty or unreadable.")
             }
 
             let upperTables = Set(tables.map { $0.uppercased() })
@@ -613,7 +613,7 @@ public struct CopyEmImporter: ExternalClipboardImporter {
                 return (best, url)
             }
 
-            throw DatabaseError(message: "Nessun database Copy 'Em valido trovato nella cartella selezionata.")
+            throw DatabaseError(message: "No valid Copy 'Em database found in the selected folder.")
         } else {
             let assetsDir = url.deletingLastPathComponent()
             return (url, assetsDir)
@@ -644,7 +644,7 @@ public struct CopyEmImporter: ExternalClipboardImporter {
     private func validateIdentifier(_ name: String) throws {
         let pattern = try NSRegularExpression(pattern: "^[A-Za-z_][A-Za-z0-9_]*$")
         guard pattern.firstMatch(in: name, range: NSRange(name.startIndex..., in: name)) != nil else {
-            throw DatabaseError(message: "Identificatore SQL non valido: \(name)")
+            throw DatabaseError(message: "Invalid SQL identifier: \(name)")
         }
     }
 
@@ -679,7 +679,7 @@ public struct CopyEmImporter: ExternalClipboardImporter {
             return largestTable
         }
 
-        throw DatabaseError(message: "Impossibile identificare la tabella delle clip in Copy 'Em.")
+        throw DatabaseError(message: "Unable to identify the clips table in Copy 'Em.")
     }
 
     private func fetchTableColumnNames(table: String, db: Database) throws -> [String: String] {

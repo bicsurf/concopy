@@ -5,9 +5,9 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 public enum PreferencesTab: String, CaseIterable, Identifiable {
-    case general = "Generale"
-    case shortcuts = "Scorciatoie"
-    case blacklist = "App Escluse"
+    case general = "General"
+    case shortcuts = "Shortcuts"
+    case blacklist = "Excluded Apps"
 
     public var id: String { rawValue }
 }
@@ -71,15 +71,15 @@ public struct PreferencesView: View {
         .sheet(isPresented: $isShowingManualAddSheet) {
             manualAddSheet
         }
-        .alert("Svuotare la Cronologia?", isPresented: $isShowingClearConfirm) {
-            Button("Annulla", role: .cancel) {}
-            Button("Svuota", role: .destructive) {
+        .alert("Clear History?", isPresented: $isShowingClearConfirm) {
+            Button("Cancel", role: .cancel) {}
+            Button("Clear", role: .destructive) {
                 clearHistoryAction()
             }
         } message: {
-            Text("Tutte le clip non contrassegnate come preferite verranno eliminate definitivamente dal disco")
+            Text("All clips not marked as favorites will be permanently deleted from disk.")
         }
-        .alert("Operazione Completata", isPresented: Binding(
+        .alert("Operation Completed", isPresented: Binding(
             get: { statusAlertMessage != nil },
             set: { if !$0 { statusAlertMessage = nil } }
         )) {
@@ -87,99 +87,97 @@ public struct PreferencesView: View {
         } message: {
             Text(statusAlertMessage ?? "")
         }
-        .alert("Rilevato Database Maccy", isPresented: $isShowingMaccyAutoDetectAlert) {
-            Button("Importa direttamente") {
+        .alert("Maccy Database Detected", isPresented: $isShowingMaccyAutoDetectAlert) {
+            Button("Import Directly") {
                 if let url = detectedMaccyURL {
                     executeImport(importer: MaccyImporter(sourceURL: url))
                 }
             }
-            Button("Scegli altro file...") {
+            Button("Choose Another File...") {
                 openMaccyFilePicker()
             }
-            Button("Annulla", role: .cancel) {
+            Button("Cancel", role: .cancel) {
                 detectedMaccyURL = nil
             }
         } message: {
-            Text("È stato trovato un database Maccy in:\n\(detectedMaccyURL?.path ?? "")\n\nVuoi importarlo direttamente?")
+            Text("A Maccy database was found at:\n\(detectedMaccyURL?.path ?? "")\n\nDo you want to import it directly?")
         }
     }
 
     // MARK: - General Tab
     private var generalTabView: some View {
         Form {
-            Section(header: Text("Monitoraggio Appunti")) {
-                Toggle("Pausa registrazione appunti", isOn: $settingsManager.isMonitoringPaused)
-                Text("Quando attiva, ConCopy non registrerà nuovi elementi copiati negli appunti")
+            Section(header: Text("Clipboard Monitoring")) {
+                Toggle("Pause clipboard recording", isOn: $settingsManager.isMonitoringPaused)
+                Text("When active, ConCopy will not record new items copied to the clipboard")
                     .font(.caption)
                     .foregroundColor(.secondary)
 
-                Toggle("Cattura screenshot macOS", isOn: $settingsManager.autoCaptureScreenshots)
-                Text("Salva automaticamente le nuove schermate acquisite nella cartella screenshot")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-
-            Section(header: Text("Generale")) {
-                Toggle("Avvia automaticamente all'accessione", isOn: $settingsManager.launchAtLogin)
-                Toggle("Incolla direttamente nella selezione", isOn: $settingsManager.isDirectPasteEnabled)
-                Text("Se attivo, selezionare una clip la incolla immediatamente nell'app attiva. Se disattivato, la copia solo negli appunti (usa Cmd+V per incollare)")
+                Toggle("Capture macOS screenshots", isOn: $settingsManager.autoCaptureScreenshots)
+                Text("Automatically save newly captured screenshots to the screenshots folder")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
 
-            // Section(header: Text("Incollaggio")) {
+            Section(header: Text("General")) {
+                Toggle("Launch automatically at login", isOn: $settingsManager.launchAtLogin)
+                Toggle("Paste directly into active application", isOn: $settingsManager.isDirectPasteEnabled)
+                Text("When enabled, selecting a clip pastes it immediately into the active app. When disabled, it is only copied to the clipboard (press Cmd+V to paste)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
 
-            Section(header: Text("Cronologia & Pulizia")) {
-                Toggle("Pulizia automatica", isOn: $settingsManager.autoCleanupEnabled)
+            Section(header: Text("History & Cleanup")) {
+                Toggle("Automatic cleanup", isOn: $settingsManager.autoCleanupEnabled)
 
                 if settingsManager.autoCleanupEnabled {
-                    Picker("Elimina clip più vecchie di:", selection: $settingsManager.retentionDays) {
-                        Text("7 giorni").tag(7)
-                        Text("14 giorni").tag(14)
-                        Text("30 giorni").tag(30)
-                        Text("90 giorni").tag(90)
+                    Picker("Delete clips older than:", selection: $settingsManager.retentionDays) {
+                        Text("7 days").tag(7)
+                        Text("14 days").tag(14)
+                        Text("30 days").tag(30)
+                        Text("90 days").tag(90)
                     }
 
-                    Picker("Capacità massima cronologia:", selection: $settingsManager.maxHistoryCount) {
-                        Text("200 elementi").tag(200)
-                        Text("500 elementi").tag(500)
-                        Text("1000 elementi").tag(1000)
-                        Text("5000 elementi").tag(5000)
+                    Picker("Maximum history size:", selection: $settingsManager.maxHistoryCount) {
+                        Text("200 items").tag(200)
+                        Text("500 items").tag(500)
+                        Text("1000 items").tag(1000)
+                        Text("5000 items").tag(5000)
                     }
                 }
 
-                Text("Nota: gli elementi preferiti (★) non vengono mai eliminati automaticamente")
+                Text("Note: Favorite items (★) are never deleted automatically")
                     .font(.caption)
                     .foregroundColor(.secondary)
 
                 Button(role: .destructive, action: {
                     isShowingClearConfirm = true
                 }) {
-                    Label("Svuota Cronologia", systemImage: "trash")
+                    Label("Clear History", systemImage: "trash")
                         .foregroundColor(.red)
                 }
             }
 
-            Section(header: Text("Backup & Ripristino")) {
+            Section(header: Text("Backup & Restore")) {
                 HStack(spacing: 12) {
                     Button(action: exportBackupAction) {
-                        Label("Esporta Archivio...", systemImage: "square.and.arrow.up")
+                        Label("Export Archive...", systemImage: "square.and.arrow.up")
                     }
                     Button(action: importBackupAction) {
-                        Label("Importa Archivio...", systemImage: "square.and.arrow.down")
+                        Label("Import Archive...", systemImage: "square.and.arrow.down")
                     }
                 }
-                Text("Esporta o ripristina tutte le clip (inclusi blob e immagini) e le liste in formato JSON")
+                Text("Export or restore all clips (including blobs and images) and lists in JSON format")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
 
-            Section(header: Text("Importa da altre app")) {
+            Section(header: Text("Import from Other Apps")) {
                 if isImporting {
                     HStack(spacing: 8) {
                         ProgressView()
                             .controlSize(.small)
-                        Text(importProgressDescription.isEmpty ? "Importazione in corso..." : importProgressDescription)
+                        Text(importProgressDescription.isEmpty ? "Importing..." : importProgressDescription)
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
@@ -187,28 +185,28 @@ public struct PreferencesView: View {
                 } else {
                     HStack(spacing: 12) {
                         Button(action: importFromMaccyAction) {
-                            Label("Importa da Maccy...", systemImage: "arrow.down.doc")
+                            Label("Import from Maccy...", systemImage: "arrow.down.doc")
                         }
                         Button(action: importFromCopyEmAction) {
-                            Label("Importa da Copy 'Em...", systemImage: "arrow.down.doc")
+                            Label("Import from Copy 'Em...", systemImage: "arrow.down.doc")
                         }
                     }
-                    Text("Importa la cronologia e le categorie da Maccy o Copy 'Em preservando preferiti e deduplicando i contenuti")
+                    Text("Import history and categories from Maccy or Copy 'Em while preserving favorites and deduplicating content")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
             }
 
-            Section(header: Text("Aggiornamenti")) {
+            Section(header: Text("Updates")) {
                 HStack {
-                    Text("Versione installata:")
+                    Text("Installed version:")
                     Spacer()
                     Text("v\(updateChecker.currentVersion)")
                         .foregroundColor(.secondary)
                 }
 
-                Toggle("Controlla aggiornamenti automaticamente", isOn: $settingsManager.isAutoCheckUpdatesEnabled)
-                Text("Verifica periodicamente su GitHub la presenza di nuove versioni di ConCopy")
+                Toggle("Check for updates automatically", isOn: $settingsManager.isAutoCheckUpdatesEnabled)
+                Text("Periodically check GitHub for new versions of ConCopy")
                     .font(.caption)
                     .foregroundColor(.secondary)
 
@@ -225,7 +223,7 @@ public struct PreferencesView: View {
                             } else {
                                 Image(systemName: "arrow.clockwise")
                             }
-                            Text(updateChecker.isChecking ? "Verifica in corso..." : "Verifica ora")
+                            Text(updateChecker.isChecking ? "Checking..." : "Check Now")
                         }
                     }
                     .disabled(updateChecker.isChecking)
@@ -239,16 +237,16 @@ public struct PreferencesView: View {
                 }
             }
 
-            Section(header: Text("Sincronizzazione iCloud Drive")) {
-                Toggle("Sincronizzazione iCloud Drive", isOn: $settingsManager.iCloudSyncEnabled)
+            Section(header: Text("iCloud Drive Sync")) {
+                Toggle("iCloud Drive Sync", isOn: $settingsManager.iCloudSyncEnabled)
                     .disabled(!CloudKitSyncCoordinator.isCloudDriveAvailable)
 
                 if CloudKitSyncCoordinator.isCloudDriveAvailable {
-                    Text("Replicazione automatica e privata delle clip tra i tuoi Mac tramite la cartella iCloud Drive.")
+                    Text("Automatic and private clip synchronization between your Macs via your iCloud Drive folder.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 } else {
-                    Text("iCloud Drive non disponibile o disabilitato su questo Mac.")
+                    Text("iCloud Drive is unavailable or disabled on this Mac.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -263,26 +261,26 @@ public struct PreferencesView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Personalizzazione Scorciatoie da Tastiera")
+                        Text("Keyboard Shortcuts Customization")
                             .font(.headline)
-                        Text("Configura o rimuovi le scorciatoie di sistema e del pannello. Fai clic sul campo per registrare una combinazione, oppure usa il pulsante Rimuovi per disabilitarla.")
+                        Text("Configure or clear global and panel shortcuts. Click on a field to record a combination, or use the clear button to disable it.")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
                     .padding(.horizontal, 16)
                     .padding(.top, 14)
 
-                    // Toggle inversione modificatori numerici
+                    // Toggle numeric modifiers swap
                     Toggle(isOn: Binding(
                         get: { shortcutsManager.swapNumericModifiers },
                         set: { shortcutsManager.setSwapNumericModifiers($0) }
                     )) {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Inverti modificatori numerici (⌘ ⇋ ⌥)")
+                            Text("Swap numeric modifiers (⌘ ⇋ ⌥)")
                                 .font(.system(size: 13, weight: .semibold))
                             Text(shortcutsManager.swapNumericModifiers
-                                ? "Attivo: ⌥ per selezionare le liste e ⌘ per la copia rapida"
-                                : "Predefinito: ⌘ per selezionare le liste e ⌥ per la copia rapida")
+                                ? "Active: ⌥ to select lists and ⌘ for quick paste"
+                                : "Default: ⌘ to select lists and ⌥ for quick paste")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
@@ -299,7 +297,7 @@ public struct PreferencesView: View {
                     Divider().opacity(0.4)
 
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Comandi Generali")
+                        Text("General Commands")
                             .font(.system(size: 12, weight: .bold))
                             .foregroundColor(ConCopyTheme.Accents.primary)
                             .padding(.leading, 2)
@@ -321,7 +319,7 @@ public struct PreferencesView: View {
                 Button(role: .destructive) {
                     shortcutsManager.resetAll()
                 } label: {
-                    Label("Ripristina tutte ai predefiniti", systemImage: "arrow.counterclockwise")
+                    Label("Reset All to Defaults", systemImage: "arrow.counterclockwise")
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
@@ -389,7 +387,7 @@ public struct PreferencesView: View {
                             .foregroundColor(.secondary)
                     }
                     .buttonStyle(.plain)
-                    .help("Rimuovi scorciatoia")
+                    .help("Remove shortcut")
                 }
 
                 Button {
@@ -400,7 +398,7 @@ public struct PreferencesView: View {
                         .foregroundColor(.secondary)
                 }
                 .buttonStyle(.plain)
-                .help("Ripristina predefinito")
+                .help("Reset to default")
             }
             .frame(width: 44, alignment: .trailing)
         }
@@ -415,7 +413,7 @@ public struct PreferencesView: View {
     // MARK: - Blacklist Tab
     private var blacklistTabView: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Le applicazioni in questa lista non verranno monitorate. I contenuti copiati da esse verranno ignorati")
+            Text("Applications in this list will not be monitored. Content copied from them will be ignored.")
                 .font(.subheadline)
                 .foregroundColor(.secondary)
                 .padding(.horizontal, 20)
@@ -423,7 +421,7 @@ public struct PreferencesView: View {
 
             List(selection: $selectedBundleId) {
                 if settingsManager.excludedAppBundleIds.isEmpty {
-                    Text("Nessuna applicazione esclusa")
+                    Text("No excluded applications")
                         .font(.callout)
                         .foregroundColor(.secondary)
                         .frame(maxWidth: .infinity, alignment: .center)
@@ -463,7 +461,7 @@ public struct PreferencesView: View {
                                     .foregroundColor(.secondary)
                             }
                             .buttonStyle(.plain)
-                            .help("Rimuovi dalla blacklist")
+                            .help("Remove from excluded list")
                         }
                         .tag(bundleId)
                         .padding(.vertical, 4)
@@ -480,16 +478,16 @@ public struct PreferencesView: View {
 
             HStack(spacing: 8) {
                 Menu {
-                    Button("Scegli Applicazione (.app)...") {
+                    Button("Choose Application (.app)...") {
                         chooseAppFile()
                     }
                     if let frontmost = NSWorkspace.shared.frontmostApplication,
                         let bundleId = frontmost.bundleIdentifier {
-                        Button("Aggiungi app attiva (\(frontmost.localizedName ?? bundleId))") {
+                        Button("Add active app (\(frontmost.localizedName ?? bundleId))") {
                             settingsManager.addExcludedApp(bundleId: bundleId)
                         }
                     }
-                    Button("Inserisci Bundle ID manualmente...") {
+                    Button("Enter Bundle ID manually...") {
                         manualBundleIdText = ""
                         isShowingManualAddSheet = true
                     }
@@ -523,10 +521,10 @@ public struct PreferencesView: View {
     // MARK: - Manual Add Sheet
     private var manualAddSheet: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Aggiungi Bundle ID da escludere")
+            Text("Add Bundle ID to Exclude")
                 .font(.headline)
 
-            Text("Inserisci l'identificatore bundle univoco dell'applicazione (es: com.apple.keychainaccess)")
+            Text("Enter the unique application bundle identifier (e.g. com.apple.keychainaccess)")
                 .font(.caption)
                 .foregroundColor(.secondary)
 
@@ -535,10 +533,10 @@ public struct PreferencesView: View {
 
             HStack {
                 Spacer()
-                Button("Annulla") {
+                Button("Cancel") {
                     isShowingManualAddSheet = false
                 }
-                Button("Aggiungi") {
+                Button("Add") {
                     let cleaned = manualBundleIdText.trimmingCharacters(in: .whitespacesAndNewlines)
                     if !cleaned.isEmpty {
                         settingsManager.addExcludedApp(bundleId: cleaned)
@@ -561,7 +559,7 @@ public struct PreferencesView: View {
         openPanel.canChooseDirectories = false
         openPanel.canChooseFiles = true
         openPanel.directoryURL = URL(fileURLWithPath: "/Applications")
-        openPanel.prompt = "Seleziona"
+        openPanel.prompt = "Select"
 
         if openPanel.runModal() == .OK, let url = openPanel.url {
             if let bundle = Bundle(url: url), let bundleId = bundle.bundleIdentifier {
@@ -584,33 +582,33 @@ public struct PreferencesView: View {
         do {
             let count = try db.clearAllHistory(preserveFavorites: true)
             onDataChanged?()
-            statusAlertMessage = "Eliminate \(count) clip dalla cronologia"
+            statusAlertMessage = "Cleared \(count) clips from history"
         } catch {
-            statusAlertMessage = "Errore durante lo svuotamento: \(error.localizedDescription)"
+            statusAlertMessage = "Error clearing history: \(error.localizedDescription)"
         }
     }
 
     private func exportBackupAction() {
         guard let db = databaseManager else {
-            statusAlertMessage = "Database non disponibile"
+            statusAlertMessage = "Database unavailable"
             return
         }
 
         let savePanel = NSSavePanel()
         savePanel.allowedContentTypes = [.json]
         savePanel.nameFieldStringValue = "ConCopy_Backup_\(ISO8601DateFormatter().string(from: Date())).json"
-        savePanel.prompt = "Esporta"
+        savePanel.prompt = "Export"
 
         if savePanel.runModal() == .OK, let targetURL = savePanel.url {
             Task.detached(priority: .utility) {
                 do {
                     try await ArchiveManager().exportArchive(to: targetURL, databaseManager: db)
                     await MainActor.run {
-                        self.statusAlertMessage = "Archivio esportato con successo in:\n\(targetURL.lastPathComponent)"
+                        self.statusAlertMessage = "Archive exported successfully to:\n\(targetURL.lastPathComponent)"
                     }
                 } catch {
                     await MainActor.run {
-                        self.statusAlertMessage = "Errore durante l'esportazione:\n\(error.localizedDescription)"
+                        self.statusAlertMessage = "Error exporting archive:\n\(error.localizedDescription)"
                     }
                 }
             }
@@ -619,7 +617,7 @@ public struct PreferencesView: View {
 
     private func importBackupAction() {
         guard let db = databaseManager else {
-            statusAlertMessage = "Database non disponibile"
+            statusAlertMessage = "Database unavailable"
             return
         }
 
@@ -628,7 +626,7 @@ public struct PreferencesView: View {
         openPanel.allowsMultipleSelection = false
         openPanel.canChooseDirectories = false
         openPanel.canChooseFiles = true
-        openPanel.prompt = "Importa"
+        openPanel.prompt = "Import"
 
         if openPanel.runModal() == .OK, let sourceURL = openPanel.url {
             Task.detached(priority: .utility) {
@@ -636,11 +634,11 @@ public struct PreferencesView: View {
                     try await ArchiveManager().importArchive(from: sourceURL, databaseManager: db)
                     await MainActor.run {
                         self.onDataChanged?()
-                        self.statusAlertMessage = "Archivio importato con successo da:\n\(sourceURL.lastPathComponent)"
+                        self.statusAlertMessage = "Archive imported successfully from:\n\(sourceURL.lastPathComponent)"
                     }
                 } catch {
                     await MainActor.run {
-                        self.statusAlertMessage = "Errore durante l'importazione:\n\(error.localizedDescription)"
+                        self.statusAlertMessage = "Error importing archive:\n\(error.localizedDescription)"
                     }
                 }
             }
@@ -665,7 +663,7 @@ public struct PreferencesView: View {
         openPanel.allowsMultipleSelection = false
         openPanel.canChooseDirectories = true
         openPanel.canChooseFiles = true
-        openPanel.prompt = "Importa"
+        openPanel.prompt = "Import"
         if let defaultDir = MaccyImporter.standardLocations.first(where: { FileManager.default.fileExists(atPath: $0.path) }) {
             openPanel.directoryURL = defaultDir
         }
@@ -692,7 +690,7 @@ public struct PreferencesView: View {
         openPanel.canChooseDirectories = true
         openPanel.canChooseFiles = true
         openPanel.treatsFilePackagesAsDirectories = true
-        openPanel.prompt = "Importa"
+        openPanel.prompt = "Import"
         if let defaultDir = CopyEmImporter.standardLocations.first(where: { FileManager.default.fileExists(atPath: $0.path) }) {
             openPanel.directoryURL = defaultDir
         }
@@ -704,12 +702,12 @@ public struct PreferencesView: View {
 
     private func executeImport(importer: any ExternalClipboardImporter, securityScopedURL: URL? = nil) {
         guard let db = databaseManager else {
-            statusAlertMessage = "Database non disponibile"
+            statusAlertMessage = "Database unavailable"
             return
         }
 
         isImporting = true
-        importProgressDescription = "Avvio importazione da \(importer.displayName)..."
+        importProgressDescription = "Starting import from \(importer.displayName)..."
 
         Task.detached(priority: .utility) {
             let hasScopedAccess = securityScopedURL?.startAccessingSecurityScopedResource() ?? false
@@ -723,9 +721,9 @@ public struct PreferencesView: View {
                 let result = try importer.importClips(into: db) { progress in
                     Task { @MainActor in
                         if let total = progress.total, total > 0 {
-                            self.importProgressDescription = "\(progress.processed)/\(total) elaborati (\(progress.imported) importati, \(progress.merged) uniti)"
+                            self.importProgressDescription = "\(progress.processed)/\(total) processed (\(progress.imported) imported, \(progress.merged) merged)"
                         } else {
-                            self.importProgressDescription = "\(progress.processed) elaborati (\(progress.imported) importati, \(progress.merged) uniti)"
+                            self.importProgressDescription = "\(progress.processed) processed (\(progress.imported) imported, \(progress.merged) merged)"
                         }
                     }
                 }
@@ -735,18 +733,18 @@ public struct PreferencesView: View {
                     self.importProgressDescription = ""
                     self.onDataChanged?()
                     self.statusAlertMessage = """
-                    Importazione da \(importer.displayName) completata!
-                    • \(result.importedCount) nuove clip importate
-                    • \(result.mergedDuplicatesCount) clip duplicate unite
-                    • \(result.createdListsCount) nuove liste create
-                    • \(result.errorsCount) errori
+                    Import from \(importer.displayName) completed!
+                    • \(result.importedCount) new clips imported
+                    • \(result.mergedDuplicatesCount) duplicate clips merged
+                    • \(result.createdListsCount) new lists created
+                    • \(result.errorsCount) errors
                     """
                 }
             } catch {
                 await MainActor.run {
                     self.isImporting = false
                     self.importProgressDescription = ""
-                    self.statusAlertMessage = "Errore durante l'importazione da \(importer.displayName): \(error.localizedDescription)"
+                    self.statusAlertMessage = "Error importing from \(importer.displayName): \(error.localizedDescription)"
                 }
             }
         }

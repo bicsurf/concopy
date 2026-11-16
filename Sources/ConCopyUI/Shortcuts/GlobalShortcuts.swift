@@ -35,8 +35,8 @@ extension KeyboardShortcuts.Name {
 }
 
 public enum ShortcutScope: String, Sendable {
-    case global = "Globale"
-    case inPanel = "Nel Pannello"
+    case global = "Global"
+    case inPanel = "In-Panel"
 }
 
 public enum ConCopyShortcutKey: String, CaseIterable, Identifiable, Sendable {
@@ -53,19 +53,19 @@ public enum ConCopyShortcutKey: String, CaseIterable, Identifiable, Sendable {
     public var displayName: String {
         switch self {
         case .toggleConCopyPanel:
-            return "Apri / Chiudi ConCopy"
+            return "Open / Close ConCopy"
         case .pasteSelection:
-            return "Incolla elemento selezionato"
+            return "Paste Selected Item"
         case .copySelection:
-            return "Copia elemento negli appunti"
+            return "Copy Item to Clipboard"
         case .moveToList:
-            return "Sposta nella Lista / Snippet"
+            return "Move to List / Snippets"
         case .toggleFavorite:
-            return "Aggiungi / Rimuovi dai Preferiti"
+            return "Add / Remove from Favorites"
         case .focusSearch:
-            return "Focalizza campo di ricerca"
+            return "Focus Search Field"
         case .openPreferences:
-            return "Apri Impostazioni"
+            return "Open Settings"
         }
     }
 
@@ -279,7 +279,7 @@ public final class GlobalShortcutsManager: ObservableObject {
         return false
     }
 
-    /// Determines if an incoming `NSEvent` matches the shortcut for selecting "Tutte" (All clips).
+    /// Determines if an incoming `NSEvent` matches the shortcut for selecting "All" (All clips).
     /// Always matches Option+A, and matches Cmd+A when `swapNumericModifiers` is false.
     public func matchesAllClips(event: NSEvent) -> Bool {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)

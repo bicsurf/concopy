@@ -482,7 +482,7 @@ public final class ClipboardViewModel: ObservableObject {
                 transformation: transformation
             )
             copiedClipId = clip.id
-            showToast("Copiato negli appunti!")
+            showToast("Copied to clipboard!")
             Task { @MainActor [weak self] in
                 try? await Task.sleep(nanoseconds: 1_200_000_000)
                 if self?.copiedClipId == clip.id {
@@ -530,7 +530,7 @@ public final class ClipboardViewModel: ObservableObject {
             guard let self else { return }
             do {
                 if !isTrusted {
-                    self.showToast("Copiato negli appunti! Premi ⌘V per incollare.")
+                    self.showToast("Copied to clipboard! Press ⌘V to paste.")
                 }
                 try await self.pasteInjector.paste(
                     clip: clip,
@@ -597,7 +597,7 @@ public final class ClipboardViewModel: ObservableObject {
             guard let self else { return }
             do {
                 if !isTrusted {
-                    self.showToast("Testo copiato negli appunti! Premi ⌘V per incollare.")
+                    self.showToast("Text copied to clipboard! Press ⌘V to paste.")
                 }
                 try await self.pasteInjector.pasteBatch(
                     clips: orderedClips,
@@ -632,7 +632,7 @@ public final class ClipboardViewModel: ObservableObject {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setData(Data(), forType: PasteInjector.internalPasteMarker)
                 NSPasteboard.general.setString(snippet.content, forType: .string)
-                showToast("Snippet copiato negli appunti!")
+                showToast("Snippet copied to clipboard!")
                 onClosePanel?()
             }
             return
@@ -648,7 +648,7 @@ public final class ClipboardViewModel: ObservableObject {
                         transformation: activeTransformation,
                         databaseManager: databaseManager
                     )
-                    showToast("Copiati \(ordered.count) elementi negli appunti!")
+                    showToast("Copied \(ordered.count) items to clipboard!")
                     onClosePanel?()
                     loadClips()
                 } catch {
@@ -672,7 +672,7 @@ public final class ClipboardViewModel: ObservableObject {
                 forcePlainText: isPlainTextModeEnabled,
                 transformation: activeTransformation
             )
-            showToast("Copiato negli appunti!")
+            showToast("Copied to clipboard!")
             onClosePanel?()
             loadClips()
         } catch {
@@ -714,11 +714,11 @@ public final class ClipboardViewModel: ObservableObject {
                 _ = try? databaseManager.toggleFavorite(clipId: clipId)
             }
             loadClips()
-            showToast("Preferiti aggiornati ★")
+            showToast("Favorites updated ★")
         } else if selectedIndex >= 0 && selectedIndex < clips.count {
             let clip = clips[selectedIndex]
             toggleFavorite(clip: clip)
-            showToast(clip.isFavorite ? "Rimosso dai Preferiti" : "Aggiunto ai Preferiti ★")
+            showToast(clip.isFavorite ? "Removed from Favorites" : "Added to Favorites ★")
         }
     }
 
@@ -761,7 +761,7 @@ public final class ClipboardViewModel: ObservableObject {
         }
         assignClipToList(clip: clip, listId: nil)
         movingClip = nil
-        showToast("Rimosso da tutte le liste")
+        showToast("Removed from all lists")
     }
 
     public func assignMovingClip(toOptionIndex digit: Int) {
@@ -770,7 +770,7 @@ public final class ClipboardViewModel: ObservableObject {
             let wasFav = clip.isFavorite
             toggleFavorite(clip: clip)
             movingClip = nil
-            showToast(wasFav ? "Rimosso dai Preferiti" : "Aggiunto ai Preferiti ★")
+            showToast(wasFav ? "Removed from Favorites" : "Added to Favorites ★")
         } else if digit == 2 {
             convertMovingClipToSnippet()
         } else {
@@ -779,7 +779,7 @@ public final class ClipboardViewModel: ObservableObject {
                 let list = lists[listIndex]
                 assignClipToList(clip: clip, listId: list.id)
                 movingClip = nil
-                showToast("Spostato in \"\(list.name)\"")
+                showToast("Moved to \"\(list.name)\"")
             }
         }
     }
@@ -833,10 +833,10 @@ public final class ClipboardViewModel: ObservableObject {
         do {
             try databaseManager.saveSnippet(snippet)
             loadSnippets()
-            showToast("Snippet salvato: \(snippet.shortcut)")
+            showToast("Snippet saved: \(snippet.shortcut)")
         } catch {
             print("[ConCopy] Failed to save snippet: \(error)")
-            showToast("Errore nel salvataggio dello snippet")
+            showToast("Error saving snippet")
         }
     }
 
@@ -844,7 +844,7 @@ public final class ClipboardViewModel: ObservableObject {
         do {
             try databaseManager.deleteSnippet(id: snippet.id)
             loadSnippets()
-            showToast("Snippet eliminato")
+            showToast("Snippet deleted")
         } catch {
             print("[ConCopy] Failed to delete snippet: \(error)")
         }

@@ -97,7 +97,7 @@ public struct MaccyImporter: ExternalClipboardImporter {
             }) {
                 return sqliteFile
             }
-            throw DatabaseError(message: "Nessun database SQLite Maccy trovato nella cartella specificata.")
+            throw DatabaseError(message: "No Maccy SQLite database found in the specified folder.")
         } else {
             return url
         }
@@ -107,14 +107,14 @@ public struct MaccyImporter: ExternalClipboardImporter {
         let tables = try String.fetchAll(db, sql: "SELECT name FROM sqlite_master WHERE type='table'")
         let upper = Set(tables.map { $0.uppercased() })
         guard upper.contains("ZHISTORYITEM") && upper.contains("ZHISTORYITEMCONTENT") else {
-            throw DatabaseError(message: "Il database selezionato non sembra essere un database valido di Maccy.")
+            throw DatabaseError(message: "The selected database does not appear to be a valid Maccy database.")
         }
     }
 
     private func fetchTableColumnNames(table: String, db: Database) throws -> Set<String> {
         let pattern = try NSRegularExpression(pattern: "^[A-Za-z_][A-Za-z0-9_]*$")
         guard pattern.firstMatch(in: table, range: NSRange(table.startIndex..., in: table)) != nil else {
-            throw DatabaseError(message: "Nome tabella non valido")
+            throw DatabaseError(message: "Invalid table name")
         }
 
         let rows = try Row.fetchAll(db, sql: "PRAGMA table_info(\"\(table)\")")
@@ -156,7 +156,7 @@ public struct MaccyImporter: ExternalClipboardImporter {
     private func fetchContentMap(fkColumn: String, in db: Database) throws -> [Int64: [RawContentRecord]] {
         let pattern = try NSRegularExpression(pattern: "^[A-Za-z_][A-Za-z0-9_]*$")
         guard pattern.firstMatch(in: fkColumn, range: NSRange(fkColumn.startIndex..., in: fkColumn)) != nil else {
-            throw DatabaseError(message: "Nome colonna non valido")
+            throw DatabaseError(message: "Invalid column name")
         }
 
         var map: [Int64: [RawContentRecord]] = [:]

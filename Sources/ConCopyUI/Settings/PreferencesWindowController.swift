@@ -13,7 +13,7 @@ public final class PreferencesWindowController: NSWindowController {
             backing: .buffered,
             defer: false
         )
-        window.title = "Impostazioni ConCopy"
+        window.title = "ConCopy Settings"
         window.minSize = NSSize(width: 540, height: 460)
         window.center()
         window.isReleasedWhenClosed = false
