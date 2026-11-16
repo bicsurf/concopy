@@ -53,28 +53,28 @@ public final class StatusItemController: NSObject {
         if event.type == .rightMouseUp {
             let menu = NSMenu()
 
-            let showItem = NSMenuItem(title: "Mostra ConCopy", action: #selector(showConCopy), keyEquivalent: "")
+            let showItem = NSMenuItem(title: "Show ConCopy", action: #selector(showConCopy), keyEquivalent: "")
             showItem.target = self
             menu.addItem(showItem)
 
             menu.addItem(NSMenuItem.separator())
 
             let isPaused = AppSettingsManager.shared.isMonitoringPaused
-            let pauseTitle = isPaused ? "Riprendi Registrazione Appunti" : "Pausa Registrazione Appunti"
+            let pauseTitle = isPaused ? "Resume Clipboard Recording" : "Pause Clipboard Recording"
             let pauseItem = NSMenuItem(title: pauseTitle, action: #selector(toggleMonitoringPause), keyEquivalent: "")
             pauseItem.target = self
             menu.addItem(pauseItem)
 
-            let prefsItem = NSMenuItem(title: "Preferenze...", action: #selector(openPreferences), keyEquivalent: ",")
+            let prefsItem = NSMenuItem(title: "Settings...", action: #selector(openPreferences), keyEquivalent: ",")
             prefsItem.target = self
             menu.addItem(prefsItem)
 
-            let updateItem = NSMenuItem(title: "Controlla aggiornamenti...", action: #selector(checkForUpdates), keyEquivalent: "")
+            let updateItem = NSMenuItem(title: "Check for Updates...", action: #selector(checkForUpdates), keyEquivalent: "")
             updateItem.target = self
             menu.addItem(updateItem)
 
-            let aboutItem = NSMenuItem(title: "Informazioni", action: #selector(openAbout), keyEquivalent: "")
-            if let infoImage = NSImage(systemSymbolName: "info.circle", accessibilityDescription: "Informazioni") {
+            let aboutItem = NSMenuItem(title: "About", action: #selector(openAbout), keyEquivalent: "")
+            if let infoImage = NSImage(systemSymbolName: "info.circle", accessibilityDescription: "About") {
                 aboutItem.image = infoImage
             }
             aboutItem.target = self
@@ -82,7 +82,7 @@ public final class StatusItemController: NSObject {
 
             menu.addItem(NSMenuItem.separator())
 
-            let quitItem = NSMenuItem(title: "Esci da ConCopy", action: #selector(quitApp), keyEquivalent: "q")
+            let quitItem = NSMenuItem(title: "Quit ConCopy", action: #selector(quitApp), keyEquivalent: "q")
             quitItem.target = self
             menu.addItem(quitItem)
 

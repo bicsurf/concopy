@@ -35,7 +35,7 @@ public struct ClipboardListView: View {
                     .font(.system(size: 13, weight: .regular))
                     .foregroundColor(.secondary)
 
-                TextField("Cerca (Cmd+F)...", text: $viewModel.searchQuery)
+                TextField("Search (Cmd+F)...", text: $viewModel.searchQuery)
                     .textFieldStyle(.plain)
                     .font(.system(size: 13))
                     .focused($isFieldFocused)
@@ -77,7 +77,7 @@ public struct ClipboardListView: View {
                 }
                 .menuIndicator(.hidden)
                 .buttonStyle(.plain)
-                .help("Ordinamento")
+                .help("Sorting")
 
                 // Auto-Star toggle for selected list
                 if let listId = viewModel.selectedListId,
@@ -89,7 +89,7 @@ public struct ClipboardListView: View {
                             .foregroundColor(list.isAutoStarActive ? .yellow : .secondary)
                     }
                     .buttonStyle(.plain)
-                    .help("Auto-Star su questa lista")
+                    .help("Auto-Star on this list")
                 }
                 // Preferences button
                 Button(action: {
@@ -104,7 +104,7 @@ public struct ClipboardListView: View {
                         .foregroundColor(.secondary)
                 }
                 .buttonStyle(.plain)
-                .help("Impostazioni (⌘,)")
+                .help("Settings (⌘,)")
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -122,13 +122,13 @@ public struct ClipboardListView: View {
                         .foregroundColor(ConCopyTheme.Accents.primary)
                         .font(.system(size: 13))
 
-                    Text("Nuova versione v\(update.version) disponibile")
+                    Text("New version v\(update.version) available")
                         .font(.system(size: 11, weight: .medium))
                         .foregroundColor(.primary)
 
                     Spacer()
 
-                    Button("Scarica") {
+                    Button("Download") {
                         if let url = update.dmgDownloadURL ?? URL(string: update.releasePageURL.absoluteString) {
                             NSWorkspace.shared.open(url)
                         }
@@ -144,7 +144,7 @@ public struct ClipboardListView: View {
                             .foregroundColor(.secondary)
                     }
                     .buttonStyle(.plain)
-                    .help("Nascondi per questa versione")
+                    .help("Dismiss for this version")
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 5)
@@ -156,10 +156,10 @@ public struct ClipboardListView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundColor(.yellow)
-                    Text("Accessibilità mancante (incolla disabilitato)")
+                    Text("Accessibility permissions missing (paste disabled)")
                         .font(.caption.bold())
                     Spacer()
-                    Button("Impostazioni") {
+                    Button("Settings") {
                         viewModel.openAccessibilitySettings()
                     }
                     .buttonStyle(.plain)
@@ -176,10 +176,10 @@ public struct ClipboardListView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "pause.circle.fill")
                         .foregroundColor(.orange)
-                    Text("Registrazione in pausa")
+                    Text("Recording paused")
                         .font(.caption.bold())
                     Spacer()
-                    Button("Riprendi") {
+                    Button("Resume") {
                         AppSettingsManager.shared.isMonitoringPaused = false
                     }
                     .buttonStyle(.plain)
@@ -197,7 +197,7 @@ public struct ClipboardListView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
                     ListTabButton(
-                        title: "Tutte",
+                        title: "All",
                         icon: "tray.full",
                         isSelected: viewModel.selectedListId == nil && !viewModel.isFavoritesOnly && !viewModel.isSnippetsOnly,
                         shortcutHint: "\(shortcutsManager.listModifierSymbol)A"
@@ -206,7 +206,7 @@ public struct ClipboardListView: View {
                     }
 
                     ListTabButton(
-                        title: "Preferiti",
+                        title: "Favorites",
                         icon: "star.fill",
                         isSelected: viewModel.selectedListId == nil && viewModel.isFavoritesOnly && !viewModel.isSnippetsOnly,
                         shortcutHint: "\(shortcutsManager.listModifierSymbol)1"
@@ -215,7 +215,7 @@ public struct ClipboardListView: View {
                     }
 
                     ListTabButton(
-                        title: "Snippet",
+                        title: "Snippets",
                         icon: "curlybraces",
                         isSelected: viewModel.isSnippetsOnly,
                         shortcutHint: "\(shortcutsManager.listModifierSymbol)2"
@@ -239,7 +239,7 @@ public struct ClipboardListView: View {
                                 viewModel.toggleAutoStar(for: list.id)
                             } label: {
                                 Label(
-                                    list.isAutoStarActive ? "Disattiva Stella Automatica" : "Attiva Stella Automatica",
+                                    list.isAutoStarActive ? "Disable Auto-Star" : "Enable Auto-Star",
                                     systemImage: list.isAutoStarActive ? "star.slash" : "star"
                                 )
                             }
@@ -249,7 +249,7 @@ public struct ClipboardListView: View {
                             Button(role: .destructive) {
                                 viewModel.deleteList(list.id, deleteContainedClips: false)
                             } label: {
-                                Label("Elimina Lista", systemImage: "trash")
+                                Label("Delete List", systemImage: "trash")
                             }
                         }
                     }
@@ -270,7 +270,7 @@ public struct ClipboardListView: View {
                             .foregroundColor(.secondary)
                     }
                     .buttonStyle(.plain)
-                    .help("Crea nuova lista")
+                    .help("Create new list")
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
@@ -288,10 +288,10 @@ public struct ClipboardListView: View {
                         .font(.system(size: 28, weight: .light))
                         .foregroundColor(.secondary.opacity(0.6))
                         .padding(.bottom, 4)
-                    Text("Nessun elemento negli appunti")
+                    Text("No items in clipboard")
                         .font(.system(size: 13, weight: .medium))
                         .foregroundColor(.secondary)
-                    Text("Copia del testo o immagini per salvarli automaticamente")
+                    Text("Copy text or images to save them automatically")
                         .font(.system(size: 11))
                         .foregroundColor(.secondary.opacity(0.6))
                 }
@@ -361,13 +361,13 @@ public struct ClipboardListView: View {
             if !viewModel.selectedClipIds.isEmpty {
                 Divider().opacity(0.3)
                 HStack(spacing: 8) {
-                    // Contatore selezionati
-                    Text("\(viewModel.selectedClipIds.count) selezionati")
+                    // Selected counter
+                    Text("\(viewModel.selectedClipIds.count) selected")
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(.secondary)
                         .padding(.leading, 2)
 
-                    // Pulsante X minimale per deselezione
+                    // Minimal X button for deselection
                     Button(action: {
                         viewModel.clearSelection()
                     }) {
@@ -385,7 +385,7 @@ public struct ClipboardListView: View {
                             )
                     }
                     .buttonStyle(.plain)
-                    .help("Deseleziona tutto (Esc / ⌘D)")
+                    .help("Deselect all (Esc / ⌘D)")
                     .onHover { hovering in
                         isClearButtonHovered = hovering
                     }
@@ -401,19 +401,19 @@ public struct ClipboardListView: View {
                         .pickerStyle(.menu)
                         .frame(maxWidth: 120)
 
-                        Button(viewModel.appSettings.isDirectPasteEnabled ? "Incolla Insieme" : "Copia Insieme") {
+                        Button(viewModel.appSettings.isDirectPasteEnabled ? "Paste Together" : "Copy Together") {
                             viewModel.pasteSelectedBatch(mode: .concatenated(separator: viewModel.batchSeparator))
                         }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.small)
 
-                        Button("Tab Modulo") {
+                        Button("Form Tab") {
                             viewModel.pasteSelectedBatch(mode: .sequentialFormFields(delayMs: 60))
                         }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
                     } else {
-                        Button(viewModel.appSettings.isDirectPasteEnabled ? "Incolla" : "Copia") {
+                        Button(viewModel.appSettings.isDirectPasteEnabled ? "Paste" : "Copy") {
                             viewModel.pasteSelected()
                         }
                         .buttonStyle(.borderedProminent)
@@ -502,7 +502,7 @@ public struct ClipboardListView: View {
         // In-place text editor sheet
         .sheet(item: $viewModel.editingClip) { clip in
             VStack(alignment: .leading, spacing: 12) {
-                Text("Modifica Testo")
+                Text("Edit Text")
                     .font(.headline)
                 TextEditor(text: $editTextValue)
                     .font(.system(.body, design: .monospaced))
@@ -512,10 +512,10 @@ public struct ClipboardListView: View {
 
                 HStack {
                     Spacer()
-                    Button("Annulla") {
+                    Button("Cancel") {
                         viewModel.editingClip = nil
                     }
-                    Button("Salva") {
+                    Button("Save") {
                         viewModel.saveEditedText(for: clip.id, newText: editTextValue)
                     }
                     .keyboardShortcut(.defaultAction)
@@ -529,23 +529,23 @@ public struct ClipboardListView: View {
         // Rename / Custom Name sheet
         .sheet(item: $viewModel.renamingClip) { clip in
             VStack(alignment: .leading, spacing: 12) {
-                Text("Aggiungi Nome Personalizzato")
+                Text(clip.customName == nil ? "Add Custom Name" : "Rename Clip")
                     .font(.headline)
-                TextField("Nome / Etichetta...", text: $editNameValue)
+                TextField("Name / Label...", text: $editNameValue)
                     .textFieldStyle(.roundedBorder)
                     .frame(minWidth: 300)
 
                 HStack {
                     if clip.customName != nil {
-                        Button("Rimuovi Nome", role: .destructive) {
+                        Button("Remove Name", role: .destructive) {
                             viewModel.saveCustomName(for: clip.id, newName: nil)
                         }
                     }
                     Spacer()
-                    Button("Annulla") {
+                    Button("Cancel") {
                         viewModel.renamingClip = nil
                     }
-                    Button("Salva") {
+                    Button("Save") {
                         viewModel.saveCustomName(for: clip.id, newName: editNameValue)
                     }
                     .keyboardShortcut(.defaultAction)
@@ -584,14 +584,14 @@ public struct ClipboardListView: View {
 
     private func promptCreateNewList() {
         let alert = NSAlert()
-        alert.messageText = "Nuova Lista"
-        alert.informativeText = "Inserisci il nome per la nuova lista:"
+        alert.messageText = "New List"
+        alert.informativeText = "Enter a name for the new list:"
         alert.alertStyle = .informational
-        alert.addButton(withTitle: "Crea")
-        alert.addButton(withTitle: "Annulla")
+        alert.addButton(withTitle: "Create")
+        alert.addButton(withTitle: "Cancel")
 
         let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 220, height: 24))
-        textField.placeholderString = "Nome lista..."
+        textField.placeholderString = "List name..."
         alert.accessoryView = textField
 
         NSApp.activate()
@@ -623,13 +623,13 @@ public struct ClipboardListView: View {
         Button(action: {
             viewModel.copyClipToPasteboard(clip: clip)
         }) {
-            Label("Copia negli appunti", systemImage: "doc.on.doc")
+            Label("Copy to clipboard", systemImage: "doc.on.doc")
         }
 
         Button(action: {
             viewModel.paste(clip: clip)
         }) {
-            Label("Incolla", systemImage: "arrow.right.doc.on.clipboard")
+            Label("Paste", systemImage: "arrow.right.doc.on.clipboard")
         }
 
         Divider()
@@ -640,29 +640,29 @@ public struct ClipboardListView: View {
                 viewModel.isQuickLookVisible = true
             }
         }) {
-            Label("Anteprima Rapida", systemImage: "eye")
+            Label("Quick Look", systemImage: "eye")
         }
 
         Button(action: {
             viewModel.editingClip = clip
         }) {
-            Label("Modifica Testo...", systemImage: "pencil")
+            Label("Edit Text...", systemImage: "pencil")
         }
 
         Button(action: {
             viewModel.renamingClip = clip
         }) {
-            Label(clip.customName == nil ? "Aggiungi Nome..." : "Rinomina...", systemImage: "tag")
+            Label(clip.customName == nil ? "Add Name..." : "Rename...", systemImage: "tag")
         }
 
         Divider()
 
-        Button(clip.isFavorite ? "Rimuovi dai Preferiti" : "Aggiungi ai Preferiti") {
+        Button(clip.isFavorite ? "Remove from Favorites" : "Add to Favorites") {
             viewModel.toggleFavorite(clip: clip)
         }
 
-        Menu("Sposta nella Lista") {
-            Button("Nessuna Lista") {
+        Menu("Move to List") {
+            Button("No List (All)") {
                 viewModel.assignClipToList(clip: clip, listId: nil)
             }
             ForEach(viewModel.lists) { list in
@@ -676,19 +676,19 @@ public struct ClipboardListView: View {
             Button {
                 viewModel.createSnippetFromClip(clip)
             } label: {
-                Label("Salva come Snippet...", systemImage: "curlybraces")
+                Label("Save as Snippet...", systemImage: "curlybraces")
             }
         }
 
-        Menu("Incolla come File") {
-            Button("File di Testo (.txt)") {
+        Menu("Paste as File") {
+            Button("Text File (.txt)") {
                 viewModel.pasteAsFile(clip: clip)
             }
             if clip.primaryType == .image {
-                Button("Immagine PNG (.png)") {
+                Button("PNG Image (.png)") {
                     viewModel.pasteAsFile(clip: clip, imageFormat: .png)
                 }
-                Button("Immagine JPEG (.jpg)") {
+                Button("JPEG Image (.jpg)") {
                     viewModel.pasteAsFile(clip: clip, imageFormat: .jpeg)
                 }
             }
@@ -696,7 +696,7 @@ public struct ClipboardListView: View {
 
         Divider()
 
-        Button("Elimina", role: .destructive) {
+        Button("Delete", role: .destructive) {
             viewModel.deleteClip(clip)
         }
     }
@@ -893,7 +893,7 @@ struct ClipRowView: View, Equatable {
                                 .lineLimit(1)
                         }
                     } else {
-                        let text = clip.plainText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "[Nessun contenuto]"
+                        let text = clip.plainText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "[No content]"
                         Text(text)
                             .font(.system(size: 12.5, weight: .medium))
                             .foregroundColor(.primary)
@@ -929,14 +929,14 @@ struct ClipRowView: View, Equatable {
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)
-            .help(clip.isFavorite ? "Rimuovi dai Preferiti (Cmd+D)" : "Aggiungi ai Preferiti (Cmd+D)")
+            .help(clip.isFavorite ? "Remove from Favorites (Cmd+D)" : "Add to Favorites (Cmd+D)")
 
             // Shortcut Pill Badge or Copied Feedback
             if isCopied {
                 HStack(spacing: 3) {
                     Image(systemName: "checkmark")
                         .font(.system(size: 8.5, weight: .bold))
-                    Text("Copiato")
+                    Text("Copied")
                         .font(.system(size: 9.5, weight: .semibold))
                 }
                 .foregroundColor(ConCopyTheme.Accents.primary)
@@ -1038,9 +1038,9 @@ struct MoveToListSheetView: View {
                     .font(.title2)
                     .foregroundColor(ConCopyTheme.Accents.primary)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Sposta nella Lista")
+                    Text("Move to List")
                         .font(.headline)
-                    Text("Seleziona con click, \(shortcutsManager.listModifierSymbol)A o \(shortcutsManager.listModifierSymbol)1..9")
+                    Text("Select by clicking, \(shortcutsManager.listModifierSymbol)A or \(shortcutsManager.listModifierSymbol)1..9")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -1049,14 +1049,14 @@ struct MoveToListSheetView: View {
             Divider().opacity(0.3)
 
             VStack(spacing: 6) {
-                // Opzione fissa "Nessuna Lista (Tutte)"
+                // Fixed option "No List (All)"
                 Button(action: {
                     viewModel.assignMovingClipToAll()
                 }) {
                     HStack(spacing: 8) {
                         Image(systemName: "tray")
                             .frame(width: 16)
-                        Text("Nessuna Lista (Tutte)")
+                        Text("No List (All)")
                             .font(.system(size: 13, weight: clip.listId == nil ? .semibold : .regular))
                         Spacer()
                         if clip.listId == nil {
@@ -1083,18 +1083,18 @@ struct MoveToListSheetView: View {
                 }
                 .buttonStyle(.plain)
 
-                // Opzione fissa "Preferiti"
+                // Fixed option "Favorites"
                 Button(action: {
                     let wasFav = clip.isFavorite
                     viewModel.toggleFavorite(clip: clip)
                     viewModel.movingClip = nil
-                    viewModel.showToast(wasFav ? "Rimosso dai Preferiti" : "Aggiunto ai Preferiti ★")
+                    viewModel.showToast(wasFav ? "Removed from Favorites" : "Added to Favorites ★")
                 }) {
                     HStack(spacing: 8) {
                         Image(systemName: "star.fill")
                             .foregroundColor(ConCopyTheme.Accents.star)
                             .frame(width: 16)
-                        Text(clip.isFavorite ? "Rimuovi dai Preferiti" : "Aggiungi ai Preferiti")
+                        Text(clip.isFavorite ? "Remove from Favorites" : "Add to Favorites")
                             .font(.system(size: 13, weight: clip.isFavorite ? .semibold : .regular))
                         Spacer()
                         if clip.isFavorite {
@@ -1158,7 +1158,7 @@ struct MoveToListSheetView: View {
                     Button(action: {
                         viewModel.assignClipToList(clip: clip, listId: list.id)
                         viewModel.movingClip = nil
-                        viewModel.showToast("Spostato in \"\(list.name)\"")
+                        viewModel.showToast("Moved to \"\(list.name)\"")
                     }) {
                         HStack(spacing: 8) {
                             Image(systemName: "folder")
@@ -1207,7 +1207,7 @@ struct MoveToListSheetView: View {
 
             HStack {
                 Spacer()
-                Button("Chiudi") {
+                Button("Close") {
                     viewModel.movingClip = nil
                 }
                 .keyboardShortcut(.cancelAction)
@@ -1250,13 +1250,13 @@ struct SnippetsListView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Header bar con contatore e pulsante "+ Nuovo Snippet"
+            // Header bar with counter and "+ New Snippet" button
             HStack {
                 HStack(spacing: 6) {
                     Image(systemName: "curlybraces")
                         .font(.system(size: 11, weight: .bold))
                         .foregroundColor(ConCopyTheme.Accents.snippet)
-                    Text("Snippet (\(viewModel.filteredSnippets.count))")
+                    Text("Snippets (\(viewModel.filteredSnippets.count))")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundColor(.secondary)
                 }
@@ -1270,7 +1270,7 @@ struct SnippetsListView: View {
                     HStack(spacing: 4) {
                         Image(systemName: "plus.circle.fill")
                             .font(.system(size: 11))
-                        Text("Nuovo Snippet")
+                        Text("New Snippet")
                             .font(.system(size: 11, weight: .semibold))
                     }
                     .foregroundColor(ConCopyTheme.Accents.snippet)
@@ -1299,17 +1299,17 @@ struct SnippetsListView: View {
                         .padding(.bottom, 4)
 
                     if !viewModel.searchQuery.isEmpty {
-                        Text("Nessuno snippet corrisponde a \"\(viewModel.searchQuery)\"")
+                        Text("No snippets match \"\(viewModel.searchQuery)\"")
                             .font(.system(size: 13, weight: .medium))
                             .foregroundColor(.secondary)
-                        Text("Premi Esc per svuotare la ricerca o crea un nuovo snippet.")
+                        Text("Press Esc to clear search or create a new snippet.")
                             .font(.system(size: 11))
                             .foregroundColor(.secondary.opacity(0.6))
                     } else {
-                        Text("Nessuno snippet salvato")
+                        Text("No saved snippets")
                             .font(.system(size: 13, weight: .medium))
                             .foregroundColor(.secondary)
-                        Text("Crea scorciatoie come ';email' o ';indirizzo' per espandere testi frequenti.")
+                        Text("Create shortcuts like ';email' or ';address' to expand frequent text.")
                             .font(.system(size: 11))
                             .foregroundColor(.secondary.opacity(0.6))
                             .multilineTextAlignment(.center)
@@ -1437,7 +1437,7 @@ struct SnippetRowView: View {
                             )
                     }
                     .buttonStyle(.plain)
-                    .help("Modifica Snippet...")
+                    .help("Edit Snippet...")
 
                     Button(action: onDelete) {
                         Image(systemName: "trash")
@@ -1450,11 +1450,11 @@ struct SnippetRowView: View {
                             )
                     }
                     .buttonStyle(.plain)
-                    .help("Elimina Snippet")
+                    .help("Delete Snippet")
                 }
             }
 
-            // Shortcut Pill Badge (per incollaggio rapido)
+            // Shortcut Pill Badge (for quick paste)
             if let label = shortcutLabel {
                 HStack(spacing: 2) {
                     Image(systemName: quickPasteModifier)
@@ -1492,19 +1492,19 @@ struct SnippetRowView: View {
             isHovered = hovering
         }
         .contextMenu {
-            Button("Copia negli appunti") {
+            Button("Copy to clipboard") {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setData(Data(), forType: PasteInjector.internalPasteMarker)
                 NSPasteboard.general.setString(snippet.content, forType: .string)
             }
-            Button("Incolla") {
+            Button("Paste") {
                 onPaste()
             }
-            Button("Modifica Snippet...") {
+            Button("Edit Snippet...") {
                 onEdit()
             }
             Divider()
-            Button("Elimina Snippet", role: .destructive) {
+            Button("Delete Snippet", role: .destructive) {
                 onDelete()
             }
         }
@@ -1523,11 +1523,11 @@ struct SnippetEditorSheetView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text(snippet == nil ? "Nuovo Snippet" : "Modifica Snippet")
+            Text(snippet == nil ? "New Snippet" : "Edit Snippet")
                 .font(.headline)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text("Scorciatoia (es. ;email o :firma)")
+                Text("Shortcut (e.g. ;email or :sign)")
                     .font(.caption)
                     .foregroundColor(.secondary)
                 TextField(";shortcut", text: $shortcut)
@@ -1535,15 +1535,15 @@ struct SnippetEditorSheetView: View {
             }
 
             VStack(alignment: .leading, spacing: 4) {
-                Text("Etichetta / Titolo (opzionale)")
+                Text("Label / Title (optional)")
                     .font(.caption)
                     .foregroundColor(.secondary)
-                TextField("es. Email Personale", text: $title)
+                TextField("e.g. Personal Email", text: $title)
                     .textFieldStyle(.roundedBorder)
             }
 
             VStack(alignment: .leading, spacing: 4) {
-                Text("Contenuto di Testo")
+                Text("Text Content")
                     .font(.caption)
                     .foregroundColor(.secondary)
                 TextEditor(text: $content)
@@ -1555,8 +1555,8 @@ struct SnippetEditorSheetView: View {
 
             HStack {
                 Spacer()
-                Button("Annulla", action: onCancel)
-                Button("Salva") {
+                Button("Cancel", action: onCancel)
+                Button("Save") {
                     onSave(shortcut, content, title.isEmpty ? nil : title)
                 }
                 .disabled(shortcut.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || content.isEmpty)

@@ -137,11 +137,11 @@ public struct QuickLookPopoverView: View {
             Divider()
 
             HStack {
-                Text("\(chars) caratteri  •  \(words) parole  •  \(lines) righe")
+                Text("\(chars) characters  •  \(words) words  •  \(lines) lines")
                     .font(.caption)
                     .foregroundColor(.secondary)
                 Spacer()
-                Text("Copiato: \(clip.createdAt.formatted(date: .abbreviated, time: .shortened))")
+                Text("Copied: \(clip.createdAt.formatted(date: .abbreviated, time: .shortened))")
                     .font(.caption2)
                     .foregroundColor(.secondary)
             }
@@ -163,7 +163,7 @@ public struct QuickLookPopoverView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .padding(12)
                 } else {
-                    ProgressView("Caricamento immagine...")
+                    ProgressView("Loading image...")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
@@ -171,7 +171,7 @@ public struct QuickLookPopoverView: View {
             Divider()
 
             HStack {
-                Text("Risoluzione: \(imageResolution)  •  Dimensione: \(imageSizeKB)")
+                Text("Resolution: \(imageResolution)  •  Size: \(imageSizeKB)")
                     .font(.caption)
                     .foregroundColor(.secondary)
                 Spacer()
@@ -221,7 +221,7 @@ public struct QuickLookPopoverView: View {
                 .padding(.horizontal, 24)
 
             if let url {
-                Button("Apri nel Browser") {
+                Button("Open in Browser") {
                     NSWorkspace.shared.open(url)
                 }
                 .buttonStyle(.borderedProminent)
@@ -252,7 +252,7 @@ public struct QuickLookPopoverView: View {
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 24)
 
-            Button("Mostra nel Finder") {
+            Button("Show in Finder") {
                 NSWorkspace.shared.selectFile(fileURL.path, inFileViewerRootedAtPath: fileURL.deletingLastPathComponent().path)
             }
             .buttonStyle(.borderedProminent)

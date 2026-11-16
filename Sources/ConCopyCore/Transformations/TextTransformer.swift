@@ -11,13 +11,13 @@ public enum TextTransformation: String, Codable, CaseIterable, Sendable {
 
     public var displayName: String {
         switch self {
-        case .none: return "Nessuna"
-        case .uppercase: return "MAIUSCOLO"
-        case .lowercase: return "minuscolo"
-        case .capitalize: return "Iniziali Maiuscole"
-        case .trimWhitespace: return "Rimuovi Spazi Eccessivi"
-        case .stripBlankLines: return "Rimuovi Righe Vuote"
-        case .singleLine: return "Tutto su Singola Riga"
+        case .none: return "None"
+        case .uppercase: return "UPPERCASE"
+        case .lowercase: return "lowercase"
+        case .capitalize: return "Capitalize"
+        case .trimWhitespace: return "Trim Whitespace"
+        case .stripBlankLines: return "Remove Blank Lines"
+        case .singleLine: return "Single Line"
         }
     }
 }

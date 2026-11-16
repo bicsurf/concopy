@@ -205,7 +205,7 @@ public final class ClipboardMonitor {
             return .file
         }
 
-        if hasImage && (!hasText || plainText?.hasPrefix("Immagine") == true) {
+        if hasImage && (!hasText || plainText?.hasPrefix("Image") == true || plainText?.hasPrefix("Immagine") == true) {
             return .image
         }
 

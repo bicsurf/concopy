@@ -56,9 +56,9 @@ public enum ConCopyAppInfo {
         let v = currentVersion
         let b = buildNumber
         if v == b || b.isEmpty {
-            return "Versione \(v)"
+            return "Version \(v)"
         }
-        return "Versione \(v) (\(b))"
+        return "Version \(v) (\(b))"
     }
 
     private static func generateVectorIcon() -> NSImage {
@@ -133,17 +133,17 @@ public struct AboutView: View {
                 Text("|")
                     .font(.system(size: 11))
                     .foregroundColor(Color.secondary.opacity(0.6))
-                linkButton(title: "Supporto", urlString: "https://github.com/bicsurf/concopy/issues")
+                linkButton(title: "Support", urlString: "https://github.com/bicsurf/concopy/issues")
             }
 
             Spacer().frame(height: 2)
 
             // 5. Descrizione / Crediti
             VStack(spacing: 3) {
-                Text("Clipboard manager nativo a latenza zero ⚡")
+                Text("Zero-latency native clipboard manager ⚡")
                     .font(.system(size: 12))
                     .foregroundColor(Color.primary.opacity(0.9))
-                Text("Sviluppato con ❤️ per macOS")
+                Text("Crafted with ❤️ for macOS")
                     .font(.system(size: 12))
                     .foregroundColor(Color.secondary)
             }

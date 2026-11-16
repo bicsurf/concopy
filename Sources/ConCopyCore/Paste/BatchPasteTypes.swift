@@ -9,11 +9,11 @@ public enum BatchPasteSeparator: String, Codable, CaseIterable, Sendable {
 
     public var displayName: String {
         switch self {
-        case .newline: return "A capo (\\n)"
-        case .doubleNewline: return "Doppio a capo (\\n\\n)"
-        case .tab: return "Tabulazione (\\t)"
-        case .space: return "Spazio"
-        case .empty: return "Nessun separatore"
+        case .newline: return "New line (\\n)"
+        case .doubleNewline: return "Double new line (\\n\\n)"
+        case .tab: return "Tab (\\t)"
+        case .space: return "Space"
+        case .empty: return "No separator"
         }
     }
 }

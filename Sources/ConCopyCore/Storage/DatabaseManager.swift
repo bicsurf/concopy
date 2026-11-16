@@ -384,7 +384,7 @@ public final class DatabaseManager: Sendable {
 
         try dbWriter.write { db in
             guard var clip = try ClipRecord.filter(Column("id") == idString).fetchOne(db) else {
-                throw DatabaseError(message: "Clip non trovata")
+                throw DatabaseError(message: "Clip not found")
             }
             clip.plainText = newPlainText
             clip.contentHash = newHash
@@ -587,7 +587,7 @@ public final class DatabaseManager: Sendable {
         let idString = clipId.uuidString.lowercased()
         return try dbWriter.write { db in
             guard var clip = try ClipRecord.filter(Column("id") == idString).fetchOne(db) else {
-                throw DatabaseError(message: "Clip non trovata")
+                throw DatabaseError(message: "Clip not found")
             }
             clip.isFavorite.toggle()
             try clip.update(db)
@@ -600,7 +600,7 @@ public final class DatabaseManager: Sendable {
         let idString = clipId.uuidString.lowercased()
         return try dbWriter.write { db in
             guard var clip = try ClipRecord.filter(Column("id") == idString).fetchOne(db) else {
-                throw DatabaseError(message: "Clip non trovata")
+                throw DatabaseError(message: "Clip not found")
             }
             clip.listId = listId
             if markFavorite && listId != nil {
