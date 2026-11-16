@@ -342,12 +342,11 @@ public final class FloatingPanel: NSPanel {
             }
         }
 
-        // List / Tab Selection: All Clips (Default Cmd + A, or Option + A if swapped)
+        // List / Tab Selection: All Clips (Option + A, or Cmd + A when not editing search text)
         if GlobalShortcutsManager.shared.matchesAllClips(event: event) {
-            let isAlreadyAllClips = viewModel.selectedListId == nil && !viewModel.isFavoritesOnly && !viewModel.isSnippetsOnly
-            let hasSearchText = viewModel.isSearchFocused && !viewModel.searchQuery.isEmpty
-            if isAlreadyAllClips && hasSearchText && !GlobalShortcutsManager.shared.swapNumericModifiers {
-                return false // Propagate to NSTextView for standard selectAll:
+            let isCommandHeld = event.modifierFlags.contains(.command)
+            if isCommandHeld && viewModel.isSearchFocused {
+                return false // Propagate Cmd+A to text field for standard selectAll:
             }
             viewModel.selectAllClips()
             return true
@@ -387,12 +386,12 @@ public final class FloatingPanel: NSPanel {
             }
         }
 
-        // Letters a-z quick paste fallback (when search is not actively focused), excluding reserved shortcuts (c, d, m, f)
+        // Letters a-z quick paste fallback (when search is not actively focused), excluding reserved command shortcuts
         if !viewModel.isSearchFocused,
            event.modifierFlags.contains(.command) && !event.modifierFlags.contains(.shift) && !event.modifierFlags.contains(.control),
            let char = event.charactersIgnoringModifiers?.lowercased().first,
            char >= "a" && char <= "z",
-           char != "c" && char != "d" && char != "m" && char != "f" {
+           !GlobalShortcutsManager.shared.isCharacterReservedForCommands(char) {
             let targetIndex = QuickPasteShortcutMapper.index(forCharacter: String(char))
             if let index = targetIndex {
                 let optionHeld = event.modifierFlags.contains(.option)

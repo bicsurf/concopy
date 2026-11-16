@@ -151,6 +151,40 @@ final class GlobalShortcutsManagerTests: XCTestCase {
         XCTAssertFalse(manager.matches(event: customEvent, for: .copySelection))
     }
 
+    func testShortcutChangeNotificationUpdatesVersionAndDisablesCarbonHotKey() async throws {
+        let manager = GlobalShortcutsManager.shared
+        let initialVersion = manager.changeVersion
+
+        // Simulate external change (as done by KeyboardShortcuts.Recorder)
+        let newShortcut = KeyboardShortcuts.Shortcut(.j, modifiers: [.command])
+        KeyboardShortcuts.setShortcut(newShortcut, for: ConCopyShortcutKey.toggleFavorite.shortcutName)
+
+        // Wait brief runloop turn for async notification task
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        XCTAssertGreaterThan(manager.changeVersion, initialVersion)
+        XCTAssertEqual(manager.shortcut(for: .toggleFavorite), newShortcut)
+
+        // Verify matches immediately without restart
+        guard let cmdJEvent = NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: [.command],
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            characters: "j",
+            charactersIgnoringModifiers: "j",
+            isARepeat: false,
+            keyCode: 38 // 'j'
+        ) else {
+            XCTFail("Failed to create mock key event")
+            return
+        }
+
+        XCTAssertTrue(manager.matches(event: cmdJEvent, for: .toggleFavorite))
+    }
+
     func testMatchesAllClipsCommandAndOption() {
         let manager = GlobalShortcutsManager.shared
 
@@ -182,10 +216,10 @@ final class GlobalShortcutsManagerTests: XCTestCase {
             return
         }
 
-        // Default: Cmd+A matches All Clips, Opt+A returns false
+        // Default: Cmd+A and Opt+A both match All Clips
         manager.setSwapNumericModifiers(false)
         XCTAssertTrue(manager.matchesAllClips(event: cmdAEvent))
-        XCTAssertFalse(manager.matchesAllClips(event: optAEvent))
+        XCTAssertTrue(manager.matchesAllClips(event: optAEvent))
 
         // Inverted: Opt+A matches All Clips, Cmd+A returns false
         manager.setSwapNumericModifiers(true)
@@ -336,5 +370,40 @@ final class GlobalShortcutsManagerTests: XCTestCase {
         manager.resetAll()
         XCTAssertFalse(manager.swapNumericModifiers)
         XCTAssertEqual(manager.listModifierSymbol, "⌘")
+    }
+
+    func testIsCharacterReservedForCommands() {
+        let manager = GlobalShortcutsManager.shared
+
+        // System reserved
+        XCTAssertTrue(manager.isCharacterReservedForCommands("a"))
+        XCTAssertTrue(manager.isCharacterReservedForCommands("q"))
+        XCTAssertTrue(manager.isCharacterReservedForCommands("w"))
+        XCTAssertTrue(manager.isCharacterReservedForCommands("x"))
+        XCTAssertTrue(manager.isCharacterReservedForCommands("z"))
+        XCTAssertTrue(manager.isCharacterReservedForCommands("v"))
+
+        // Default configured shortcuts (c = copy, d = favorite, m = move, f = search)
+        XCTAssertTrue(manager.isCharacterReservedForCommands("c"))
+        XCTAssertTrue(manager.isCharacterReservedForCommands("d"))
+        XCTAssertTrue(manager.isCharacterReservedForCommands("m"))
+        XCTAssertTrue(manager.isCharacterReservedForCommands("f"))
+
+        // Unreserved letters
+        XCTAssertFalse(manager.isCharacterReservedForCommands("b"))
+        XCTAssertFalse(manager.isCharacterReservedForCommands("k"))
+        XCTAssertFalse(manager.isCharacterReservedForCommands("l"))
+
+        // Remap favorite from d to j
+        let newShortcut = KeyboardShortcuts.Shortcut(.j, modifiers: [.command])
+        manager.setShortcut(newShortcut, for: .toggleFavorite)
+
+        XCTAssertTrue(manager.isCharacterReservedForCommands("j"))
+        XCTAssertFalse(manager.isCharacterReservedForCommands("d"))
+
+        // Reset restores defaults
+        manager.resetShortcut(for: .toggleFavorite)
+        XCTAssertTrue(manager.isCharacterReservedForCommands("d"))
+        XCTAssertFalse(manager.isCharacterReservedForCommands("j"))
     }
 }

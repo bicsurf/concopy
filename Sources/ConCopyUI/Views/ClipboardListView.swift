@@ -309,6 +309,7 @@ public struct ClipboardListView: View {
                                     isSelected: viewModel.selectedIndex == index,
                                     isChecked: viewModel.selectedClipIds.contains(clip.id),
                                     isPasting: viewModel.pastingClipId == clip.id,
+                                    isCopied: viewModel.copiedClipId == clip.id,
                                     shortcutLabel: QuickPasteShortcutMapper.label(forIndex: index),
                                     quickPasteModifier: shortcutsManager.quickPasteModifierSystemImage,
                                     thumbnailImage: clip.primaryType == .image ? viewModel.imageThumbnail(for: clip) : nil,
@@ -319,27 +320,15 @@ public struct ClipboardListView: View {
                                     },
                                     onToggleFavorite: {
                                         viewModel.toggleFavorite(clip: clip)
+                                    },
+                                    onRowClick: {
+                                        viewModel.handleRowClick(clip: clip, modifiers: NSEvent.modifierFlags)
                                     }
                                 )
                                 .equatable()
-                                .id("\(clip.id)-\(index)-\(clip.updatedAt.timeIntervalSince1970)-\(clip.customName ?? "")-\(clip.isFavorite)-\(shortcutsManager.swapNumericModifiers)")
-                                .contentShape(Rectangle())
+                                .id("\(clip.id)-\(index)-\(clip.updatedAt.timeIntervalSince1970)-\(clip.customName ?? "")-\(clip.isFavorite)-\(shortcutsManager.swapNumericModifiers)-\(viewModel.copiedClipId == clip.id)-\(viewModel.selectedClipIds.contains(clip.id))")
                                 .contextMenu {
                                     rowContextMenu(for: clip)
-                                }
-                                .onTapGesture {
-                                    let flags = NSEvent.modifierFlags
-                                    if flags.contains(.shift) {
-                                        viewModel.selectRange(to: clip)
-                                    } else if flags.contains(.command) {
-                                        viewModel.toggleSelection(for: clip)
-                                    } else {
-                                        if !viewModel.selectedClipIds.isEmpty {
-                                            viewModel.toggleSelection(clipId: clip.id)
-                                        } else {
-                                            viewModel.selectSingle(clipId: clip.id)
-                                        }
-                                    }
                                 }
                             }
                         }
@@ -797,6 +786,7 @@ struct ClipRowView: View, Equatable {
     let isSelected: Bool
     let isChecked: Bool
     let isPasting: Bool
+    var isCopied: Bool = false
     let shortcutLabel: String?
     var quickPasteModifier: String = GlobalShortcutsManager.shared.quickPasteModifierSystemImage
     var thumbnailImage: NSImage? = nil
@@ -804,6 +794,7 @@ struct ClipRowView: View, Equatable {
     var appIconImage: NSImage? = nil
     let onToggleCheck: () -> Void
     var onToggleFavorite: (() -> Void)? = nil
+    var onRowClick: (() -> Void)? = nil
 
     @State private var isHovered = false
 
@@ -813,6 +804,7 @@ struct ClipRowView: View, Equatable {
         lhs.isSelected == rhs.isSelected &&
         lhs.isChecked == rhs.isChecked &&
         lhs.isPasting == rhs.isPasting &&
+        lhs.isCopied == rhs.isCopied &&
         lhs.shortcutLabel == rhs.shortcutLabel &&
         lhs.quickPasteModifier == rhs.quickPasteModifier
     }
@@ -829,85 +821,92 @@ struct ClipRowView: View, Equatable {
             }
             .buttonStyle(.plain)
 
-            // Type Icon Badge or Preview
-            if let thumb = thumbnailImage {
-                ZStack(alignment: .bottomTrailing) {
-                    Image(nsImage: thumb)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: 26, height: 26)
-                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .stroke(Color.primary.opacity(0.12), lineWidth: 0.5)
-                        )
-                    if let appIcon = appIconImage {
-                        Image(nsImage: appIcon)
+            // Clickable body of the row
+            HStack(spacing: 8) {
+                // Type Icon Badge or Preview
+                if let thumb = thumbnailImage {
+                    ZStack(alignment: .bottomTrailing) {
+                        Image(nsImage: thumb)
                             .resizable()
-                            .interpolation(.high)
-                            .scaledToFit()
-                            .frame(width: 12, height: 12)
-                            .offset(x: 2, y: 2)
+                            .scaledToFill()
+                            .frame(width: 26, height: 26)
+                            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    .stroke(Color.primary.opacity(0.12), lineWidth: 0.5)
+                            )
+                        if let appIcon = appIconImage {
+                            Image(nsImage: appIcon)
+                                .resizable()
+                                .interpolation(.high)
+                                .scaledToFit()
+                                .frame(width: 12, height: 12)
+                                .offset(x: 2, y: 2)
+                        }
                     }
-                }
-                .frame(width: 26, height: 26)
-            } else if let icon = fileIconImage {
-                ZStack(alignment: .bottomTrailing) {
-                    Image(nsImage: icon)
+                    .frame(width: 26, height: 26)
+                } else if let icon = fileIconImage {
+                    ZStack(alignment: .bottomTrailing) {
+                        Image(nsImage: icon)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 24, height: 24)
+                        if let appIcon = appIconImage {
+                            Image(nsImage: appIcon)
+                                .resizable()
+                                .interpolation(.high)
+                                .scaledToFit()
+                                .frame(width: 11, height: 11)
+                                .offset(x: 2, y: 2)
+                        }
+                    }
+                    .frame(width: 24, height: 24)
+                } else if let appIcon = appIconImage {
+                    Image(nsImage: appIcon)
                         .resizable()
+                        .interpolation(.high)
                         .scaledToFit()
                         .frame(width: 24, height: 24)
-                    if let appIcon = appIconImage {
-                        Image(nsImage: appIcon)
-                            .resizable()
-                            .interpolation(.high)
-                            .scaledToFit()
-                            .frame(width: 11, height: 11)
-                            .offset(x: 2, y: 2)
+                        .shadow(color: Color.black.opacity(0.15), radius: 1, x: 0, y: 0.5)
+                } else {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(typeBadgeBackground)
+                            .frame(width: 24, height: 24)
+                        typeIcon
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(typeBadgeForeground)
                     }
                 }
-                .frame(width: 24, height: 24)
-            } else if let appIcon = appIconImage {
-                Image(nsImage: appIcon)
-                    .resizable()
-                    .interpolation(.high)
-                    .scaledToFit()
-                    .frame(width: 24, height: 24)
-                    .shadow(color: Color.black.opacity(0.15), radius: 1, x: 0, y: 0.5)
-            } else {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(typeBadgeBackground)
-                        .frame(width: 24, height: 24)
-                    typeIcon
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(typeBadgeForeground)
-                }
-            }
 
-            // Title and Preview
-            VStack(alignment: .leading, spacing: 2) {
-                if let custom = clip.customName, !custom.isEmpty {
-                    Text(custom)
-                        .font(.system(size: 12.5, weight: .semibold))
-                        .foregroundColor(.primary)
-                        .lineLimit(1)
-                    if let text = clip.plainText?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
+                // Title and Preview
+                VStack(alignment: .leading, spacing: 2) {
+                    if let custom = clip.customName, !custom.isEmpty {
+                        Text(custom)
+                            .font(.system(size: 12.5, weight: .semibold))
+                            .foregroundColor(.primary)
+                            .lineLimit(1)
+                        if let text = clip.plainText?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
+                            Text(text)
+                                .font(.system(size: 11, weight: .regular))
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
+                        }
+                    } else {
+                        let text = clip.plainText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "[Nessun contenuto]"
                         Text(text)
-                            .font(.system(size: 11, weight: .regular))
-                            .foregroundColor(.secondary)
+                            .font(.system(size: 12.5, weight: .medium))
+                            .foregroundColor(.primary)
                             .lineLimit(1)
                     }
-                } else {
-                    let text = clip.plainText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "[Nessun contenuto]"
-                    Text(text)
-                        .font(.system(size: 12.5, weight: .medium))
-                        .foregroundColor(.primary)
-                        .lineLimit(1)
                 }
-            }
 
-            Spacer(minLength: 6)
+                Spacer(minLength: 6)
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                onRowClick?()
+            }
 
             // Star Button (Favorite)
             Button(action: {
@@ -932,8 +931,26 @@ struct ClipRowView: View, Equatable {
             .buttonStyle(.plain)
             .help(clip.isFavorite ? "Rimuovi dai Preferiti (Cmd+D)" : "Aggiungi ai Preferiti (Cmd+D)")
 
-            // Shortcut Pill Badge
-            if let label = shortcutLabel {
+            // Shortcut Pill Badge or Copied Feedback
+            if isCopied {
+                HStack(spacing: 3) {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 8.5, weight: .bold))
+                    Text("Copiato")
+                        .font(.system(size: 9.5, weight: .semibold))
+                }
+                .foregroundColor(ConCopyTheme.Accents.primary)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 2.5)
+                .background(
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .fill(ConCopyTheme.Accents.primary.opacity(0.12))
+                )
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    onRowClick?()
+                }
+            } else if let label = shortcutLabel {
                 HStack(spacing: 2) {
                     Image(systemName: quickPasteModifier)
                         .font(.system(size: 8.5, weight: .medium))
@@ -951,6 +968,10 @@ struct ClipRowView: View, Equatable {
                     RoundedRectangle(cornerRadius: 4, style: .continuous)
                         .stroke(ConCopyTheme.Badges.quickPasteBorder(isSelected: isSelected), lineWidth: 0.5)
                 )
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    onRowClick?()
+                }
             }
         }
         .padding(.leading, 4)
@@ -959,18 +980,18 @@ struct ClipRowView: View, Equatable {
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(
-                    isPasting
+                    (isPasting || isCopied || isChecked)
                     ? ConCopyTheme.Rows.batchSelectedBackground
                     : (isSelected ? ConCopyTheme.Rows.selectedBackground : Color.clear)
                 )
         )
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(isSelected ? ConCopyTheme.Rows.selectedBorder : Color.clear, lineWidth: 1)
+                .stroke((isSelected || isChecked) ? ConCopyTheme.Rows.selectedBorder : Color.clear, lineWidth: 1)
         )
-        .scaleEffect(isPasting ? 0.98 : 1.0)
+        .scaleEffect((isPasting || isCopied) ? 0.98 : 1.0)
         .animation(.easeOut(duration: 0.12), value: isPasting)
-        .contentShape(Rectangle())
+        .animation(.easeOut(duration: 0.12), value: isCopied)
         .padding(.horizontal, 6)
         .onHover { isHovered = $0 }
     }

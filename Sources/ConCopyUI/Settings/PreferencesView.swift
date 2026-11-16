@@ -371,8 +371,13 @@ public struct PreferencesView: View {
 
             Spacer()
 
-            KeyboardShortcuts.Recorder(for: key.shortcutName)
-                .id("\(key.rawValue)-\(shortcutsManager.changeVersion)")
+            KeyboardShortcuts.Recorder(for: key.shortcutName) { _ in
+                if key.scope == .inPanel {
+                    KeyboardShortcuts.disable(key.shortcutName)
+                }
+                shortcutsManager.notifyShortcutChanged()
+            }
+            .id("\(key.rawValue)-\(shortcutsManager.changeVersion)")
 
             HStack(spacing: 4) {
                 if key.currentShortcut != nil {
