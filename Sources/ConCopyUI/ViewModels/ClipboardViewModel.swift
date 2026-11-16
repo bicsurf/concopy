@@ -65,6 +65,7 @@ public final class ClipboardViewModel: ObservableObject {
     @Published public var renamingClip: ClipRecord? = nil
     @Published public var movingClip: ClipRecord? = nil
     @Published public var pastingClipId: UUID? = nil
+    @Published public var copiedClipId: UUID? = nil
     @Published public var isAccessibilityTrusted: Bool = true
     @Published public var toastMessage: String? = nil
     @Published public var snippets: [SnippetRecord] = []
@@ -307,6 +308,10 @@ public final class ClipboardViewModel: ObservableObject {
         selectRange(toClipId: clip.id)
     }
 
+    public func selectRange(to clipId: UUID) {
+        selectRange(toClipId: clipId)
+    }
+
     public func selectRange(toClipId clipId: UUID) {
         guard !clips.isEmpty else { return }
 
@@ -419,6 +424,75 @@ public final class ClipboardViewModel: ObservableObject {
         guard index >= 0 && index < clips.count else { return }
         selectedIndex = index
         paste(clip: clips[index], optionHeld: optionHeld)
+    }
+
+    public func handleRowClick(
+        clip: ClipRecord,
+        modifiers: NSEvent.ModifierFlags
+    ) {
+        handleRowClick(
+            clip: clip,
+            shiftHeld: modifiers.contains(.shift),
+            commandHeld: modifiers.contains(.command),
+            optionHeld: modifiers.contains(.option)
+        )
+    }
+
+    public func handleRowClick(
+        clip: ClipRecord,
+        shiftHeld: Bool = false,
+        commandHeld: Bool = false,
+        optionHeld: Bool = false
+    ) {
+        if shiftHeld {
+            if selectedClipId == nil {
+                selectedClipIds.insert(clip.id)
+                selectedClipId = clip.id
+                selectionAnchorId = clip.id
+            } else {
+                selectRange(toClipId: clip.id)
+            }
+            return
+        }
+
+        if commandHeld {
+            toggleSelection(clipId: clip.id)
+            return
+        }
+
+        selectedClipId = clip.id
+        selectedClipIds.removeAll()
+        selectionAnchorId = clip.id
+
+        if appSettings.isDirectPasteEnabled {
+            paste(clip: clip, optionHeld: optionHeld)
+        } else {
+            copyClipToPasteboardWithoutClosing(clip: clip, optionHeld: optionHeld)
+        }
+    }
+
+    public func copyClipToPasteboardWithoutClosing(clip: ClipRecord, optionHeld: Bool = false) {
+        let forcePlainText = optionHeld || isPlainTextModeEnabled
+        let transformation = activeTransformation
+        do {
+            try pasteInjector.copyToPasteboard(
+                clip: clip,
+                databaseManager: databaseManager,
+                forcePlainText: forcePlainText,
+                transformation: transformation
+            )
+            copiedClipId = clip.id
+            showToast("Copiato negli appunti!")
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 1_200_000_000)
+                if self?.copiedClipId == clip.id {
+                    self?.copiedClipId = nil
+                }
+            }
+            loadClips()
+        } catch {
+            print("[ConCopy] Failed to copy clip: \(error)")
+        }
     }
 
     public func paste(clip: ClipRecord, optionHeld: Bool = false) {
@@ -682,6 +756,9 @@ public final class ClipboardViewModel: ObservableObject {
 
     public func assignMovingClipToAll() {
         guard let clip = movingClip else { return }
+        if clip.isFavorite {
+            _ = try? databaseManager.toggleFavorite(clipId: clip.id)
+        }
         assignClipToList(clip: clip, listId: nil)
         movingClip = nil
         showToast("Rimosso da tutte le liste")

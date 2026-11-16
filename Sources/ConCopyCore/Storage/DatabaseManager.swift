@@ -163,10 +163,8 @@ public final class DatabaseManager: Sendable {
                 let activeAutoStarList = try ClipListRecord.filter(Column("isAutoStarActive") == true).fetchOne(db)
 
                 if var existing = try ClipRecord.filter(Column("contentHash") == contentHash).fetchOne(db) {
-                    existing.updatedAt = Date()
-                    if let activeList = activeAutoStarList {
-                        existing.isFavorite = true
-                        existing.listId = activeList.id
+                    if !existing.isFavorite {
+                        existing.updatedAt = Date()
                     }
                     try existing.update(db)
                     return existing
@@ -592,7 +590,6 @@ public final class DatabaseManager: Sendable {
                 throw DatabaseError(message: "Clip non trovata")
             }
             clip.isFavorite.toggle()
-            clip.updatedAt = Date()
             try clip.update(db)
             return clip
         }
@@ -609,7 +606,9 @@ public final class DatabaseManager: Sendable {
             if markFavorite && listId != nil {
                 clip.isFavorite = true
             }
-            clip.updatedAt = Date()
+            if !clip.isFavorite {
+                clip.updatedAt = Date()
+            }
             try clip.update(db)
             return clip
         }

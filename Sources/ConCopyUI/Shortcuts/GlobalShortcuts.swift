@@ -132,6 +132,8 @@ public final class GlobalShortcutsManager: ObservableObject {
     @Published public private(set) var swapNumericModifiers: Bool = false
     @Published public private(set) var changeVersion: Int = 0
 
+    private var notificationObserver: (any NSObjectProtocol)?
+
     public var listModifierSymbol: String {
         swapNumericModifiers ? "⌥" : "⌘"
     }
@@ -146,6 +148,65 @@ public final class GlobalShortcutsManager: ObservableObject {
 
     public init() {
         self.swapNumericModifiers = UserDefaults.standard.bool(forKey: Self.swapNumericModifiersKey)
+
+        // Ensure in-panel shortcuts are not registered as system-wide Carbon hotkeys
+        Self.disableInPanelHotKeys()
+
+        // Observe shortcut changes made via KeyboardShortcuts.Recorder or programmatically
+        notificationObserver = NotificationCenter.default.addObserver(
+            forName: Notification.Name("KeyboardShortcuts_shortcutByNameDidChange"),
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if let name = notification.userInfo?["name"] as? KeyboardShortcuts.Name {
+                    if let key = ConCopyShortcutKey.allCases.first(where: { $0.shortcutName == name }), key.scope == .inPanel {
+                        KeyboardShortcuts.disable(name)
+                    }
+                }
+                self.changeVersion &+= 1
+            }
+        }
+    }
+
+    deinit {
+        if let observer = notificationObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+    }
+
+    /// Disables Carbon global hotkey registration for in-panel shortcuts so they are routed to window events.
+    public static func disableInPanelHotKeys() {
+        for key in ConCopyShortcutKey.allCases where key.scope == .inPanel {
+            KeyboardShortcuts.disable(key.shortcutName)
+        }
+    }
+
+    public func notifyShortcutChanged() {
+        Self.disableInPanelHotKeys()
+        changeVersion &+= 1
+    }
+
+    /// Determines if a character is reserved by system commands or by currently configured ConCopy shortcuts.
+    public func isCharacterReservedForCommands(_ char: Character) -> Bool {
+        // System reserved shortcuts
+        let systemReserved: Set<Character> = ["a", "q", "w", "x", "z", "v"]
+        if systemReserved.contains(char) {
+            return true
+        }
+
+        // Configured shortcuts that use Command modifier
+        for key in ConCopyShortcutKey.allCases {
+            guard let shortcut = KeyboardShortcuts.getShortcut(for: key.shortcutName) else { continue }
+            if shortcut.modifiers.contains(.command) {
+                if let keyChar = shortcut.description.lowercased().last, keyChar == char {
+                    return true
+                }
+            }
+        }
+
+        return false
     }
 
     public func setSwapNumericModifiers(_ isSwapped: Bool) {
@@ -161,16 +222,25 @@ public final class GlobalShortcutsManager: ObservableObject {
 
     public func setShortcut(_ shortcut: KeyboardShortcuts.Shortcut?, for key: ConCopyShortcutKey) {
         KeyboardShortcuts.setShortcut(shortcut, for: key.shortcutName)
+        if key.scope == .inPanel {
+            KeyboardShortcuts.disable(key.shortcutName)
+        }
         changeVersion &+= 1
     }
 
     public func removeShortcut(for key: ConCopyShortcutKey) {
         KeyboardShortcuts.setShortcut(nil, for: key.shortcutName)
+        if key.scope == .inPanel {
+            KeyboardShortcuts.disable(key.shortcutName)
+        }
         changeVersion &+= 1
     }
 
     public func resetShortcut(for key: ConCopyShortcutKey) {
         KeyboardShortcuts.reset(key.shortcutName)
+        if key.scope == .inPanel {
+            KeyboardShortcuts.disable(key.shortcutName)
+        }
         changeVersion &+= 1
     }
 
@@ -179,6 +249,9 @@ public final class GlobalShortcutsManager: ObservableObject {
         UserDefaults.standard.set(false, forKey: Self.swapNumericModifiersKey)
         for key in ConCopyShortcutKey.allCases {
             KeyboardShortcuts.reset(key.shortcutName)
+            if key.scope == .inPanel {
+                KeyboardShortcuts.disable(key.shortcutName)
+            }
         }
         changeVersion &+= 1
     }
@@ -207,25 +280,15 @@ public final class GlobalShortcutsManager: ObservableObject {
     }
 
     /// Determines if an incoming `NSEvent` matches the shortcut for selecting "Tutte" (All clips).
-    /// Uses Cmd+A by default, or Option+A if `swapNumericModifiers` is true.
+    /// Always matches Option+A, and matches Cmd+A when `swapNumericModifiers` is false.
     public func matchesAllClips(event: NSEvent) -> Bool {
-        let isOptionRequired = swapNumericModifiers
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
 
-        if isOptionRequired {
-            guard flags.contains(.option),
-                  !flags.contains(.command),
-                  !flags.contains(.control),
-                  !flags.contains(.shift) else {
-                return false
-            }
-        } else {
-            guard flags.contains(.command),
-                  !flags.contains(.option),
-                  !flags.contains(.control),
-                  !flags.contains(.shift) else {
-                return false
-            }
+        let isOptionA = flags.contains(.option) && !flags.contains(.command) && !flags.contains(.control) && !flags.contains(.shift)
+        let isCommandA = flags.contains(.command) && !flags.contains(.option) && !flags.contains(.control) && !flags.contains(.shift) && !swapNumericModifiers
+
+        guard isOptionA || isCommandA else {
+            return false
         }
 
         // KeyCode 0 is 'a' on ANSI macOS keyboard layout

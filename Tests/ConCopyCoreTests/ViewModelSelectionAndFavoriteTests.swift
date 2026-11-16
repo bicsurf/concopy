@@ -227,6 +227,89 @@ final class ViewModelSelectionAndFavoriteTests: XCTestCase {
         XCTAssertEqual(inDbAfter?.isFavorite, false)
     }
 
+    func testFavoriteClipDoesNotJumpToTopWhenReCopied() throws {
+        let clip1 = try databaseManager.ingestCapturedClip(
+            CapturedClip(plainText: "Old Clip 1", primaryType: .text)
+        )
+        Thread.sleep(forTimeInterval: 0.02)
+        let clip2 = try databaseManager.ingestCapturedClip(
+            CapturedClip(plainText: "Newer Clip 2", primaryType: .text)
+        )
+
+        _ = try databaseManager.toggleFavorite(clipId: clip1.id)
+        viewModel.loadClips()
+
+        XCTAssertEqual(viewModel.clips.first?.id, clip2.id)
+        XCTAssertEqual(viewModel.clips.last?.id, clip1.id)
+
+        Thread.sleep(forTimeInterval: 0.02)
+        _ = try databaseManager.ingestCapturedClip(
+            CapturedClip(plainText: "Old Clip 1", primaryType: .text)
+        )
+        viewModel.loadClips()
+
+        XCTAssertEqual(viewModel.clips.first?.id, clip2.id)
+        XCTAssertEqual(viewModel.clips.last?.id, clip1.id)
+    }
+
+    func testToggleFavoriteDoesNotBumpUpdatedAtOrMoveClipToTop() throws {
+        let clip1 = try databaseManager.ingestCapturedClip(
+            CapturedClip(plainText: "Historical Clip", primaryType: .text)
+        )
+        Thread.sleep(forTimeInterval: 0.02)
+        let clip2 = try databaseManager.ingestCapturedClip(
+            CapturedClip(plainText: "Recent Clip", primaryType: .text)
+        )
+
+        let initialUpdatedAt = clip1.updatedAt
+
+        let toggled = try databaseManager.toggleFavorite(clipId: clip1.id)
+        XCTAssertTrue(toggled.isFavorite)
+        XCTAssertEqual(toggled.updatedAt.timeIntervalSince1970, initialUpdatedAt.timeIntervalSince1970, accuracy: 0.01)
+
+        viewModel.loadClips()
+        XCTAssertEqual(viewModel.clips.first?.id, clip2.id)
+    }
+
+    func testUnfavoriteClipDoesNotResurrectFavoriteWhenReCopied() throws {
+        let clip = try databaseManager.ingestCapturedClip(
+            CapturedClip(plainText: "Important Text", primaryType: .text)
+        )
+        _ = try databaseManager.toggleFavorite(clipId: clip.id)
+        let inDbFav = try databaseManager.fetchClip(id: clip.id)
+        XCTAssertEqual(inDbFav?.isFavorite, true)
+
+        _ = try databaseManager.toggleFavorite(clipId: clip.id)
+        let inDbUnfav = try databaseManager.fetchClip(id: clip.id)
+        XCTAssertEqual(inDbUnfav?.isFavorite, false)
+
+        _ = try databaseManager.ingestCapturedClip(
+            CapturedClip(plainText: "Important Text", primaryType: .text)
+        )
+        let inDbAfterRecopy = try databaseManager.fetchClip(id: clip.id)
+        XCTAssertEqual(inDbAfterRecopy?.isFavorite, false)
+    }
+
+    func testAssignMovingClipToAllClearsFavorite() throws {
+        let clip = try databaseManager.ingestCapturedClip(
+            CapturedClip(plainText: "Clip in List and Favorite", primaryType: .text)
+        )
+        _ = try databaseManager.toggleFavorite(clipId: clip.id)
+        let list = try databaseManager.createList(name: "Test List")
+        _ = try databaseManager.assignClip(clipId: clip.id, toListId: list.id)
+
+        let inDbBefore = try databaseManager.fetchClip(id: clip.id)
+        XCTAssertTrue(inDbBefore?.isFavorite ?? false)
+        XCTAssertEqual(inDbBefore?.listId, list.id)
+
+        viewModel.movingClip = inDbBefore
+        viewModel.assignMovingClipToAll()
+
+        let inDbAfter = try databaseManager.fetchClip(id: clip.id)
+        XCTAssertFalse(inDbAfter?.isFavorite ?? true)
+        XCTAssertNil(inDbAfter?.listId)
+    }
+
     func testOnOpenSettingsCallbackCanBeInvoked() {
         var didOpen = false
         viewModel.onOpenSettings = {
