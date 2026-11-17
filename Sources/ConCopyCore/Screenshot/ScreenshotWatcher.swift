@@ -8,9 +8,29 @@ public final class ScreenshotWatcher: @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.local.ConCopy.ScreenshotWatcher", qos: .utility)
     private var source: DispatchSourceFileSystemObject?
     private var fileDescriptor: Int32 = -1
-    private var knownFiles: Set<String> = []
+    private struct FileStamp: Equatable {
+        var size: UInt64
+        var modified: Date
+        var inode: UInt64
+    }
+    private var knownFiles: [String: FileStamp] = [:]
+    private var pendingFiles: [String: FileStamp] = [:]
+    private var processingFiles = Set<String>()
+    private var retryScheduled = false
     private let lock = NSLock()
     private var isRunning: Bool = false
+    private var captureEnabled = true
+    public var isCaptureEnabled: Bool {
+        get { lock.withLock { captureEnabled } }
+        set { lock.withLock { captureEnabled = newValue } }
+    }
+
+    public func synchronizeMonitoringState() {
+        queue.async { [weak self] in
+            guard let self else { return }
+            if self.isCaptureEnabled { self.start() } else { self.stop() }
+        }
+    }
 
     public static let supportedExtensions: Set<String> = ["png", "jpg", "jpeg", "tiff"]
     public static let screenshotBundleId = "com.apple.screencapture"
@@ -43,7 +63,8 @@ public final class ScreenshotWatcher: @unchecked Sendable {
         guard !isRunning else { return }
 
         // Populate known files
-        knownFiles = fetchCurrentFileNames()
+        knownFiles = fetchCurrentFiles()
+        pendingFiles.removeAll()
 
         let path = monitoredDirectoryURL.path
         fileDescriptor = open(path, O_EVTONLY)
@@ -94,21 +115,52 @@ public final class ScreenshotWatcher: @unchecked Sendable {
     }
 
     public func checkForNewScreenshots() {
-        let currentFiles = fetchCurrentFileNames()
+        guard isCaptureEnabled else { return }
+        let currentFiles = fetchCurrentFiles()
 
         lock.lock()
-        let newFiles = currentFiles.subtracting(knownFiles)
-        knownFiles.formUnion(newFiles)
+        knownFiles = knownFiles.filter { currentFiles[$0.key] != nil }
+        pendingFiles = pendingFiles.filter { currentFiles[$0.key] != nil }
+        let newFiles = currentFiles.filter {
+            knownFiles[$0.key] != $0.value && pendingFiles[$0.key] != $0.value && !processingFiles.contains($0.key)
+        }
+        processingFiles.formUnion(newFiles.keys)
         lock.unlock()
 
-        for fileName in newFiles {
+        for (fileName, stamp) in newFiles {
             let fileURL = monitoredDirectoryURL.appendingPathComponent(fileName)
-            guard isScreenshotFile(fileURL: fileURL) else { continue }
-            // Wait for file write completion to prevent reading partial/empty file
-            guard waitForFileStabilization(at: fileURL) else { continue }
-            if let clip = processFile(at: fileURL) {
-                onScreenshotCaptured?(clip, fileURL)
+            defer { lock.withLock { _ = processingFiles.remove(fileName) } }
+            guard isScreenshotFile(fileURL: fileURL) else {
+                lock.withLock { knownFiles[fileName] = stamp }
+                continue
             }
+            // Wait for file write completion to prevent reading partial/empty file
+            guard waitForFileStabilization(at: fileURL), isCaptureEnabled,
+                let stableStamp = fileStamp(at: fileURL), let clip = processFile(at: fileURL),
+                stableStamp == fileStamp(at: fileURL), isCaptureEnabled else {
+                lock.withLock { pendingFiles[fileName] = stamp }
+                continue
+            }
+            lock.withLock {
+                knownFiles[fileName] = stableStamp
+                pendingFiles.removeValue(forKey: fileName)
+            }
+            onScreenshotCaptured?(clip, fileURL)
+        }
+        schedulePendingRetry()
+    }
+
+    private func schedulePendingRetry() {
+        let schedule = lock.withLock { () -> Bool in
+            guard isRunning, captureEnabled, !pendingFiles.isEmpty, !retryScheduled else { return false }
+            retryScheduled = true
+            return true
+        }
+        guard schedule else { return }
+        queue.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let self else { return }
+            let running = self.lock.withLock { self.retryScheduled = false; return self.isRunning }
+            if running { self.checkForNewScreenshots() }
         }
     }
 
@@ -119,8 +171,9 @@ public final class ScreenshotWatcher: @unchecked Sendable {
 
         for _ in 0..<maxRetries {
             guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
-                  let size = attrs[.size] as? Int64,
-                  size > 0 else {
+                let size = attrs[.size] as? Int64,
+                size > 0
+            else {
                 Thread.sleep(forTimeInterval: retryDelay)
                 continue
             }
@@ -145,21 +198,19 @@ public final class ScreenshotWatcher: @unchecked Sendable {
             }
 
             // Verify valid image representation
-            guard let image = NSImage(data: data) else {
+            guard let image = CompleteImageDecoder.decode(data) else {
                 return nil
             }
 
             var representations: [String: Data] = [:]
 
             // Store standard PNG representation
-            if fileURL.pathExtension.lowercased() == "png" {
+            if CompleteImageDecoder.isPNG(data) {
                 representations["public.png"] = data
-            } else if let tiffData = image.tiffRepresentation,
-                      let bitmap = NSBitmapImageRep(data: tiffData),
-                      let png = bitmap.representation(using: .png, properties: [:]) {
+            } else if let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) {
                 representations["public.png"] = png
             } else {
-                representations["public.png"] = data
+                return nil
             }
 
             // Store file-url representation
@@ -184,14 +235,23 @@ public final class ScreenshotWatcher: @unchecked Sendable {
         // Common macOS screenshot naming conventions across languages
         let patterns = [
             "screenshot", "schermata", "capture", "captura", "screen shot",
-            "bildschirmfoto", "skjermbilde", "kuvankaappaus"
+            "bildschirmfoto", "skjermbilde", "kuvankaappaus",
         ]
 
         return patterns.contains { name.hasPrefix($0) || name.contains($0) }
     }
 
-    private func fetchCurrentFileNames() -> Set<String> {
+    private func fileStamp(at url: URL) -> FileStamp? {
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+            let size = attrs[.size] as? NSNumber, let modified = attrs[.modificationDate] as? Date,
+            let inode = attrs[.systemFileNumber] as? NSNumber else { return nil }
+        return FileStamp(size: size.uint64Value, modified: modified, inode: inode.uint64Value)
+    }
+
+    private func fetchCurrentFiles() -> [String: FileStamp] {
         let items = (try? FileManager.default.contentsOfDirectory(atPath: monitoredDirectoryURL.path)) ?? []
-        return Set(items)
+        return Dictionary(items.compactMap { name in
+            fileStamp(at: monitoredDirectoryURL.appendingPathComponent(name)).map { (name, $0) }
+        }, uniquingKeysWith: { _, latest in latest })
     }
 }

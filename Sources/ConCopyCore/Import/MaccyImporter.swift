@@ -7,9 +7,10 @@ public struct MaccyImporter: ExternalClipboardImporter {
 
     public static let standardLocations: [URL] = [
         FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Containers/org.p0deje.Maccy/Data/Library/Application Support/Maccy", isDirectory: true),
+            .appendingPathComponent(
+                "Library/Containers/org.p0deje.Maccy/Data/Library/Application Support/Maccy", isDirectory: true),
         FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/Maccy", isDirectory: true)
+            .appendingPathComponent("Library/Application Support/Maccy", isDirectory: true),
     ]
 
     public static func detectStandardDatabaseURL() -> URL? {
@@ -38,6 +39,17 @@ public struct MaccyImporter: ExternalClipboardImporter {
         let targetFileURL = try resolveDatabaseFile(from: sourceURL)
         let sourceDB = try SourceDatabase(sourceFileURL: targetFileURL)
 
+        try sourceDB.queue.write { db in
+            try validateTablesExist(in: db)
+            let columns = try fetchTableColumnNames(table: "ZHISTORYITEMCONTENT", db: db)
+            let foreignKey = try detectForeignKeyColumn(in: columns, db: db)
+            guard foreignKey.range(of: "^[A-Za-z_][A-Za-z0-9_]*$", options: .regularExpression) != nil else {
+                throw DatabaseError(message: "Invalid foreign key column")
+            }
+            try db.execute(
+                sql: "CREATE INDEX IF NOT EXISTS concopy_import_fk ON ZHISTORYITEMCONTENT(\"\(foreignKey)\")")
+        }
+
         return try sourceDB.queue.read { db in
             try validateTablesExist(in: db)
 
@@ -48,27 +60,22 @@ public struct MaccyImporter: ExternalClipboardImporter {
 
             let totalItems = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM ZHISTORYITEM") ?? 0
 
-            let contentMap = try fetchContentMap(fkColumn: fkColumnName, in: db)
-
             let batchImporter = ClipBatchImporter()
 
             return try batchImporter.run(
                 into: databaseManager,
                 totalCount: totalItems,
                 enumerate: { yield in
-                    let itemRows = try Row.fetchAll(db, sql: "SELECT * FROM ZHISTORYITEM ORDER BY Z_PK ASC")
-
-                    for row in itemRows {
-                        do {
-                            if let clipItem = try parseHistoryItem(
-                                row: row,
-                                columns: historyItemColumns,
-                                contentMap: contentMap
-                            ) {
-                                try yield(clipItem)
-                            }
-                        } catch {
-                            continue
+                    let itemRows = try Row.fetchCursor(
+                        db, sql: "SELECT * FROM ZHISTORYITEM ORDER BY Z_PK ASC")
+                    while let row = try itemRows.next() {
+                        try Task.checkCancellation()
+                        guard let pk = SafeRowReader.int64(from: row, column: "Z_PK") else { continue }
+                        let contentMap = try fetchContentMap(fkColumn: fkColumnName, itemID: pk, in: db)
+                        if let clipItem = try parseHistoryItem(
+                            row: row, columns: historyItemColumns, contentMap: contentMap)
+                        {
+                            try yield(clipItem)
                         }
                     }
                 },
@@ -88,12 +95,13 @@ public struct MaccyImporter: ExternalClipboardImporter {
                 }
             }
 
-            let contents = (try? FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil)) ?? []
+            let contents =
+                (try? FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil)) ?? []
             if let sqliteFile = contents.first(where: {
                 let ext = $0.pathExtension.lowercased()
                 let name = $0.lastPathComponent
-                return (ext == "sqlite" || ext == "db" || ext == "storedata") &&
-                    !name.contains("-wal") && !name.contains("-shm")
+                return (ext == "sqlite" || ext == "db" || ext == "storedata") && !name.contains("-wal")
+                    && !name.contains("-shm")
             }) {
                 return sqliteFile
             }
@@ -153,20 +161,32 @@ public struct MaccyImporter: ExternalClipboardImporter {
         let value: Data
     }
 
-    private func fetchContentMap(fkColumn: String, in db: Database) throws -> [Int64: [RawContentRecord]] {
+    private func fetchContentMap(fkColumn: String, itemID: Int64, in db: Database) throws -> [Int64: [RawContentRecord]]
+    {
         let pattern = try NSRegularExpression(pattern: "^[A-Za-z_][A-Za-z0-9_]*$")
         guard pattern.firstMatch(in: fkColumn, range: NSRange(fkColumn.startIndex..., in: fkColumn)) != nil else {
             throw DatabaseError(message: "Invalid column name")
         }
 
+        let sizes = try Row.fetchOne(
+            db,
+            sql:
+                "SELECT COALESCE(SUM(length(CAST(ZVALUE AS BLOB))),0) AS total, COALESCE(MAX(length(CAST(ZVALUE AS BLOB))),0) AS biggest FROM ZHISTORYITEMCONTENT WHERE \"\(fkColumn)\" = ?",
+            arguments: [itemID])
+        let total: Int = sizes?["total"] ?? 0
+        let biggest: Int = sizes?["biggest"] ?? 0
+        guard biggest <= ClipBatchImporter.maxBlobSizeBytes, total <= ClipBatchImporter.maxTotalImportBytes else {
+            throw DatabaseError(message: "Maccy item exceeds the import size limit")
+        }
         var map: [Int64: [RawContentRecord]] = [:]
-        let sql = "SELECT \"\(fkColumn)\" AS fk, ZTYPE, ZVALUE FROM ZHISTORYITEMCONTENT WHERE ZTYPE IS NOT NULL AND ZVALUE IS NOT NULL"
-        let rows = try Row.fetchAll(db, sql: sql)
-
-        for row in rows {
+        let sql =
+            "SELECT \"\(fkColumn)\" AS fk, ZTYPE, ZVALUE FROM ZHISTORYITEMCONTENT WHERE ZTYPE IS NOT NULL AND ZVALUE IS NOT NULL AND \"\(fkColumn)\" = ?"
+        let rows = try Row.fetchCursor(db, sql: sql, arguments: [itemID])
+        while let row = try rows.next() {
             guard let fk = SafeRowReader.int64(from: row, column: "fk"),
-                  let type = SafeRowReader.string(from: row, column: "ZTYPE"),
-                  let data = SafeRowReader.data(from: row, column: "ZVALUE") else {
+                let type = SafeRowReader.string(from: row, column: "ZTYPE"),
+                let data = SafeRowReader.data(from: row, column: "ZVALUE")
+            else {
                 continue
             }
             if type == "preview" || type.contains("thumbnail") {
@@ -186,9 +206,13 @@ public struct MaccyImporter: ExternalClipboardImporter {
         guard let pk = SafeRowReader.int64(from: row, column: "Z_PK") else { return nil }
 
         let createdAt: Date
-        if columns.contains("ZFIRSTCOPIEDAT"), let coreDataTimestamp = SafeRowReader.double(from: row, column: "ZFIRSTCOPIEDAT"), coreDataTimestamp > 0 {
+        if columns.contains("ZFIRSTCOPIEDAT"),
+            let coreDataTimestamp = SafeRowReader.double(from: row, column: "ZFIRSTCOPIEDAT"), coreDataTimestamp > 0
+        {
             createdAt = Date(timeIntervalSince1970: coreDataTimestamp + 978307200.0)
-        } else if columns.contains("ZLASTCOPIEDAT"), let coreDataTimestamp = SafeRowReader.double(from: row, column: "ZLASTCOPIEDAT"), coreDataTimestamp > 0 {
+        } else if columns.contains("ZLASTCOPIEDAT"),
+            let coreDataTimestamp = SafeRowReader.double(from: row, column: "ZLASTCOPIEDAT"), coreDataTimestamp > 0
+        {
             createdAt = Date(timeIntervalSince1970: coreDataTimestamp + 978307200.0)
         } else {
             createdAt = Date()
@@ -233,7 +257,10 @@ public struct MaccyImporter: ExternalClipboardImporter {
             extractedPlainText = String(decoding: rtfData, as: UTF8.self)
         }
 
-        guard !representations.isEmpty || !(extractedPlainText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true) else {
+        guard
+            !representations.isEmpty
+                || !(extractedPlainText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+        else {
             return nil
         }
 

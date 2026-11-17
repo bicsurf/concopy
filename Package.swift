@@ -1,6 +1,14 @@
 // swift-tools-version: 5.9
 import PackageDescription
 
+// GRDB 7 supports Swift 6 concurrency and avoids the deprecated manifest in GRDB 6.
+// Keep the Swift 5.9 toolchain supported for existing Xcode 15 builds.
+#if compiler(>=6.0)
+let grdbDependency: Package.Dependency = .package(url: "https://github.com/groue/GRDB.swift.git", exact: "7.5.0")
+#else
+let grdbDependency: Package.Dependency = .package(url: "https://github.com/groue/GRDB.swift.git", exact: "6.29.3")
+#endif
+
 let package = Package(
     name: "ConCopy",
     platforms: [
@@ -12,7 +20,7 @@ let package = Package(
         .library(name: "ConCopyUI", targets: ["ConCopyUI"])
     ],
     dependencies: [
-        .package(url: "https://github.com/groue/GRDB.swift.git", from: "6.24.0"),
+        grdbDependency,
         .package(url: "https://github.com/sindresorhus/KeyboardShortcuts.git", from: "1.11.0")
     ],
     targets: [

@@ -161,7 +161,9 @@ public final class GlobalShortcutsManager: ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 if let name = notification.userInfo?["name"] as? KeyboardShortcuts.Name {
-                    if let key = ConCopyShortcutKey.allCases.first(where: { $0.shortcutName == name }), key.scope == .inPanel {
+                    if let key = ConCopyShortcutKey.allCases.first(where: { $0.shortcutName == name }),
+                        key.scope == .inPanel
+                    {
                         KeyboardShortcuts.disable(name)
                     }
                 }
@@ -266,17 +268,33 @@ public final class GlobalShortcutsManager: ObservableObject {
             return false
         }
 
+        // Option+Return/Enter is the plain-text variant of the configured paste command.
+        if key == .pasteSelection, target.carbonKeyCode == 36,
+            event.keyCode == 36 || event.keyCode == 76,
+            eventShortcut.modifiers.subtracting(.option) == target.modifiers,
+            eventShortcut.modifiers.contains(.option)
+        {
+            return true
+        }
+
         // Exact match
         if eventShortcut == target {
             return true
         }
 
         // Support Numpad Enter (76) when Return (36) is registered
-        if target.carbonKeyCode == 36 && (event.keyCode == 36 || event.keyCode == 76) && eventShortcut.modifiers == target.modifiers {
+        if target.carbonKeyCode == 36 && (event.keyCode == 36 || event.keyCode == 76)
+            && eventShortcut.modifiers == target.modifiers
+        {
             return true
         }
 
         return false
+    }
+
+    /// Option used to activate quick paste is consumed by the shortcut, not a plain-text request.
+    public func plainTextOverride(for event: NSEvent) -> Bool {
+        event.modifierFlags.contains(.option) && matchedQuickPasteIndex(for: event) == nil
     }
 
     /// Determines if an incoming `NSEvent` matches the shortcut for selecting "All" (All clips).
@@ -284,8 +302,11 @@ public final class GlobalShortcutsManager: ObservableObject {
     public func matchesAllClips(event: NSEvent) -> Bool {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
 
-        let isOptionA = flags.contains(.option) && !flags.contains(.command) && !flags.contains(.control) && !flags.contains(.shift)
-        let isCommandA = flags.contains(.command) && !flags.contains(.option) && !flags.contains(.control) && !flags.contains(.shift) && !swapNumericModifiers
+        let isOptionA =
+            flags.contains(.option) && !flags.contains(.command) && !flags.contains(.control) && !flags.contains(.shift)
+        let isCommandA =
+            flags.contains(.command) && !flags.contains(.option) && !flags.contains(.control) && !flags.contains(.shift)
+            && !swapNumericModifiers
 
         guard isOptionA || isCommandA else {
             return false
@@ -310,30 +331,33 @@ public final class GlobalShortcutsManager: ObservableObject {
 
         if isOptionRequired {
             guard flags.contains(.option),
-                  !flags.contains(.command),
-                  !flags.contains(.control),
-                  !flags.contains(.shift) else {
+                !flags.contains(.command),
+                !flags.contains(.control),
+                !flags.contains(.shift)
+            else {
                 return nil
             }
         } else {
             guard flags.contains(.command),
-                  !flags.contains(.option),
-                  !flags.contains(.control),
-                  !flags.contains(.shift) else {
+                !flags.contains(.option),
+                !flags.contains(.control),
+                !flags.contains(.shift)
+            else {
                 return nil
             }
         }
 
         if let idx = digitIndex(forKeyCode: event.keyCode) {
             if idx >= 0 && idx <= 8 {
-                return idx + 1 // 1..9
+                return idx + 1  // 1..9
             } else if idx == 9 {
-                return 0 // 0
+                return 0  // 0
             }
         }
 
         if let char = event.charactersIgnoringModifiers?.first,
-           let d = char.wholeNumberValue, d >= 0 && d <= 9 {
+            let d = char.wholeNumberValue, d >= 0 && d <= 9
+        {
             return d
         }
 
@@ -347,14 +371,16 @@ public final class GlobalShortcutsManager: ObservableObject {
 
         if isCommandRequired {
             guard flags.contains(.command),
-                  !flags.contains(.shift),
-                  !flags.contains(.control) else {
+                !flags.contains(.shift),
+                !flags.contains(.control)
+            else {
                 return nil
             }
         } else {
             guard flags.contains(.option),
-                  !flags.contains(.command),
-                  !flags.contains(.control) else {
+                !flags.contains(.command),
+                !flags.contains(.control)
+            else {
                 return nil
             }
         }
@@ -376,16 +402,16 @@ public final class GlobalShortcutsManager: ObservableObject {
 
     private func digitIndex(forKeyCode keyCode: UInt16) -> Int? {
         switch keyCode {
-        case 18, 83: return 0 // 1
-        case 19, 84: return 1 // 2
-        case 20, 85: return 2 // 3
-        case 21, 86: return 3 // 4
-        case 23, 87: return 4 // 5
-        case 22, 88: return 5 // 6
-        case 26, 89: return 6 // 7
-        case 28, 91: return 7 // 8
-        case 25, 92: return 8 // 9
-        case 29, 82: return 9 // 0
+        case 18, 83: return 0  // 1
+        case 19, 84: return 1  // 2
+        case 20, 85: return 2  // 3
+        case 21, 86: return 3  // 4
+        case 23, 87: return 4  // 5
+        case 22, 88: return 5  // 6
+        case 26, 89: return 6  // 7
+        case 28, 91: return 7  // 8
+        case 25, 92: return 8  // 9
+        case 29, 82: return 9  // 0
         default: return nil
         }
     }

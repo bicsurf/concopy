@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import ConCopyCore
 import Foundation
 
@@ -20,6 +21,9 @@ public final class UpdateChecker: ObservableObject {
     public let currentVersionProvider: () -> String
     private let session: URLSession
     private let endpoint: URL
+    private let automaticCheckInterval: TimeInterval
+    private var automaticTask: Task<Void, Never>?
+    private var settingsObserver: AnyCancellable?
 
     public var currentVersion: String {
         currentVersionProvider()
@@ -28,22 +32,54 @@ public final class UpdateChecker: ObservableObject {
     public init(
         appSettings: AppSettingsManager? = nil,
         session: URLSession = .shared,
-        endpoint: URL = URL(string: "https://api.github.com/repos/bicsurf/concopy/releases/latest")!,
+        endpoint: URL? = URL(string: "https://api.github.com/repos/bicsurf/concopy/releases/latest"),
+        automaticCheckInterval: TimeInterval = 12 * 3600,
         currentVersionProvider: @escaping () -> String = {
             Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
         }
     ) {
         self.appSettings = appSettings ?? AppSettingsManager.shared
         self.session = session
-        self.endpoint = endpoint
+        self.endpoint = endpoint ?? URL(fileURLWithPath: "/")
+        self.automaticCheckInterval = max(0.05, automaticCheckInterval)
         self.currentVersionProvider = currentVersionProvider
+    }
+
+    public func startAutomaticChecks() {
+        guard settingsObserver == nil else { return }
+        settingsObserver = appSettings.$isAutoCheckUpdatesEnabled.removeDuplicates().sink { [weak self] enabled in
+            self?.automaticTask?.cancel()
+            self?.automaticTask = nil
+            guard enabled, let self else { return }
+            self.automaticTask = Task { @MainActor [weak self] in
+                while !Task.isCancelled {
+                    guard let self else { return }
+                    await self.checkAutomaticallyIfNeeded()
+                    let elapsed =
+                        self.appSettings.lastUpdateCheckDate.map { Date().timeIntervalSince($0) }
+                        ?? self.automaticCheckInterval
+                    let remaining = self.automaticCheckInterval - elapsed
+                    // Failures retry after ten minutes; successful checks wait until their due date.
+                    let delay = remaining > 0 ? remaining : min(600, self.automaticCheckInterval)
+                    do { try await Task.sleep(nanoseconds: UInt64(max(0.05, delay) * 1_000_000_000)) } catch { return }
+                }
+            }
+        }
+    }
+
+    public func stopAutomaticChecks() {
+        automaticTask?.cancel()
+        automaticTask = nil
+        settingsObserver?.cancel()
+        settingsObserver = nil
     }
 
     public func checkAutomaticallyIfNeeded() async {
         guard appSettings.isAutoCheckUpdatesEnabled else { return }
 
         if let lastCheck = appSettings.lastUpdateCheckDate,
-           Date().timeIntervalSince(lastCheck) < 12 * 3600 {
+            Date().timeIntervalSince(lastCheck) < automaticCheckInterval
+        {
             return
         }
 
@@ -138,7 +174,8 @@ public final class UpdateChecker: ObservableObject {
         case .updateAvailable(let update):
             let alert = NSAlert()
             alert.messageText = "New version available: v\(update.version)"
-            alert.informativeText = "\(update.title)\n\n\(update.releaseNotes.isEmpty ? "No release notes provided." : update.releaseNotes)"
+            alert.informativeText =
+                "\(update.title)\n\n\(update.releaseNotes.isEmpty ? "No release notes provided." : update.releaseNotes)"
             alert.alertStyle = .informational
             alert.addButton(withTitle: update.dmgDownloadURL != nil ? "Download DMG" : "Open Release")
             alert.addButton(withTitle: "Skip this version")

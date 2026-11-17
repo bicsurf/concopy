@@ -9,6 +9,8 @@ public struct QuickLookPopoverView: View {
     public var onNext: (() -> Void)? = nil
     public let onClose: () -> Void
 
+    @State private var fileURLs: [URL] = []
+    @State private var fileExists = false
     @State private var imageData: Data?
     @State private var imageResolution: String = ""
     @State private var imageSizeKB: String = ""
@@ -70,6 +72,7 @@ public struct QuickLookPopoverView: View {
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear {
             loadImageDataIfNeeded()
+            loadFileURLsIfNeeded()
             eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
                 // Up arrow (126): previous clip
                 if event.keyCode == 126 {
@@ -101,6 +104,9 @@ public struct QuickLookPopoverView: View {
             imageSizeKB = ""
             zoomScale = 1.0
             loadImageDataIfNeeded()
+            fileURLs = []
+            fileExists = false
+            loadFileURLsIfNeeded()
         }
     }
 
@@ -228,8 +234,7 @@ public struct QuickLookPopoverView: View {
 
     // MARK: - File Preview
     private var filePreviewView: some View {
-        let text = clip.plainText ?? ""
-        let fileURL = URL(string: text) ?? URL(fileURLWithPath: text)
+        let fileURL = fileURLs.first
 
         return VStack(spacing: 16) {
             Spacer()
@@ -237,10 +242,10 @@ public struct QuickLookPopoverView: View {
                 .font(.system(size: 44))
                 .foregroundColor(.accentColor)
 
-            Text(fileURL.lastPathComponent)
+            Text(fileURL?.lastPathComponent ?? "File unavailable")
                 .font(.title3.bold())
 
-            Text(fileURL.path)
+            Text(fileURL?.path ?? "The original file could not be found.")
                 .font(.caption)
                 .textSelection(.enabled)
                 .foregroundColor(.secondary)
@@ -248,12 +253,27 @@ public struct QuickLookPopoverView: View {
                 .padding(.horizontal, 24)
 
             Button("Show in Finder") {
-                NSWorkspace.shared.selectFile(fileURL.path, inFileViewerRootedAtPath: fileURL.deletingLastPathComponent().path)
+                if let fileURL {
+                    NSWorkspace.shared.activateFileViewerSelecting(fileURLs.isEmpty ? [fileURL] : fileURLs)
+                }
             }
             .buttonStyle(.borderedProminent)
+            .disabled(!fileExists)
             Spacer()
         }
         .padding()
+    }
+
+    private func loadFileURLsIfNeeded() {
+        guard clip.primaryType == .file else { return }
+        Task {
+            let result = await Task.detached(priority: .utility) {
+                let urls = (try? databaseManager.fileURLs(for: clip.id)) ?? []
+                return (urls, urls.first.map { FileManager.default.fileExists(atPath: $0.path) } ?? false)
+            }.value
+            fileURLs = result.0
+            fileExists = result.1
+        }
     }
 
     private func loadImageDataIfNeeded() {

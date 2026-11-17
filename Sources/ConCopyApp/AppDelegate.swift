@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import Combine
 import ConCopyCore
 import ConCopyUI
 import KeyboardShortcuts
@@ -14,6 +15,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var databaseManager: DatabaseManager?
     private var viewModel: ClipboardViewModel?
     private let linkMetadataFetcher = LinkMetadataFetcher()
+    private var settingsObservers = Set<AnyCancellable>()
+    private var cleanupTimer: Timer?
+    private var cleanupTask: Task<Void, Never>?
 
     nonisolated override init() {
         super.init()
@@ -25,13 +29,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         _ = checkAccessibilityPermissions()
 
-        let db: DatabaseManager
-        do {
-            db = try setupDatabase()
-        } catch {
-            print("[ConCopy] Failed to initialize database: \(error)")
-            return
+        Task { [weak self] in
+            do {
+                let db = try await Task.detached(priority: .userInitiated) { try Self.setupDatabase() }.value
+                self?.configure(database: db)
+            } catch { print("[ConCopy] Failed to initialize database: \(error)") }
         }
+    }
+
+    private func configure(database db: DatabaseManager) {
         self.databaseManager = db
 
         let vm = ClipboardViewModel(databaseManager: db)
@@ -40,6 +46,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         PreferencesWindowController.shared.configure(databaseManager: db) { [weak vm] in
             vm?.loadLists()
             vm?.loadClips()
+            vm?.loadSnippets()
         }
 
         let floatingPanel = FloatingPanel(viewModel: vm)
@@ -60,9 +67,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.statusItemController = statusController
 
         // Auto-check for updates if enabled
-        Task {
-            await UpdateChecker.shared.checkAutomaticallyIfNeeded()
-        }
+        UpdateChecker.shared.startAutomaticChecks()
 
         KeyboardShortcuts.onKeyUp(for: .toggleConCopyPanel) { [weak floatingPanel] in
             floatingPanel?.togglePanel()
@@ -82,9 +87,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     if let clip = saved {
                         sync?.queueUpload(for: clip)
                         if clip.primaryType == .url,
-                           let plain = clip.plainText,
-                           let url = URL(string: plain),
-                           let db {
+                            let plain = clip.plainText,
+                            let url = URL(string: plain),
+                            let db
+                        {
                             Task {
                                 await fetcher.fetchAndUpdateMetadata(clipId: clip.id, url: url, databaseManager: db)
                                 await MainActor.run {
@@ -95,6 +101,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     }
                     await MainActor.run {
                         vm?.loadClips()
+                        self.scheduleCleanup()
                     }
                 } catch {
                     print("[ConCopy] Error ingesting captured clip: \(error)")
@@ -109,7 +116,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         watcher.onScreenshotCaptured = { [weak self] clip, _ in
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                guard AppSettingsManager.shared.autoCaptureScreenshots else { return }
+                guard AppSettingsManager.shared.shouldCaptureScreenshots else { return }
                 let db = self.databaseManager
                 let sync = self.syncCoordinator
                 let vm = self.viewModel
@@ -122,6 +129,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         }
                         await MainActor.run {
                             vm?.loadClips()
+                            self.scheduleCleanup()
                         }
                     } catch {
                         print("[ConCopy] Error ingesting screenshot: \(error)")
@@ -129,37 +137,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
-        watcher.start()
         self.screenshotWatcher = watcher
+        let settings = AppSettingsManager.shared
+        settings.$isMonitoringPaused.combineLatest(settings.$autoCaptureScreenshots, settings.$excludedAppBundleIds)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak watcher] _ in
+                guard let watcher else { return }
+                let enabled = settings.shouldCaptureScreenshots
+                watcher.isCaptureEnabled = enabled
+                watcher.synchronizeMonitoringState()
+            }.store(in: &settingsObservers)
 
         // Setup iCloud Drive Sync Coordinator
         let sync = CloudKitSyncCoordinator(databaseManager: db)
         sync.onRemoteChangesImported = { [weak vm] in
+            vm?.loadLists()
             vm?.loadClips()
+            vm?.loadSnippets()
         }
-        if AppSettingsManager.shared.iCloudSyncEnabled {
-            sync.startIfPossible()
-        }
+        sync.onStatusChanged = { [weak vm] status in vm?.cloudSyncStatus = status }
+        vm.onRetrySync = { [weak sync] in Task { await sync?.performSync() } }
+        settings.$iCloudSyncEnabled.removeDuplicates().sink { [weak sync] enabled in
+            if enabled { sync?.startIfPossible() } else { sync?.stop() }
+        }.store(in: &settingsObservers)
         self.syncCoordinator = sync
 
-        // Background Auto-cleanup
-        if AppSettingsManager.shared.autoCleanupEnabled {
-            let retentionDays = AppSettingsManager.shared.retentionDays
-            let maxCount = AppSettingsManager.shared.maxHistoryCount
-            Task.detached(priority: .background) {
-                let pruned = (try? db.pruneClips(olderThanDays: retentionDays, maxCount: maxCount)) ?? 0
-                if pruned > 0 {
-                    print("[ConCopy] Auto-cleanup pruned \(pruned) expired clips")
-                    await MainActor.run { [weak self] in
-                        self?.viewModel?.loadClips()
-                    }
-                }
-            }
+        // Retention runs at launch, after captures, periodically, and when policy changes.
+        settings.$autoCleanupEnabled.combineLatest(settings.$retentionDays, settings.$maxHistoryCount)
+            .receive(on: DispatchQueue.main).sink { [weak self] _ in self?.scheduleCleanup() }
+            .store(in: &settingsObservers)
+        cleanupTimer = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.scheduleCleanup() }
+        }
+        scheduleCleanup()
+    }
+
+    private func scheduleCleanup() {
+        guard let db = databaseManager else { return }
+        let settings = AppSettingsManager.shared
+        let policy = HistoryRetentionPolicy(
+            enabled: settings.autoCleanupEnabled, days: settings.retentionDays, maxCount: settings.maxHistoryCount)
+        cleanupTask?.cancel()
+        cleanupTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: 500_000_000)
+                let count = try await Task.detached(priority: .utility) { try policy.apply(to: db) }.value
+                if count > 0 { self?.viewModel?.loadClips() }
+            } catch is CancellationError {} catch { print("[ConCopy] Cleanup failed: \(error)") }
         }
     }
 
-    private func setupDatabase() throws -> DatabaseManager {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+    nonisolated private static func setupDatabase() throws -> DatabaseManager {
+        let appSupport =
+            FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSTemporaryDirectory())
         let dbDirectory = appSupport.appendingPathComponent("ConCopy", isDirectory: true)
         let dbURL = dbDirectory.appendingPathComponent("concopy.sqlite")
@@ -184,5 +214,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         clipboardMonitor?.stop()
         screenshotWatcher?.stop()
         syncCoordinator?.stop()
+        UpdateChecker.shared.stopAutomaticChecks()
+        cleanupTimer?.invalidate()
+        cleanupTask?.cancel()
+        settingsObservers.removeAll()
     }
 }

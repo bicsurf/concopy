@@ -1,5 +1,6 @@
-import XCTest
 import GRDB
+import XCTest
+
 @testable import ConCopyCore
 @testable import ConCopyUI
 
@@ -27,7 +28,7 @@ final class ViewModelSelectionAndFavoriteTests: XCTestCase {
         try super.tearDownWithError()
     }
 
-    func testClearSelectionAndToggleSelection() {
+    func testClearSelectionAndToggleSelection() async throws {
         let id1 = UUID()
         let id2 = UUID()
 
@@ -52,22 +53,24 @@ final class ViewModelSelectionAndFavoriteTests: XCTestCase {
         XCTAssertTrue(viewModel.selectedClipIds.isEmpty)
     }
 
-    func testChangingScopeClearsBatchSelection() throws {
+    func testChangingScopeClearsBatchSelection() async throws {
         let first = try databaseManager.ingestCapturedClip(CapturedClip(plainText: "First scope item"))
         let second = try databaseManager.ingestCapturedClip(CapturedClip(plainText: "Second scope item"))
         let list = try databaseManager.createList(name: "Work")
         viewModel.loadLists()
+        await viewModel.waitForPendingLoads()
 
         let scopeChanges: [(String, () -> Void)] = [
             ("All", { self.viewModel.selectAllClips() }),
             ("Favorites", { self.viewModel.selectFavorites() }),
             ("Snippets", { self.viewModel.selectSnippets() }),
-            ("Personal list", { self.viewModel.selectList(list.id) })
+            ("Personal list", { self.viewModel.selectList(list.id) }),
         ]
 
         for (name, changeScope) in scopeChanges {
             viewModel.clearSelection()
             viewModel.selectAllClips()
+            await viewModel.waitForPendingLoads()
             viewModel.toggleSelection(clipId: first.id)
             viewModel.toggleSelection(clipId: second.id)
             XCTAssertEqual(viewModel.selectedClipIds.count, 2)
@@ -78,15 +81,16 @@ final class ViewModelSelectionAndFavoriteTests: XCTestCase {
         }
     }
 
-    func testToggleSelectionWhenEmptyDoesNotIncludeDefaultActiveIndex() throws {
+    func testToggleSelectionWhenEmptyDoesNotIncludeDefaultActiveIndex() async throws {
         for i in 1...5 {
             _ = try databaseManager.ingestCapturedClip(
                 CapturedClip(plainText: "Record \(i)", primaryType: .text)
             )
         }
         viewModel.loadClips()
+        await viewModel.waitForPendingLoads()
         XCTAssertEqual(viewModel.clips.count, 5)
-        XCTAssertEqual(viewModel.selectedIndex, 0) // default active index is 0
+        XCTAssertEqual(viewModel.selectedIndex, 0)  // default active index is 0
         XCTAssertTrue(viewModel.selectedClipIds.isEmpty)
 
         // Click checkbox on index 3
@@ -100,13 +104,14 @@ final class ViewModelSelectionAndFavoriteTests: XCTestCase {
         XCTAssertEqual(viewModel.selectedClipId, targetClip.id)
     }
 
-    func testShiftClickRangeSelectionForwardAndBackward() throws {
+    func testShiftClickRangeSelectionForwardAndBackward() async throws {
         for i in 1...5 {
             _ = try databaseManager.ingestCapturedClip(
                 CapturedClip(plainText: "Clip \(i)", primaryType: .text)
             )
         }
         viewModel.loadClips()
+        await viewModel.waitForPendingLoads()
         XCTAssertEqual(viewModel.clips.count, 5)
 
         // 1. Single click on clip at index 1
@@ -131,13 +136,14 @@ final class ViewModelSelectionAndFavoriteTests: XCTestCase {
         XCTAssertEqual(viewModel.selectionAnchorId, viewModel.clips[1].id)
     }
 
-    func testShiftArrowKeysExtensionAndContraction() throws {
+    func testShiftArrowKeysExtensionAndContraction() async throws {
         for i in 1...5 {
             _ = try databaseManager.ingestCapturedClip(
                 CapturedClip(plainText: "Item \(i)", primaryType: .text)
             )
         }
         viewModel.loadClips()
+        await viewModel.waitForPendingLoads()
         XCTAssertEqual(viewModel.clips.count, 5)
 
         // Select starting at index 1
@@ -165,13 +171,14 @@ final class ViewModelSelectionAndFavoriteTests: XCTestCase {
         XCTAssertFalse(viewModel.selectedClipIds.contains(viewModel.clips[3].id))
     }
 
-    func testShiftRangeCombinedWithCommandClickToggle() throws {
+    func testShiftRangeCombinedWithCommandClickToggle() async throws {
         for i in 1...5 {
             _ = try databaseManager.ingestCapturedClip(
                 CapturedClip(plainText: "Entry \(i)", primaryType: .text)
             )
         }
         viewModel.loadClips()
+        await viewModel.waitForPendingLoads()
 
         // 1. Start at 0, Shift+Click to 3 -> items 0, 1, 2, 3
         viewModel.selectSingle(clipId: viewModel.clips[0].id)
@@ -189,13 +196,14 @@ final class ViewModelSelectionAndFavoriteTests: XCTestCase {
         XCTAssertTrue(viewModel.selectedClipIds.contains(viewModel.clips[4].id))
     }
 
-    func testOrderedConcatenationBatchCopy() throws {
+    func testOrderedConcatenationBatchCopy() async throws {
         for i in 1...4 {
             _ = try databaseManager.ingestCapturedClip(
                 CapturedClip(plainText: "Row \(i)", primaryType: .text)
             )
         }
         viewModel.loadClips()
+        await viewModel.waitForPendingLoads()
 
         // Select the first item explicitly, then toggle another item
         let clip1 = viewModel.clips[1]
@@ -210,7 +218,7 @@ final class ViewModelSelectionAndFavoriteTests: XCTestCase {
         XCTAssertEqual(ordered[1].id, clip3.id)
 
         let customPasteboard = NSPasteboard.withUniqueName()
-        try viewModel.pasteInjector.copyBatchToPasteboard(
+        try await viewModel.pasteInjector.copyBatchToPasteboard(
             clips: ordered,
             mode: .concatenated(separator: .newline),
             transformation: .none,
@@ -223,7 +231,7 @@ final class ViewModelSelectionAndFavoriteTests: XCTestCase {
         XCTAssertEqual(pastedText, expectedText)
     }
 
-    func testToggleFavoriteUpdatesDatabaseAndState() throws {
+    func testToggleFavoriteUpdatesDatabaseAndState() async throws {
         let captured = CapturedClip(
             plainText: "Test favorite toggle",
             primaryType: .text,
@@ -233,11 +241,13 @@ final class ViewModelSelectionAndFavoriteTests: XCTestCase {
         XCTAssertFalse(inserted.isFavorite)
 
         viewModel.loadClips()
+        await viewModel.waitForPendingLoads()
         XCTAssertEqual(viewModel.clips.count, 1)
         XCTAssertFalse(viewModel.clips[0].isFavorite)
 
         // Toggle to true
         viewModel.toggleFavorite(clip: viewModel.clips[0])
+        await viewModel.waitForPendingLoads()
         XCTAssertEqual(viewModel.clips.count, 1)
         XCTAssertTrue(viewModel.clips[0].isFavorite)
 
@@ -246,6 +256,7 @@ final class ViewModelSelectionAndFavoriteTests: XCTestCase {
 
         // Toggle back to false
         viewModel.toggleFavorite(clip: viewModel.clips[0])
+        await viewModel.waitForPendingLoads()
         XCTAssertEqual(viewModel.clips.count, 1)
         XCTAssertFalse(viewModel.clips[0].isFavorite)
 
@@ -253,36 +264,38 @@ final class ViewModelSelectionAndFavoriteTests: XCTestCase {
         XCTAssertEqual(inDbAfter?.isFavorite, false)
     }
 
-    func testFavoriteClipDoesNotJumpToTopWhenReCopied() throws {
+    func testFavoriteClipDoesNotJumpToTopWhenReCopied() async throws {
         let clip1 = try databaseManager.ingestCapturedClip(
             CapturedClip(plainText: "Old Clip 1", primaryType: .text)
         )
-        Thread.sleep(forTimeInterval: 0.02)
+        try await Task.sleep(nanoseconds: 20_000_000)
         let clip2 = try databaseManager.ingestCapturedClip(
             CapturedClip(plainText: "Newer Clip 2", primaryType: .text)
         )
 
         _ = try databaseManager.toggleFavorite(clipId: clip1.id)
         viewModel.loadClips()
+        await viewModel.waitForPendingLoads()
 
         XCTAssertEqual(viewModel.clips.first?.id, clip2.id)
         XCTAssertEqual(viewModel.clips.last?.id, clip1.id)
 
-        Thread.sleep(forTimeInterval: 0.02)
+        try await Task.sleep(nanoseconds: 20_000_000)
         _ = try databaseManager.ingestCapturedClip(
             CapturedClip(plainText: "Old Clip 1", primaryType: .text)
         )
         viewModel.loadClips()
+        await viewModel.waitForPendingLoads()
 
         XCTAssertEqual(viewModel.clips.first?.id, clip2.id)
         XCTAssertEqual(viewModel.clips.last?.id, clip1.id)
     }
 
-    func testToggleFavoriteDoesNotBumpUpdatedAtOrMoveClipToTop() throws {
+    func testToggleFavoriteDoesNotBumpUpdatedAtOrMoveClipToTop() async throws {
         let clip1 = try databaseManager.ingestCapturedClip(
             CapturedClip(plainText: "Historical Clip", primaryType: .text)
         )
-        Thread.sleep(forTimeInterval: 0.02)
+        try await Task.sleep(nanoseconds: 20_000_000)
         let clip2 = try databaseManager.ingestCapturedClip(
             CapturedClip(plainText: "Recent Clip", primaryType: .text)
         )
@@ -294,10 +307,11 @@ final class ViewModelSelectionAndFavoriteTests: XCTestCase {
         XCTAssertEqual(toggled.updatedAt.timeIntervalSince1970, initialUpdatedAt.timeIntervalSince1970, accuracy: 0.01)
 
         viewModel.loadClips()
+        await viewModel.waitForPendingLoads()
         XCTAssertEqual(viewModel.clips.first?.id, clip2.id)
     }
 
-    func testUnfavoriteClipDoesNotResurrectFavoriteWhenReCopied() throws {
+    func testUnfavoriteClipDoesNotResurrectFavoriteWhenReCopied() async throws {
         let clip = try databaseManager.ingestCapturedClip(
             CapturedClip(plainText: "Important Text", primaryType: .text)
         )
@@ -316,7 +330,7 @@ final class ViewModelSelectionAndFavoriteTests: XCTestCase {
         XCTAssertEqual(inDbAfterRecopy?.isFavorite, false)
     }
 
-    func testAssignMovingClipToAllClearsFavorite() throws {
+    func testAssignMovingClipToAllClearsFavorite() async throws {
         let clip = try databaseManager.ingestCapturedClip(
             CapturedClip(plainText: "Clip in List and Favorite", primaryType: .text)
         )
@@ -330,13 +344,14 @@ final class ViewModelSelectionAndFavoriteTests: XCTestCase {
 
         viewModel.movingClip = inDbBefore
         viewModel.assignMovingClipToAll()
+        await viewModel.waitForPendingLoads()
 
         let inDbAfter = try databaseManager.fetchClip(id: clip.id)
         XCTAssertFalse(inDbAfter?.isFavorite ?? true)
         XCTAssertNil(inDbAfter?.listId)
     }
 
-    func testOnOpenSettingsCallbackCanBeInvoked() {
+    func testOnOpenSettingsCallbackCanBeInvoked() async throws {
         var didOpen = false
         viewModel.onOpenSettings = {
             didOpen = true
@@ -346,7 +361,7 @@ final class ViewModelSelectionAndFavoriteTests: XCTestCase {
         XCTAssertTrue(didOpen)
     }
 
-    func testNewCapturedClipUpdatesSelectionToMostRecent() throws {
+    func testNewCapturedClipUpdatesSelectionToMostRecent() async throws {
         // 1. Ingest initial clips
         _ = try databaseManager.ingestCapturedClip(
             CapturedClip(plainText: "Historical Clip 1", primaryType: .text)
@@ -355,6 +370,7 @@ final class ViewModelSelectionAndFavoriteTests: XCTestCase {
             CapturedClip(plainText: "Historical Clip 2", primaryType: .text)
         )
         viewModel.loadClips()
+        await viewModel.waitForPendingLoads()
         XCTAssertEqual(viewModel.clips.count, 2)
         XCTAssertEqual(viewModel.selectedIndex, 0)
 
@@ -365,11 +381,12 @@ final class ViewModelSelectionAndFavoriteTests: XCTestCase {
         XCTAssertEqual(viewModel.selectedClipId, historicalClipX.id)
 
         // 3. New acquisition arrives (Clip Y)
-        Thread.sleep(forTimeInterval: 0.05)
+        try await Task.sleep(nanoseconds: 50_000_000)
         let clipY = try databaseManager.ingestCapturedClip(
             CapturedClip(plainText: "New Captured Clip Y", primaryType: .text)
         )
         viewModel.loadClips()
+        await viewModel.waitForPendingLoads()
 
         // 4. Must automatically select Clip Y (index 0)
         XCTAssertEqual(viewModel.clips.first?.id, clipY.id)
@@ -378,7 +395,7 @@ final class ViewModelSelectionAndFavoriteTests: XCTestCase {
         XCTAssertTrue(viewModel.selectedClipIds.isEmpty)
     }
 
-    func testSelectMostRecentClipResetsSelectionToFirst() throws {
+    func testSelectMostRecentClipResetsSelectionToFirst() async throws {
         _ = try databaseManager.ingestCapturedClip(
             CapturedClip(plainText: "Clip A", primaryType: .text)
         )
@@ -386,6 +403,7 @@ final class ViewModelSelectionAndFavoriteTests: XCTestCase {
             CapturedClip(plainText: "Clip B", primaryType: .text)
         )
         viewModel.loadClips()
+        await viewModel.waitForPendingLoads()
         viewModel.selectedIndex = 1
         XCTAssertEqual(viewModel.selectedIndex, 1)
 
@@ -394,7 +412,7 @@ final class ViewModelSelectionAndFavoriteTests: XCTestCase {
         XCTAssertEqual(viewModel.selectedClipId, viewModel.clips.first?.id)
     }
 
-    func testAssignClipToListDoesNotMarkFavoriteAndProtectsFromPruning() throws {
+    func testAssignClipToListDoesNotMarkFavoriteAndProtectsFromPruning() async throws {
         // 1. Ingest normal clip
         let clip = try databaseManager.ingestCapturedClip(
             CapturedClip(plainText: "List Item Without Star", primaryType: .text)
@@ -405,9 +423,12 @@ final class ViewModelSelectionAndFavoriteTests: XCTestCase {
         // 2. Create list and assign clip
         let list = try databaseManager.createList(name: "Projects")
         viewModel.loadLists()
+        await viewModel.waitForPendingLoads()
         viewModel.loadClips()
+        await viewModel.waitForPendingLoads()
 
         viewModel.assignClipToList(clip: clip, listId: list.id)
+        await viewModel.waitForPendingLoads()
 
         // Verify clip belongs to list and is NOT favorite
         let updated = try databaseManager.fetchClip(id: clip.id)
@@ -417,16 +438,18 @@ final class ViewModelSelectionAndFavoriteTests: XCTestCase {
 
         // Verify Favorites tab does NOT contain this clip
         viewModel.selectFavorites()
+        await viewModel.waitForPendingLoads()
         XCTAssertFalse(viewModel.clips.contains(where: { $0.id == clip.id }))
 
         // Verify List tab DOES contain this clip
         viewModel.selectList(list.id)
+        await viewModel.waitForPendingLoads()
         XCTAssertTrue(viewModel.clips.contains(where: { $0.id == clip.id }))
 
         // 3. Test pruning protection
         // Backdate clip to 60 days ago
         let oldDate = Date().addingTimeInterval(-60 * 86400)
-        try databaseManager.dbWriter.write { db in
+        try await databaseManager.dbWriter.write { db in
             try db.execute(
                 sql: "UPDATE clips SET createdAt = ? WHERE id = ?",
                 arguments: [oldDate, clip.id.uuidString.lowercased()]
@@ -435,7 +458,7 @@ final class ViewModelSelectionAndFavoriteTests: XCTestCase {
 
         // Run pruning olderThanDays: 30
         let pruned = try databaseManager.pruneClips(olderThanDays: 30)
-        XCTAssertEqual(pruned, 0) // Should NOT prune list item
+        XCTAssertEqual(pruned, 0)  // Should NOT prune list item
 
         let stillExists = try databaseManager.fetchClip(id: clip.id)
         XCTAssertNotNil(stillExists)
@@ -443,13 +466,14 @@ final class ViewModelSelectionAndFavoriteTests: XCTestCase {
         XCTAssertFalse(stillExists?.isFavorite ?? true)
     }
 
-    func testSnippetManagementAndFilteringLifecycle() throws {
+    func testSnippetManagementAndFilteringLifecycle() async throws {
         // 1. Create snippets
-        viewModel.saveSnippet(shortcut: ";mail", content: "me@example.com", title: "Email Personale")
-        viewModel.saveSnippet(shortcut: ";tel", content: "+39 123 456789", title: "Numero Telefono")
-        viewModel.saveSnippet(shortcut: ";addr", content: "Via Roma 10, Milano", title: "Indirizzo")
+        await viewModel.saveSnippet(shortcut: ";mail", content: "me@example.com", title: "Email Personale")
+        await viewModel.saveSnippet(shortcut: ";tel", content: "+39 123 456789", title: "Numero Telefono")
+        await viewModel.saveSnippet(shortcut: ";addr", content: "Via Roma 10, Milano", title: "Indirizzo")
 
         viewModel.selectSnippets()
+        await viewModel.waitForPendingLoads()
         XCTAssertTrue(viewModel.isSnippetsOnly)
         XCTAssertEqual(viewModel.snippets.count, 3)
         XCTAssertEqual(viewModel.filteredSnippets.count, 3)
@@ -478,7 +502,7 @@ final class ViewModelSelectionAndFavoriteTests: XCTestCase {
         viewModel.moveSelection(by: 1, extendSelection: false)
         XCTAssertEqual(viewModel.selectedSnippetIndex, 2)
 
-        viewModel.moveSelection(by: 1, extendSelection: false) // bounded to max
+        viewModel.moveSelection(by: 1, extendSelection: false)  // bounded to max
         XCTAssertEqual(viewModel.selectedSnippetIndex, 2)
 
         viewModel.moveSelection(by: -1, extendSelection: false)
@@ -486,8 +510,10 @@ final class ViewModelSelectionAndFavoriteTests: XCTestCase {
 
         // 4. Update snippet
         let snippetToEdit = viewModel.snippets.first { $0.shortcut == ";mail" }!
-        viewModel.saveSnippet(shortcut: ";email", content: "new@example.com", title: "Nuova Email", existingId: snippetToEdit.id)
+        await viewModel.saveSnippet(
+            shortcut: ";email", content: "new@example.com", title: "Nuova Email", existingId: snippetToEdit.id)
         viewModel.loadSnippets()
+        await viewModel.waitForPendingLoads()
         XCTAssertEqual(viewModel.snippets.count, 3)
         let updatedSnippet = viewModel.snippets.first { $0.id == snippetToEdit.id }
         XCTAssertEqual(updatedSnippet?.shortcut, ";email")
@@ -496,6 +522,7 @@ final class ViewModelSelectionAndFavoriteTests: XCTestCase {
 
         // 5. Delete snippet
         viewModel.deleteSnippet(updatedSnippet!)
+        await viewModel.waitForPendingLoads()
         XCTAssertEqual(viewModel.snippets.count, 2)
         XCTAssertFalse(viewModel.snippets.contains(where: { $0.id == snippetToEdit.id }))
 
@@ -509,6 +536,7 @@ final class ViewModelSelectionAndFavoriteTests: XCTestCase {
 
         // 7. Test Move Dialog (⌘M) with Snippet Option (⌥2)
         viewModel.loadClips()
+        await viewModel.waitForPendingLoads()
         viewModel.selectedIndex = 0
         viewModel.promptMoveSelectedClipToList()
         XCTAssertNotNil(viewModel.movingClip)
@@ -516,6 +544,7 @@ final class ViewModelSelectionAndFavoriteTests: XCTestCase {
 
         // Select Option 2 (Snippet destination)
         viewModel.assignMovingClip(toOptionIndex: 2)
+        await viewModel.waitForPendingLoads()
         XCTAssertNil(viewModel.movingClip)
         XCTAssertTrue(viewModel.isSnippetEditorPresented)
         XCTAssertEqual(viewModel.editingSnippet?.content, "Test snippet from clip")
@@ -524,21 +553,24 @@ final class ViewModelSelectionAndFavoriteTests: XCTestCase {
         viewModel.promptMoveSelectedClipToList()
         XCTAssertFalse(clip.isFavorite)
         viewModel.assignMovingClip(toOptionIndex: 1)
+        await viewModel.waitForPendingLoads()
         XCTAssertNil(viewModel.movingClip)
         let updatedClip = try databaseManager.fetchClip(id: clip.id)
         XCTAssertEqual(updatedClip?.isFavorite, true)
 
         viewModel.promptMoveSelectedClipToList()
         viewModel.assignMovingClipToAll()
+        await viewModel.waitForPendingLoads()
         XCTAssertNil(viewModel.movingClip)
         let unassignedClip = try databaseManager.fetchClip(id: clip.id)
         XCTAssertNil(unassignedClip?.listId)
     }
 
-    func testCopySelectedToPasteboardSingleAndBatch() throws {
+    func testCopySelectedToPasteboardSingleAndBatch() async throws {
         let clip1 = try databaseManager.ingestCapturedClip(CapturedClip(plainText: "Alpha Record", primaryType: .text))
         let clip2 = try databaseManager.ingestCapturedClip(CapturedClip(plainText: "Beta Record", primaryType: .text))
         viewModel.loadClips()
+        await viewModel.waitForPendingLoads()
 
         var panelClosed = false
         viewModel.onClosePanel = {
@@ -549,6 +581,7 @@ final class ViewModelSelectionAndFavoriteTests: XCTestCase {
         viewModel.selectedIndex = 0
         panelClosed = false
         viewModel.copySelectedToPasteboard()
+        await viewModel.waitForPendingLoads()
         XCTAssertTrue(panelClosed)
         XCTAssertEqual(NSPasteboard.general.string(forType: .string), "Beta Record")
 
@@ -556,6 +589,7 @@ final class ViewModelSelectionAndFavoriteTests: XCTestCase {
         viewModel.selectedClipIds = [clip1.id, clip2.id]
         panelClosed = false
         viewModel.copySelectedToPasteboard()
+        await viewModel.waitForPendingLoads()
         XCTAssertTrue(panelClosed)
         let batchContent = NSPasteboard.general.string(forType: .string) ?? ""
         XCTAssertTrue(batchContent.contains("Beta Record") && batchContent.contains("Alpha Record"))

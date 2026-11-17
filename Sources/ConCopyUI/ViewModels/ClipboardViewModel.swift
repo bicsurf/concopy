@@ -3,11 +3,26 @@ import ApplicationServices
 import Combine
 import ConCopyCore
 import Foundation
+import ImageIO
 import UniformTypeIdentifiers
 
 @MainActor
 public final class ClipboardViewModel: ObservableObject {
     @Published public var clips: [ClipRecord] = []
+    @Published public private(set) var hasMoreClips = false
+    @Published public private(set) var isLoadingClips = false
+    @Published public var cloudSyncStatus: CloudSyncStatus = .idle
+    @Published public var snippetSaveError: String?
+    private var visibleLimit = 100
+    private var loadVersion: UInt64 = 0
+    private var appliedLoadVersion: UInt64?
+    private var canActOnClips: Bool { appliedLoadVersion == loadVersion && !isLoadingClips }
+    private var clipLoadTask: Task<Void, Never>?
+    private var listLoadTask: Task<Void, Never>?
+    private var snippetLoadTask: Task<Void, Never>?
+    private var pendingActions: [UUID: Task<Void, Never>] = [:]
+    private var thumbnailTasks = Set<UUID>()
+    @Published private var thumbnailVersion: UInt64 = 0
     @Published public var lists: [ClipListRecord] = []
     @Published public var selectedListId: UUID? = nil
     @Published public var isFavoritesOnly: Bool = false
@@ -18,6 +33,7 @@ public final class ClipboardViewModel: ObservableObject {
                     selectedSnippetIndex = max(0, filteredSnippets.count - 1)
                 }
             } else {
+                visibleLimit = 100
                 loadClips()
             }
         }
@@ -50,9 +66,8 @@ public final class ClipboardViewModel: ObservableObject {
         let q = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !q.isEmpty else { return snippets }
         return snippets.filter { snippet in
-            snippet.shortcut.lowercased().contains(q) ||
-            snippet.content.lowercased().contains(q) ||
-            (snippet.title?.lowercased().contains(q) == true)
+            snippet.shortcut.lowercased().contains(q) || snippet.content.lowercased().contains(q)
+                || (snippet.title?.lowercased().contains(q) == true)
         }
     }
     @Published public var scrollTargetTopTrigger: UUID? = nil
@@ -80,17 +95,22 @@ public final class ClipboardViewModel: ObservableObject {
     public let databaseManager: DatabaseManager
     public let pasteInjector: PasteInjector
     public let appSettings: AppSettingsManager
+    public let pasteboard: NSPasteboard
     public var onClosePanel: (() -> Void)?
+    public var onPasteFailure: (() -> Void)?
     public var onOpenSettings: (() -> Void)?
+    public var onRetrySync: (() -> Void)?
 
     public init(
         databaseManager: DatabaseManager,
         pasteInjector: PasteInjector = PasteInjector(),
-        appSettings: AppSettingsManager
+        appSettings: AppSettingsManager,
+        pasteboard: NSPasteboard = .general
     ) {
         self.databaseManager = databaseManager
         self.pasteInjector = pasteInjector
         self.appSettings = appSettings
+        self.pasteboard = pasteboard
         checkAccessibilityPermissions()
         loadLists()
         loadClips()
@@ -110,6 +130,30 @@ public final class ClipboardViewModel: ObservableObject {
 
     deinit {
         copyFeedbackTask?.cancel()
+        clipLoadTask?.cancel()
+        listLoadTask?.cancel()
+        snippetLoadTask?.cancel()
+        for task in pendingActions.values { task.cancel() }
+    }
+
+    private func performUIAction(_ operation: @escaping @MainActor () async -> Void) {
+        let id = UUID()
+        pendingActions[id] = Task { @MainActor [weak self] in
+            await operation()
+            self?.pendingActions.removeValue(forKey: id)
+        }
+    }
+
+    /// Useful to callers that need a fully applied snapshot (including tests and previews).
+    public func waitForPendingLoads() async {
+        while true {
+            let version = loadVersion
+            for task in Array(pendingActions.values) { await task.value }
+            await listLoadTask?.value
+            await snippetLoadTask?.value
+            await clipLoadTask?.value
+            if pendingActions.isEmpty && version == loadVersion { return }
+        }
     }
 
     public func checkAccessibilityPermissions() {
@@ -125,11 +169,18 @@ public final class ClipboardViewModel: ObservableObject {
     }
 
     public func clearHistory(preserveFavorites: Bool = true) {
-        do {
-            _ = try databaseManager.clearAllHistory(preserveFavorites: preserveFavorites)
-            loadClips()
-        } catch {
-            print("[ConCopy] Failed to clear history: \(error)")
+        performUIAction { [self] in
+
+            do {
+                let db = databaseManager
+                _ = try await Task.detached(priority: .utility) {
+                    try db.clearAllHistory(preserveFavorites: preserveFavorites)
+                }.value
+                loadClips()
+            } catch {
+                print("[ConCopy] Failed to clear history: \(error)")
+            }
+
         }
     }
 
@@ -138,68 +189,106 @@ public final class ClipboardViewModel: ObservableObject {
     }
 
     public func saveEditedText(for clipId: UUID, newText: String) {
-        do {
-            try databaseManager.updateTextContent(clipId: clipId, newPlainText: newText)
-            editingClip = nil
-            loadClips()
-        } catch {
-            print("[ConCopy] Failed to update text content: \(error)")
+        performUIAction { [self] in
+
+            do {
+                let db = databaseManager
+                try await Task.detached(priority: .utility) {
+                    try db.updateTextContent(clipId: clipId, newPlainText: newText)
+                }.value
+                editingClip = nil
+                loadClips()
+            } catch {
+                print("[ConCopy] Failed to update text content: \(error)")
+            }
+
         }
     }
 
     public func saveCustomName(for clipId: UUID, newName: String?) {
-        do {
-            try databaseManager.updateCustomName(clipId: clipId, name: newName)
-            renamingClip = nil
-            loadClips()
-        } catch {
-            print("[ConCopy] Failed to update custom name: \(error)")
+        performUIAction { [self] in
+
+            do {
+                let db = databaseManager
+                try await Task.detached(priority: .utility) { try db.updateCustomName(clipId: clipId, name: newName) }
+                    .value
+                renamingClip = nil
+                loadClips()
+            } catch {
+                print("[ConCopy] Failed to update custom name: \(error)")
+            }
+
         }
     }
 
     public func loadLists() {
-        do {
-            self.lists = try databaseManager.fetchLists()
-        } catch {
-            print("[ConCopy] Error loading lists: \(error)")
+        listLoadTask?.cancel()
+        let db = databaseManager
+        listLoadTask = Task { [weak self] in
+            do {
+                let fetched = try await Task.detached(priority: .userInitiated) { try db.fetchLists() }.value
+                guard !Task.isCancelled else { return }
+                self?.lists = fetched
+            } catch { self?.showToast("Could not load lists") }
         }
     }
 
     public func loadClips() {
-        do {
-            let fetched = try databaseManager.searchClips(
-                query: searchQuery,
-                listId: selectedListId,
-                favoritesOnly: isFavoritesOnly,
-                sortMode: currentSortMode
-            )
-
-            let isNewTopClip: Bool
-            if let first = fetched.first {
-                if let lastId = lastTopClipId {
-                    isNewTopClip = (first.id != lastId) || (lastTopClipUpdatedAt != nil && first.updatedAt > lastTopClipUpdatedAt!)
-                } else {
-                    isNewTopClip = true
+        clipLoadTask?.cancel()
+        loadVersion &+= 1
+        let version = loadVersion
+        let db = databaseManager
+        let query = searchQuery
+        let listID = selectedListId
+        let favorites = isFavoritesOnly
+        let mode = currentSortMode
+        let limit = visibleLimit
+        isLoadingClips = true
+        clipLoadTask = Task { [weak self] in
+            do {
+                if !query.isEmpty { try await Task.sleep(nanoseconds: 40_000_000) }
+                let result = try await Task.detached(priority: .userInitiated) {
+                    try db.searchClips(
+                        query: query, listId: listID, favoritesOnly: favorites, sortMode: mode, limit: limit + 1)
+                }.value
+                guard !Task.isCancelled, let self, self.loadVersion == version else { return }
+                let fetched = Array(result.prefix(limit))
+                let previousSelection = self.selectedClipId
+                let isNewTop =
+                    fetched.first.map { first in
+                        first.id != self.lastTopClipId || self.lastTopClipUpdatedAt.map { first.updatedAt > $0 } == true
+                    } ?? false
+                self.clips = fetched
+                self.appliedLoadVersion = version
+                self.hasMoreClips = result.count > limit
+                self.selectedClipIds.formIntersection(Set(fetched.map(\.id)))
+                if let anchor = self.selectionAnchorId, !fetched.contains(where: { $0.id == anchor }) {
+                    self.selectionAnchorId = nil
                 }
-            } else {
-                isNewTopClip = false
+                self.lastTopClipId = fetched.first?.id
+                self.lastTopClipUpdatedAt = fetched.first?.updatedAt
+                if isNewTop && !self.isSelectionMode {
+                    self.selectedIndex = 0
+                    self.selectionAnchorId = nil
+                    self.scrollTargetTopTrigger = UUID()
+                } else if let previousSelection, let index = fetched.firstIndex(where: { $0.id == previousSelection }) {
+                    self.selectedIndex = index
+                } else {
+                    self.selectedIndex = max(0, min(self.selectedIndex, fetched.count - 1))
+                }
+                self.isLoadingClips = false
+            } catch {
+                guard !Task.isCancelled, let self, self.loadVersion == version else { return }
+                self.isLoadingClips = false
+                self.showToast("Could not load clipboard history")
             }
-
-            self.clips = fetched
-            self.lastTopClipId = fetched.first?.id
-            self.lastTopClipUpdatedAt = fetched.first?.updatedAt
-
-            if isNewTopClip && !isSelectionMode {
-                selectedClipId = fetched.first?.id
-                selectedClipIds.removeAll()
-                selectionAnchorId = nil
-                scrollTargetTopTrigger = UUID()
-            } else if selectedIndex >= clips.count {
-                selectedIndex = max(0, clips.count - 1)
-            }
-        } catch {
-            print("[ConCopy] Error loading clips: \(error)")
         }
+    }
+
+    public func loadNextPage() {
+        guard hasMoreClips, !isLoadingClips else { return }
+        visibleLimit += 100
+        loadClips()
     }
 
     public func selectMostRecentClip() {
@@ -222,6 +311,7 @@ public final class ClipboardViewModel: ObservableObject {
     }
 
     public func selectAllClips() {
+        visibleLimit = 100
         clearSelection()
         selectedListId = nil
         isFavoritesOnly = false
@@ -230,6 +320,7 @@ public final class ClipboardViewModel: ObservableObject {
     }
 
     public func selectFavorites() {
+        visibleLimit = 100
         clearSelection()
         selectedListId = nil
         isFavoritesOnly = true
@@ -238,6 +329,7 @@ public final class ClipboardViewModel: ObservableObject {
     }
 
     public func selectSnippets() {
+        visibleLimit = 100
         clearSelection()
         selectedListId = nil
         isFavoritesOnly = false
@@ -246,6 +338,7 @@ public final class ClipboardViewModel: ObservableObject {
     }
 
     public func selectList(_ listId: UUID) {
+        visibleLimit = 100
         clearSelection()
         selectedListId = listId
         isFavoritesOnly = false
@@ -257,39 +350,59 @@ public final class ClipboardViewModel: ObservableObject {
     }
 
     public func createNewList(name: String) {
-        guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        do {
-            let list = try databaseManager.createList(name: name)
-            loadLists()
-            selectList(list.id)
-        } catch {
-            print("[ConCopy] Failed to create list: \(error)")
+        performUIAction { [self] in
+
+            guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+            do {
+                let db = databaseManager
+                let list = try await Task.detached(priority: .utility) { try db.createList(name: name) }.value
+                loadLists()
+                selectList(list.id)
+            } catch {
+                print("[ConCopy] Failed to create list: \(error)")
+            }
+
         }
     }
 
     public func deleteList(_ listId: UUID, deleteContainedClips: Bool = false) {
-        do {
-            try databaseManager.deleteList(listId: listId, deleteContainedClips: deleteContainedClips)
-            loadLists()
-            if selectedListId == listId {
-                selectAllClips()
+        performUIAction { [self] in
+
+            do {
+                let db = databaseManager
+                try await Task.detached(priority: .utility) {
+                    try db.deleteList(listId: listId, deleteContainedClips: deleteContainedClips)
+                }.value
+                loadLists()
+                if selectedListId == listId {
+                    selectAllClips()
+                }
+            } catch {
+                print("[ConCopy] Failed to delete list: \(error)")
             }
-        } catch {
-            print("[ConCopy] Failed to delete list: \(error)")
+
         }
     }
 
     public func toggleAutoStar(for listId: UUID) {
-        do {
-            if let list = lists.first(where: { $0.id == listId }) {
-                let willActivate = !list.isAutoStarActive
-                try databaseManager.setAutoStarList(listId: willActivate ? listId : nil)
-            } else {
-                try databaseManager.setAutoStarList(listId: listId)
+        performUIAction { [self] in
+
+            do {
+                if let list = lists.first(where: { $0.id == listId }) {
+                    let willActivate = !list.isAutoStarActive
+                    let db = databaseManager
+                    try await Task.detached(priority: .utility) {
+                        try db.setAutoStarList(listId: willActivate ? listId : nil)
+                    }.value
+                } else {
+                    let db = databaseManager
+                    try await Task.detached(priority: .utility) { try db.setAutoStarList(listId: listId) }.value
+                }
+                loadLists()
+            } catch {
+                print("[ConCopy] Failed to set auto star list: \(error)")
             }
-            loadLists()
-        } catch {
-            print("[ConCopy] Failed to set auto star list: \(error)")
+
         }
     }
 
@@ -414,6 +527,7 @@ public final class ClipboardViewModel: ObservableObject {
     }
 
     public func pasteSelected(optionHeld: Bool = false) {
+        guard isSnippetsOnly || canActOnClips else { return }
         if isSnippetsOnly {
             if selectedSnippetIndex >= 0 && selectedSnippetIndex < filteredSnippets.count {
                 pasteSnippet(filteredSnippets[selectedSnippetIndex])
@@ -430,6 +544,7 @@ public final class ClipboardViewModel: ObservableObject {
     }
 
     public func paste(at index: Int, optionHeld: Bool = false) {
+        guard canActOnClips else { return }
         guard index >= 0 && index < clips.count else { return }
         selectedIndex = index
         paste(clip: clips[index], optionHeld: optionHeld)
@@ -481,39 +596,46 @@ public final class ClipboardViewModel: ObservableObject {
     }
 
     public func copyClipToPasteboardWithoutClosing(clip: ClipRecord, optionHeld: Bool = false) {
-        let forcePlainText = optionHeld || isPlainTextModeEnabled
-        let transformation = activeTransformation
-        do {
-            try pasteInjector.copyToPasteboard(
-                clip: clip,
-                databaseManager: databaseManager,
-                forcePlainText: forcePlainText,
-                transformation: transformation
-            )
-            copyFeedbackTask?.cancel()
-            copiedClipId = clip.id
-            showToast("Copied to clipboard!")
-            copyFeedbackTask = Task { @MainActor [weak self] in
-                do {
-                    try await Task.sleep(nanoseconds: 1_200_000_000)
-                    try Task.checkCancellation()
-                } catch {
-                    return
-                }
+        guard canActOnClips else { return }
+        performUIAction { [self] in
 
-                guard let self else { return }
-                if self.copiedClipId == clip.id {
-                    self.copiedClipId = nil
+            let forcePlainText = optionHeld || isPlainTextModeEnabled
+            let transformation = activeTransformation
+            do {
+                try await pasteInjector.copyToPasteboard(
+                    clip: clip,
+                    databaseManager: databaseManager,
+                    pasteboard: pasteboard,
+                    forcePlainText: forcePlainText,
+                    transformation: transformation
+                )
+                copyFeedbackTask?.cancel()
+                copiedClipId = clip.id
+                showToast("Copied to clipboard!")
+                copyFeedbackTask = Task { @MainActor [weak self] in
+                    do {
+                        try await Task.sleep(nanoseconds: 1_200_000_000)
+                        try Task.checkCancellation()
+                    } catch {
+                        return
+                    }
+
+                    guard let self else { return }
+                    if self.copiedClipId == clip.id {
+                        self.copiedClipId = nil
+                    }
+                    self.copyFeedbackTask = nil
                 }
-                self.copyFeedbackTask = nil
+                loadClips()
+            } catch {
+                print("[ConCopy] Failed to copy clip: \(error)")
             }
-            loadClips()
-        } catch {
-            print("[ConCopy] Failed to copy clip: \(error)")
+
         }
     }
 
     public func paste(clip: ClipRecord, optionHeld: Bool = false) {
+        guard canActOnClips else { return }
         guard pastingClipId == nil else { return }
         if let index = clips.firstIndex(where: { $0.id == clip.id }) {
             selectedIndex = index
@@ -527,9 +649,10 @@ public final class ClipboardViewModel: ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 do {
-                    try self.pasteInjector.copyToPasteboard(
+                    try await self.pasteInjector.copyToPasteboard(
                         clip: clip,
                         databaseManager: self.databaseManager,
+                        pasteboard: self.pasteboard,
                         forcePlainText: forcePlainText,
                         transformation: transformation
                     )
@@ -553,6 +676,7 @@ public final class ClipboardViewModel: ObservableObject {
                 try await self.pasteInjector.paste(
                     clip: clip,
                     databaseManager: self.databaseManager,
+                    pasteboard: self.pasteboard,
                     forcePlainText: forcePlainText,
                     transformation: transformation,
                     beforeEventHook: { [weak self] in
@@ -573,12 +697,13 @@ public final class ClipboardViewModel: ObservableObject {
                 }
             } catch {
                 self.pastingClipId = nil
-                print("[ConCopy] Failed to paste clip: \(error)")
+                self.reportPasteFailure(error)
             }
         }
     }
 
     public func pasteSelectedBatch(mode: BatchPasteMode) {
+        guard canActOnClips else { return }
         let orderedClips: [ClipRecord]
         if !selectedClipIds.isEmpty {
             orderedClips = clips.filter { selectedClipIds.contains($0.id) }
@@ -595,11 +720,12 @@ public final class ClipboardViewModel: ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 do {
-                    try self.pasteInjector.copyBatchToPasteboard(
+                    try await self.pasteInjector.copyBatchToPasteboard(
                         clips: orderedClips,
                         mode: mode,
                         transformation: transformation,
-                        databaseManager: self.databaseManager
+                        databaseManager: self.databaseManager,
+                        pasteboard: self.pasteboard
                     )
                     self.onClosePanel?()
                     self.selectedClipIds.removeAll()
@@ -622,6 +748,7 @@ public final class ClipboardViewModel: ObservableObject {
                     mode: mode,
                     transformation: transformation,
                     databaseManager: self.databaseManager,
+                    pasteboard: self.pasteboard,
                     beforeEventHook: { [weak self] in
                         if isTrusted {
                             self?.onClosePanel?()
@@ -638,67 +765,80 @@ public final class ClipboardViewModel: ObservableObject {
                     self.loadClips()
                 }
             } catch {
-                print("[ConCopy] Failed to batch paste clips: \(error)")
+                self.reportPasteFailure(error)
             }
         }
     }
 
     public func copySelectedToPasteboard() {
-        if isSnippetsOnly {
-            if selectedSnippetIndex >= 0 && selectedSnippetIndex < filteredSnippets.count {
-                let snippet = filteredSnippets[selectedSnippetIndex]
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setData(Data(), forType: PasteInjector.internalPasteMarker)
-                NSPasteboard.general.setString(snippet.content, forType: .string)
-                showToast("Snippet copied to clipboard!")
-                onClosePanel?()
-            }
-            return
-        }
+        guard isSnippetsOnly || canActOnClips else { return }
+        performUIAction { [self] in
 
-        if !selectedClipIds.isEmpty {
-            let ordered = clips.filter { selectedClipIds.contains($0.id) }
-            if !ordered.isEmpty {
-                do {
-                    try pasteInjector.copyBatchToPasteboard(
-                        clips: ordered,
-                        mode: .concatenated(separator: batchSeparator),
-                        transformation: activeTransformation,
-                        databaseManager: databaseManager
-                    )
-                    showToast("Copied \(ordered.count) items to clipboard!")
+            if isSnippetsOnly {
+                if selectedSnippetIndex >= 0 && selectedSnippetIndex < filteredSnippets.count {
+                    let snippet = filteredSnippets[selectedSnippetIndex]
+                    pasteboard.clearContents()
+                    pasteboard.setString("1", forType: PasteInjector.internalPasteMarker)
+                    pasteboard.setString(snippet.content, forType: .string)
+                    showToast("Snippet copied to clipboard!")
                     onClosePanel?()
-                    loadClips()
-                } catch {
-                    print("[ConCopy] Failed to copy batch to pasteboard: \(error)")
                 }
                 return
             }
-        }
 
-        if selectedIndex >= 0 && selectedIndex < clips.count {
-            let clip = clips[selectedIndex]
-            copyClipToPasteboard(clip: clip)
+            if !selectedClipIds.isEmpty {
+                let ordered = clips.filter { selectedClipIds.contains($0.id) }
+                if !ordered.isEmpty {
+                    do {
+                        try await pasteInjector.copyBatchToPasteboard(
+                            clips: ordered,
+                            mode: .concatenated(separator: batchSeparator),
+                            transformation: activeTransformation,
+                            databaseManager: databaseManager,
+                            pasteboard: pasteboard
+                        )
+                        showToast("Copied \(ordered.count) items to clipboard!")
+                        onClosePanel?()
+                        loadClips()
+                    } catch {
+                        print("[ConCopy] Failed to copy batch to pasteboard: \(error)")
+                    }
+                    return
+                }
+            }
+
+            if selectedIndex >= 0 && selectedIndex < clips.count {
+                let clip = clips[selectedIndex]
+                copyClipToPasteboard(clip: clip)
+            }
+
         }
     }
 
     public func copyClipToPasteboard(clip: ClipRecord) {
-        do {
-            try pasteInjector.copyToPasteboard(
-                clip: clip,
-                databaseManager: databaseManager,
-                forcePlainText: isPlainTextModeEnabled,
-                transformation: activeTransformation
-            )
-            showToast("Copied to clipboard!")
-            onClosePanel?()
-            loadClips()
-        } catch {
-            print("[ConCopy] Failed to copy clip to pasteboard: \(error)")
+        guard canActOnClips else { return }
+        performUIAction { [self] in
+
+            do {
+                try await pasteInjector.copyToPasteboard(
+                    clip: clip,
+                    databaseManager: databaseManager,
+                    pasteboard: pasteboard,
+                    forcePlainText: isPlainTextModeEnabled,
+                    transformation: activeTransformation
+                )
+                showToast("Copied to clipboard!")
+                onClosePanel?()
+                loadClips()
+            } catch {
+                print("[ConCopy] Failed to copy clip to pasteboard: \(error)")
+            }
+
         }
     }
 
     public func pasteAsFile(clip: ClipRecord, imageFormat: ImageExportFormat = .png) {
+        guard canActOnClips else { return }
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
@@ -706,37 +846,54 @@ public final class ClipboardViewModel: ObservableObject {
                     clip: clip,
                     imageFormat: imageFormat,
                     databaseManager: self.databaseManager,
+                    pasteboard: self.pasteboard,
                     beforeEventHook: { [weak self] in
                         self?.onClosePanel?()
                     }
                 )
                 self.loadClips()
             } catch {
-                print("[ConCopy] Failed to paste as file: \(error)")
+                self.reportPasteFailure(error)
             }
         }
     }
 
+    private func reportPasteFailure(_ error: Error) {
+        guard (error as? CocoaError)?.code != .userCancelled else { return }
+        onPasteFailure?()
+        showToast(error.localizedDescription, duration: 5)
+    }
+
     public func toggleFavorite(clip: ClipRecord) {
-        do {
-            _ = try databaseManager.toggleFavorite(clipId: clip.id)
-            loadClips()
-        } catch {
-            print("[ConCopy] Failed to toggle favorite: \(error)")
+        performUIAction { [self] in
+
+            do {
+                let db = databaseManager
+                _ = try await Task.detached(priority: .utility) { try db.toggleFavorite(clipId: clip.id) }.value
+                loadClips()
+            } catch {
+                print("[ConCopy] Failed to toggle favorite: \(error)")
+            }
+
         }
     }
 
     public func toggleFavoriteSelected() {
-        if !selectedClipIds.isEmpty {
-            for clipId in selectedClipIds {
-                _ = try? databaseManager.toggleFavorite(clipId: clipId)
+        performUIAction { [self] in
+
+            if !selectedClipIds.isEmpty {
+                for clipId in selectedClipIds {
+                    let db = databaseManager
+                    _ = try? await Task.detached(priority: .utility) { try db.toggleFavorite(clipId: clipId) }.value
+                }
+                loadClips()
+                showToast("Favorites updated ★")
+            } else if selectedIndex >= 0 && selectedIndex < clips.count {
+                let clip = clips[selectedIndex]
+                toggleFavorite(clip: clip)
+                showToast(clip.isFavorite ? "Removed from Favorites" : "Added to Favorites ★")
             }
-            loadClips()
-            showToast("Favorites updated ★")
-        } else if selectedIndex >= 0 && selectedIndex < clips.count {
-            let clip = clips[selectedIndex]
-            toggleFavorite(clip: clip)
-            showToast(clip.isFavorite ? "Removed from Favorites" : "Added to Favorites ★")
+
         }
     }
 
@@ -747,23 +904,36 @@ public final class ClipboardViewModel: ObservableObject {
     }
 
     public func assignClipToList(clip: ClipRecord, listId: UUID?) {
-        do {
-            _ = try databaseManager.assignClip(clipId: clip.id, toListId: listId)
-            loadClips()
-        } catch {
-            print("[ConCopy] Failed to assign clip to list: \(error)")
+        performUIAction { [self] in
+
+            do {
+                let db = databaseManager
+                _ = try await Task.detached(priority: .utility) { try db.assignClip(clipId: clip.id, toListId: listId) }
+                    .value
+                loadClips()
+            } catch {
+                print("[ConCopy] Failed to assign clip to list: \(error)")
+            }
+
         }
     }
 
     public func assignSelectedClipsToList(listId: UUID?) {
-        for clipId in selectedClipIds {
-            do {
-                _ = try databaseManager.assignClip(clipId: clipId, toListId: listId)
-            } catch {
-                print("[ConCopy] Failed to assign clip \(clipId) to list: \(error)")
+        performUIAction { [self] in
+
+            for clipId in selectedClipIds {
+                do {
+                    let db = databaseManager
+                    _ = try await Task.detached(priority: .utility) {
+                        try db.assignClip(clipId: clipId, toListId: listId)
+                    }.value
+                } catch {
+                    print("[ConCopy] Failed to assign clip \(clipId) to list: \(error)")
+                }
             }
+            loadClips()
+
         }
-        loadClips()
     }
 
     public func convertMovingClipToSnippet() {
@@ -773,13 +943,18 @@ public final class ClipboardViewModel: ObservableObject {
     }
 
     public func assignMovingClipToAll() {
-        guard let clip = movingClip else { return }
-        if clip.isFavorite {
-            _ = try? databaseManager.toggleFavorite(clipId: clip.id)
+        performUIAction { [self] in
+
+            guard let clip = movingClip else { return }
+            if clip.isFavorite {
+                let db = databaseManager
+                _ = try? await Task.detached(priority: .utility) { try db.toggleFavorite(clipId: clip.id) }.value
+            }
+            assignClipToList(clip: clip, listId: nil)
+            movingClip = nil
+            showToast("Removed from all lists")
+
         }
-        assignClipToList(clip: clip, listId: nil)
-        movingClip = nil
-        showToast("Removed from all lists")
     }
 
     public func assignMovingClip(toOptionIndex digit: Int) {
@@ -803,24 +978,31 @@ public final class ClipboardViewModel: ObservableObject {
     }
 
     public func deleteClip(_ clip: ClipRecord) {
-        do {
-            try databaseManager.deleteClip(clipId: clip.id)
-            selectedClipIds.remove(clip.id)
-            loadClips()
-        } catch {
-            print("[ConCopy] Failed to delete clip: \(error)")
+        performUIAction { [self] in
+
+            do {
+                let db = databaseManager
+                try await Task.detached(priority: .utility) { try db.deleteClip(clipId: clip.id) }.value
+                selectedClipIds.remove(clip.id)
+                loadClips()
+            } catch {
+                print("[ConCopy] Failed to delete clip: \(error)")
+            }
+
         }
     }
 
     // MARK: - Snippets Management
     public func loadSnippets() {
-        do {
-            snippets = try databaseManager.fetchSnippets()
-            if selectedSnippetIndex >= filteredSnippets.count {
-                selectedSnippetIndex = max(0, filteredSnippets.count - 1)
-            }
-        } catch {
-            print("[ConCopy] Failed to load snippets: \(error)")
+        snippetLoadTask?.cancel()
+        let db = databaseManager
+        snippetLoadTask = Task { [weak self] in
+            do {
+                let fetched = try await Task.detached(priority: .userInitiated) { try db.fetchSnippets() }.value
+                guard !Task.isCancelled, let self else { return }
+                self.snippets = fetched
+                self.selectedSnippetIndex = max(0, min(self.selectedSnippetIndex, self.filteredSnippets.count - 1))
+            } catch { self?.showToast("Could not load snippets") }
         }
     }
 
@@ -837,9 +1019,16 @@ public final class ClipboardViewModel: ObservableObject {
         isSnippetEditorPresented = true
     }
 
-    public func saveSnippet(shortcut: String, content: String, title: String? = nil, existingId: UUID? = nil) {
+    @discardableResult
+    public func saveSnippet(shortcut: String, content: String, title: String? = nil, existingId: UUID? = nil) async
+        -> Bool
+    {
+        snippetSaveError = nil
         let trimmedShortcut = shortcut.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedShortcut.isEmpty, !content.isEmpty else { return }
+        guard !trimmedShortcut.isEmpty, !content.isEmpty else {
+            snippetSaveError = "Shortcut and content are required"
+            return false
+        }
         let snippet = SnippetRecord(
             id: existingId ?? UUID(),
             shortcut: trimmedShortcut,
@@ -849,77 +1038,109 @@ public final class ClipboardViewModel: ObservableObject {
             updatedAt: Date()
         )
         do {
-            try databaseManager.saveSnippet(snippet)
+            let db = databaseManager
+            try await Task.detached(priority: .utility) { try db.saveSnippet(snippet) }.value
             loadSnippets()
             showToast("Snippet saved: \(snippet.shortcut)")
+            return true
         } catch {
             print("[ConCopy] Failed to save snippet: \(error)")
-            showToast("Error saving snippet")
+            snippetSaveError = "Could not save. Check whether this shortcut is already in use."
+            return false
         }
     }
 
     public func deleteSnippet(_ snippet: SnippetRecord) {
-        do {
-            try databaseManager.deleteSnippet(id: snippet.id)
-            loadSnippets()
-            showToast("Snippet deleted")
-        } catch {
-            print("[ConCopy] Failed to delete snippet: \(error)")
+        performUIAction { [self] in
+
+            do {
+                let db = databaseManager
+                try await Task.detached(priority: .utility) { try db.deleteSnippet(id: snippet.id) }.value
+                loadSnippets()
+                showToast("Snippet deleted")
+            } catch {
+                print("[ConCopy] Failed to delete snippet: \(error)")
+            }
+
         }
     }
 
     public func pasteSnippet(_ snippet: SnippetRecord) {
-        let isTrusted = pasteInjector.eventPoster.isProcessTrusted()
         Task { @MainActor [weak self] in
-            guard let self = self else { return }
+            guard let self else { return }
             do {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(snippet.content, forType: .string)
-                NSPasteboard.general.setString("1", forType: PasteInjector.internalPasteMarker)
-                self.onClosePanel?()
-                try await Task.sleep(nanoseconds: 80_000_000)
-                if isTrusted {
-                    _ = self.pasteInjector.eventPoster.postCommandV()
+                try await pasteInjector.pasteText(snippet.content, pasteboard: pasteboard) { [weak self] willSend in
+                    guard let self else { return }
+                    if willSend { onClosePanel?() }
+                    else {
+                        showToast("Copied to clipboard! Press ⌘V to paste.")
+                        Task { @MainActor [weak self] in
+                            try? await Task.sleep(nanoseconds: 450_000_000)
+                            self?.onClosePanel?()
+                        }
+                    }
                 }
             } catch {
-                print("[ConCopy] Failed to paste snippet: \(error)")
+                reportPasteFailure(error)
             }
         }
     }
 
     // MARK: - Image / File Thumbnail Helper
     public func imageThumbnail(for clip: ClipRecord) -> NSImage? {
-        if let cached = thumbnailCache.object(forKey: clip.id as NSUUID) {
-            return cached
+        if let cached = thumbnailCache.object(forKey: clip.id as NSUUID) { return cached }
+        guard clip.primaryType == .image, thumbnailTasks.insert(clip.id).inserted else { return nil }
+        let db = databaseManager
+        Task { [weak self] in
+            let data = await Task.detached(priority: .utility) { () -> Data? in
+                autoreleasepool {
+                    guard
+                        let payload = try? db.fetchPayloads(for: clip.id).first(where: {
+                            $0.utiType == "public.png" || $0.utiType == "public.tiff"
+                        }),
+                        let bytes = try? db.loadPayloadData(for: payload),
+                        let source = CGImageSourceCreateWithData(bytes as CFData, nil),
+                        let image = CGImageSourceCreateThumbnailAtIndex(
+                            source, 0,
+                            [
+                                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                                kCGImageSourceThumbnailMaxPixelSize: 96,
+                                kCGImageSourceCreateThumbnailWithTransform: true,
+                            ] as CFDictionary)
+                    else { return nil }
+                    let rep = NSBitmapImageRep(cgImage: image)
+                    return rep.representation(using: .png, properties: [:])
+                }
+            }.value
+            guard let self else { return }
+            self.thumbnailTasks.remove(clip.id)
+            if let data, let image = NSImage(data: data) {
+                self.thumbnailCache.setObject(image, forKey: clip.id as NSUUID)
+                self.thumbnailVersion &+= 1
+            }
         }
-        guard clip.primaryType == .image else { return nil }
-        guard let payloads = try? databaseManager.fetchPayloads(forClipId: clip.id),
-              let imgPayload = payloads.first(where: { $0.utiType == "public.png" || $0.utiType == "public.tiff" }),
-              let data = try? databaseManager.loadPayloadData(for: imgPayload),
-              let image = NSImage(data: data) else {
-            return nil
-        }
-        thumbnailCache.setObject(image, forKey: clip.id as NSUUID)
-        return image
+        return nil
     }
 
     public func fileIcon(for clip: ClipRecord) -> NSImage? {
         guard clip.primaryType == .file else { return nil }
-        guard let payloads = try? databaseManager.fetchPayloads(forClipId: clip.id),
-              let filePayload = payloads.first(where: { $0.utiType == "public.file-url" }),
-              let data = try? databaseManager.loadPayloadData(for: filePayload),
-              let urlString = String(data: data, encoding: .utf8),
-              let fileURL = URL(string: urlString) else {
-            if let text = clip.plainText, text.hasPrefix("/") {
-                return NSWorkspace.shared.icon(forFile: text)
-            }
-            if #available(macOS 12.0, *), let utType = UTType(filenameExtension: "txt") {
-                return NSWorkspace.shared.icon(for: utType)
-            } else {
-                return NSImage(systemSymbolName: "doc.text", accessibilityDescription: nil)
+        if let cached = thumbnailCache.object(forKey: clip.id as NSUUID) { return cached }
+        if thumbnailTasks.insert(clip.id).inserted {
+            let db = databaseManager
+            Task { [weak self] in
+                let iconData = await Task.detached(priority: .utility) { () -> Data? in
+                    guard let url = try? db.fileURLs(for: clip.id).first else { return nil }
+                    return autoreleasepool { NSWorkspace.shared.icon(forFile: url.path).tiffRepresentation }
+                }.value
+                guard let self else { return }
+                self.thumbnailTasks.remove(clip.id)
+                if let iconData, let icon = NSImage(data: iconData) {
+                    self.thumbnailCache.setObject(icon, forKey: clip.id as NSUUID)
+                    self.thumbnailVersion &+= 1
+                }
             }
         }
-        return NSWorkspace.shared.icon(forFile: fileURL.path)
+        return NSImage(systemSymbolName: "doc", accessibilityDescription: nil)
     }
 
     public func appIcon(for clip: ClipRecord) -> NSImage? {

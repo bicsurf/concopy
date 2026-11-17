@@ -84,10 +84,13 @@ public struct PreferencesView: View {
         } message: {
             Text("All clips not marked as favorites will be permanently deleted from disk.")
         }
-        .alert("Operation Completed", isPresented: Binding(
-            get: { statusAlertMessage != nil },
-            set: { if !$0 { statusAlertMessage = nil } }
-        )) {
+        .alert(
+            "Operation Completed",
+            isPresented: Binding(
+                get: { statusAlertMessage != nil },
+                set: { if !$0 { statusAlertMessage = nil } }
+            )
+        ) {
             Button("OK", role: .cancel) { statusAlertMessage = nil }
         } message: {
             Text(statusAlertMessage ?? "")
@@ -105,7 +108,8 @@ public struct PreferencesView: View {
                 detectedMaccyURL = nil
             }
         } message: {
-            Text("A Maccy database was found at:\n\(detectedMaccyURL?.path ?? "")\n\nDo you want to import it directly?")
+            Text(
+                "A Maccy database was found at:\n\(detectedMaccyURL?.path ?? "")\n\nDo you want to import it directly?")
         }
     }
 
@@ -113,10 +117,12 @@ public struct PreferencesView: View {
     private var generalTabView: some View {
         Form {
             Section(header: Text("Clipboard Monitoring")) {
-                Toggle(isOn: Binding(
-                    get: { !settingsManager.isMonitoringPaused },
-                    set: { settingsManager.isMonitoringPaused = !$0 }
-                )) {
+                Toggle(
+                    isOn: Binding(
+                        get: { !settingsManager.isMonitoringPaused },
+                        set: { settingsManager.isMonitoringPaused = !$0 }
+                    )
+                ) {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Record clipboard history")
                         Text("Save copied items so you can use them again later.")
@@ -145,12 +151,14 @@ public struct PreferencesView: View {
                         Text("Copy to clipboard").tag(false)
                         Text("Paste into active app").tag(true)
                     }
-                    Text(settingsManager.isDirectPasteEnabled
-                        ? "A click pastes the clip into the app you were using and closes the panel."
-                        : "A click copies the clip and keeps the panel open. Paste with ⌘V when you’re ready.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    Text(
+                        settingsManager.isDirectPasteEnabled
+                            ? "A click pastes the clip into the app you were using and closes the panel."
+                            : "A click copies the clip and keeps the panel open. Paste with ⌘V when you’re ready."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(.vertical, 4)
             }
@@ -197,7 +205,8 @@ public struct PreferencesView: View {
                         Spacer()
                         Text(status)
                             .font(.caption)
-                            .foregroundColor(updateChecker.availableUpdate != nil ? ConCopyTheme.Accents.primary : .secondary)
+                            .foregroundColor(
+                                updateChecker.availableUpdate != nil ? ConCopyTheme.Accents.primary : .secondary)
                     }
                 }
             }
@@ -246,9 +255,12 @@ public struct PreferencesView: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
 
-                Button(role: .destructive, action: {
-                    isShowingClearConfirm = true
-                }) {
+                Button(
+                    role: .destructive,
+                    action: {
+                        isShowingClearConfirm = true
+                    }
+                ) {
                     Label("Clear History", systemImage: "trash")
                         .foregroundColor(.red)
                 }
@@ -305,26 +317,32 @@ public struct PreferencesView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Keyboard Shortcuts Customization")
                             .font(.headline)
-                        Text("Configure or clear global and panel shortcuts. Click on a field to record a combination, or use the clear button to disable it.")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                        Text(
+                            "Configure or clear global and panel shortcuts. Click on a field to record a combination, or use the clear button to disable it."
+                        )
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                     }
                     .padding(.horizontal, 16)
                     .padding(.top, 14)
 
                     // Toggle numeric modifiers swap
-                    Toggle(isOn: Binding(
-                        get: { shortcutsManager.swapNumericModifiers },
-                        set: { shortcutsManager.setSwapNumericModifiers($0) }
-                    )) {
+                    Toggle(
+                        isOn: Binding(
+                            get: { shortcutsManager.swapNumericModifiers },
+                            set: { shortcutsManager.setSwapNumericModifiers($0) }
+                        )
+                    ) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Swap numeric modifiers (⌘ ⇋ ⌥)")
                                 .font(.system(size: 13, weight: .semibold))
-                            Text(shortcutsManager.swapNumericModifiers
-                                ? "Active: ⌥ to select lists and ⌘ for quick paste"
-                                : "Default: ⌘ to select lists and ⌥ for quick paste")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                            Text(
+                                shortcutsManager.swapNumericModifiers
+                                    ? "Active: ⌥ to select lists and ⌘ for quick paste"
+                                    : "Default: ⌘ to select lists and ⌥ for quick paste"
+                            )
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                         }
                     }
                     .toggleStyle(.switch)
@@ -398,7 +416,10 @@ public struct PreferencesView: View {
                         .padding(.vertical, 1.5)
                         .background(
                             Capsule()
-                                .fill(key.scope == .global ? ConCopyTheme.Accents.snippet.opacity(0.15) : ConCopyTheme.Surfaces.pillBackground)
+                                .fill(
+                                    key.scope == .global
+                                        ? ConCopyTheme.Accents.snippet.opacity(0.15)
+                                        : ConCopyTheme.Surfaces.pillBackground)
                         )
 
                     if let def = key.defaultShortcut {
@@ -524,7 +545,8 @@ public struct PreferencesView: View {
                         chooseAppFile()
                     }
                     if let frontmost = NSWorkspace.shared.frontmostApplication,
-                        let bundleId = frontmost.bundleIdentifier {
+                        let bundleId = frontmost.bundleIdentifier
+                    {
                         Button("Add active app (\(frontmost.localizedName ?? bundleId))") {
                             settingsManager.addExcludedApp(bundleId: bundleId)
                         }
@@ -621,12 +643,14 @@ public struct PreferencesView: View {
 
     private func clearHistoryAction() {
         guard let db = databaseManager else { return }
-        do {
-            let count = try db.clearAllHistory(preserveFavorites: true)
-            onDataChanged?()
-            statusAlertMessage = "Cleared \(count) clips from history"
-        } catch {
-            statusAlertMessage = "Error clearing history: \(error.localizedDescription)"
+        Task {
+            do {
+                let count = try await Task.detached(priority: .utility) {
+                    try db.clearAllHistory(preserveFavorites: true)
+                }.value
+                onDataChanged?()
+                statusAlertMessage = "Cleared \(count) clips from history"
+            } catch { statusAlertMessage = "Error clearing history: \(error.localizedDescription)" }
         }
     }
 
@@ -700,13 +724,15 @@ public struct PreferencesView: View {
         let openPanel = NSOpenPanel()
         openPanel.allowedContentTypes = [
             UTType(filenameExtension: "sqlite") ?? .data,
-            UTType(filenameExtension: "db") ?? .data
+            UTType(filenameExtension: "db") ?? .data,
         ]
         openPanel.allowsMultipleSelection = false
         openPanel.canChooseDirectories = true
         openPanel.canChooseFiles = true
         openPanel.prompt = "Import"
-        if let defaultDir = MaccyImporter.standardLocations.first(where: { FileManager.default.fileExists(atPath: $0.path) }) {
+        if let defaultDir = MaccyImporter.standardLocations.first(where: {
+            FileManager.default.fileExists(atPath: $0.path)
+        }) {
             openPanel.directoryURL = defaultDir
         }
 
@@ -722,7 +748,7 @@ public struct PreferencesView: View {
             UTType(filenameExtension: "sqlite") ?? .data,
             UTType(filenameExtension: "db") ?? .data,
             .package,
-            .folder
+            .folder,
         ]
         if let cepType = UTType(filenameExtension: "cep") {
             types.insert(cepType, at: 0)
@@ -733,7 +759,9 @@ public struct PreferencesView: View {
         openPanel.canChooseFiles = true
         openPanel.treatsFilePackagesAsDirectories = true
         openPanel.prompt = "Import"
-        if let defaultDir = CopyEmImporter.standardLocations.first(where: { FileManager.default.fileExists(atPath: $0.path) }) {
+        if let defaultDir = CopyEmImporter.standardLocations.first(where: {
+            FileManager.default.fileExists(atPath: $0.path)
+        }) {
             openPanel.directoryURL = defaultDir
         }
 
@@ -763,9 +791,11 @@ public struct PreferencesView: View {
                 let result = try importer.importClips(into: db) { progress in
                     Task { @MainActor in
                         if let total = progress.total, total > 0 {
-                            self.importProgressDescription = "\(progress.processed)/\(total) processed (\(progress.imported) imported, \(progress.merged) merged)"
+                            self.importProgressDescription =
+                                "\(progress.processed)/\(total) processed (\(progress.imported) imported, \(progress.merged) merged)"
                         } else {
-                            self.importProgressDescription = "\(progress.processed) processed (\(progress.imported) imported, \(progress.merged) merged)"
+                            self.importProgressDescription =
+                                "\(progress.processed) processed (\(progress.imported) imported, \(progress.merged) merged)"
                         }
                     }
                 }
@@ -775,18 +805,19 @@ public struct PreferencesView: View {
                     self.importProgressDescription = ""
                     self.onDataChanged?()
                     self.statusAlertMessage = """
-                    Import from \(importer.displayName) completed!
-                    • \(result.importedCount) new clips imported
-                    • \(result.mergedDuplicatesCount) duplicate clips merged
-                    • \(result.createdListsCount) new lists created
-                    • \(result.errorsCount) errors
-                    """
+                        Import from \(importer.displayName) completed!
+                        • \(result.importedCount) new clips imported
+                        • \(result.mergedDuplicatesCount) duplicate clips merged
+                        • \(result.createdListsCount) new lists created
+                        • \(result.errorsCount) errors
+                        """
                 }
             } catch {
                 await MainActor.run {
                     self.isImporting = false
                     self.importProgressDescription = ""
-                    self.statusAlertMessage = "Error importing from \(importer.displayName): \(error.localizedDescription)"
+                    self.statusAlertMessage =
+                        "Error importing from \(importer.displayName): \(error.localizedDescription)"
                 }
             }
         }

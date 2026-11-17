@@ -1,6 +1,11 @@
 import CryptoKit
 import Foundation
 
+public enum BlobStorageError: LocalizedError {
+    case corruptedBlob
+    public var errorDescription: String? { "Stored clipboard data is damaged." }
+}
+
 public struct BlobStorageManager: Sendable {
     public let baseDirectoryURL: URL
 
@@ -26,7 +31,7 @@ public struct BlobStorageManager: Sendable {
         let filename = "\(hashString).blob"
         let fileURL = baseDirectoryURL.appendingPathComponent(filename)
 
-        if !fileManager.fileExists(atPath: fileURL.path) {
+        if !fileManager.fileExists(atPath: fileURL.path) || (try? loadBlob(filename: filename)) == nil {
             try autoreleasepool {
                 try data.write(to: fileURL, options: .atomic)
             }
@@ -38,7 +43,9 @@ public struct BlobStorageManager: Sendable {
     public func loadBlob(filename: String) throws -> Data {
         let fileURL = baseDirectoryURL.appendingPathComponent(filename)
         return try autoreleasepool {
-            try Data(contentsOf: fileURL, options: .mappedIfSafe)
+            let data = try Data(contentsOf: fileURL, options: .mappedIfSafe)
+            guard CapturedClip.hash(data) + ".blob" == filename else { throw BlobStorageError.corruptedBlob }
+            return data
         }
     }
 

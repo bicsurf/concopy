@@ -62,7 +62,7 @@ final class CloudKitSyncCoordinatorTests: XCTestCase {
         let result = await worker.performSync()
         XCTAssertEqual(result.status, .idle)
 
-        let syncFile = syncFolder.appendingPathComponent("sync-state-v1.json")
+        let syncFile = syncFolder.appendingPathComponent("sync-state-v2.json")
         XCTAssertTrue(FileManager.default.fileExists(atPath: syncFile.path))
 
         let data = try Data(contentsOf: syncFile)

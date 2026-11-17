@@ -25,18 +25,29 @@ public struct LinkMetadataFetcher: Sendable {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.timeoutInterval = timeout
-        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 (KHTML, like Gecko)", forHTTPHeaderField: "User-Agent")
+        request.setValue(
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 (KHTML, like Gecko)",
+            forHTTPHeaderField: "User-Agent")
 
         do {
-            let (data, response) = try await session.data(for: request)
+            let (bytes, response) = try await session.bytes(for: request)
+            defer { bytes.task.cancel() }
             guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
                 return URLMetadata(title: nil, faviconURL: defaultFaviconURL(for: url))
             }
 
-            // Inspect the first 64KB where <head> resides
-            let maxBytes = min(data.count, 65536)
-            let headData = data.prefix(maxBytes)
-            let htmlString = String(decoding: headData, as: UTF8.self)
+            if let mime = httpResponse.mimeType,
+                !["text/html", "application/xhtml+xml"].contains(mime.lowercased())
+            {
+                return URLMetadata(title: nil, faviconURL: defaultFaviconURL(for: url))
+            }
+            var head = Data()
+            head.reserveCapacity(65536)
+            for try await byte in bytes {
+                head.append(byte)
+                if head.count == 65536 { break }
+            }
+            let htmlString = String(decoding: head, as: UTF8.self)
 
             let title = extractTitle(from: htmlString)
             let favicon = extractFavicon(from: htmlString, baseURL: url) ?? defaultFaviconURL(for: url)
@@ -72,7 +83,8 @@ public struct LinkMetadataFetcher: Sendable {
 
         let range = NSRange(html.startIndex..<html.endIndex, in: html)
         guard let match = regex.firstMatch(in: html, options: [], range: range),
-              let titleRange = Range(match.range(at: 1), in: html) else {
+            let titleRange = Range(match.range(at: 1), in: html)
+        else {
             return nil
         }
 
@@ -89,7 +101,8 @@ public struct LinkMetadataFetcher: Sendable {
 
         let range = NSRange(html.startIndex..<html.endIndex, in: html)
         if let match = regex.firstMatch(in: html, options: [], range: range),
-           let hrefRange = Range(match.range(at: 1), in: html) {
+            let hrefRange = Range(match.range(at: 1), in: html)
+        {
             let href = String(html[hrefRange])
             if let resolved = URL(string: href, relativeTo: baseURL)?.absoluteURL {
                 return resolved

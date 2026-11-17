@@ -19,7 +19,8 @@ public final class DatabaseManager: Sendable {
         self.dbWriter = pool
         self.blobStorage = BlobStorageManager(baseDirectoryURL: blobDirectoryURL)
 
-        try Self.migrator().migrate(pool)
+        try Self.migrator(blobStorage: blobStorage).migrate(pool)
+        do { try collectMigrationBlobs() } catch { print("[ConCopy] Deferred blob cleanup: \(error)") }
     }
 
     public init(inMemoryWithBlobDirectoryURL blobDirectoryURL: URL) throws {
@@ -30,11 +31,13 @@ public final class DatabaseManager: Sendable {
         self.dbWriter = queue
         self.blobStorage = BlobStorageManager(baseDirectoryURL: blobDirectoryURL)
 
-        try Self.migrator().migrate(queue)
+        try Self.migrator(blobStorage: blobStorage).migrate(queue)
+        do { try collectMigrationBlobs() } catch { print("[ConCopy] Deferred blob cleanup: \(error)") }
     }
 
     public static func makeFallback() -> DatabaseManager {
-        let temp = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("ConCopyFallback_\(UUID().uuidString)")
+        let temp = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(
+            "ConCopyFallback_\(UUID().uuidString)")
         if let db = try? DatabaseManager(inMemoryWithBlobDirectoryURL: temp) {
             return db
         }
@@ -62,93 +65,197 @@ public final class DatabaseManager: Sendable {
         self.blobStorage = blobStorage
     }
 
-    private static func migrator() -> DatabaseMigrator {
+    internal static func migrator(blobStorage: BlobStorageManager) -> DatabaseMigrator {
         var migrator = DatabaseMigrator()
 
         migrator.registerMigration("v1_initial_schema") { db in
-            try db.execute(sql: """
-            CREATE TABLE clip_lists (
-                id TEXT PRIMARY KEY NOT NULL,
-                name TEXT NOT NULL,
-                sortOrder INTEGER NOT NULL DEFAULT 0,
-                isAutoStarActive INTEGER NOT NULL DEFAULT 0,
-                createdAt DATETIME NOT NULL
-            );
+            try db.execute(
+                sql: """
+                    CREATE TABLE clip_lists (
+                        id TEXT PRIMARY KEY NOT NULL,
+                        name TEXT NOT NULL,
+                        sortOrder INTEGER NOT NULL DEFAULT 0,
+                        isAutoStarActive INTEGER NOT NULL DEFAULT 0,
+                        createdAt DATETIME NOT NULL
+                    );
 
-            CREATE TABLE clips (
-                id TEXT PRIMARY KEY NOT NULL,
-                contentHash TEXT NOT NULL UNIQUE,
-                plainText TEXT,
-                customName TEXT,
-                primaryType TEXT NOT NULL,
-                sourceAppBundleId TEXT,
-                isFavorite INTEGER NOT NULL DEFAULT 0,
-                listId TEXT REFERENCES clip_lists(id) ON DELETE SET NULL,
-                pasteCount INTEGER NOT NULL DEFAULT 0,
-                createdAt DATETIME NOT NULL,
-                updatedAt DATETIME NOT NULL
-            );
+                    CREATE TABLE clips (
+                        id TEXT PRIMARY KEY NOT NULL,
+                        contentHash TEXT NOT NULL UNIQUE,
+                        plainText TEXT,
+                        customName TEXT,
+                        primaryType TEXT NOT NULL,
+                        sourceAppBundleId TEXT,
+                        isFavorite INTEGER NOT NULL DEFAULT 0,
+                        listId TEXT REFERENCES clip_lists(id) ON DELETE SET NULL,
+                        pasteCount INTEGER NOT NULL DEFAULT 0,
+                        createdAt DATETIME NOT NULL,
+                        updatedAt DATETIME NOT NULL
+                    );
 
-            CREATE INDEX index_clips_on_contentHash ON clips(contentHash);
-            CREATE INDEX index_clips_on_updatedAt ON clips(updatedAt DESC);
-            CREATE INDEX index_clips_on_sourceAppBundleId ON clips(sourceAppBundleId);
-            CREATE INDEX index_clips_on_primaryType ON clips(primaryType);
-            CREATE INDEX index_clips_on_listId ON clips(listId);
+                    CREATE INDEX index_clips_on_contentHash ON clips(contentHash);
+                    CREATE INDEX index_clips_on_updatedAt ON clips(updatedAt DESC);
+                    CREATE INDEX index_clips_on_sourceAppBundleId ON clips(sourceAppBundleId);
+                    CREATE INDEX index_clips_on_primaryType ON clips(primaryType);
+                    CREATE INDEX index_clips_on_listId ON clips(listId);
 
-            CREATE TABLE clip_payloads (
-                id TEXT PRIMARY KEY NOT NULL,
-                clipId TEXT NOT NULL REFERENCES clips(id) ON DELETE CASCADE,
-                utiType TEXT NOT NULL,
-                inlineData BLOB,
-                blobFilename TEXT,
-                byteSize INTEGER NOT NULL
-            );
+                    CREATE TABLE clip_payloads (
+                        id TEXT PRIMARY KEY NOT NULL,
+                        clipId TEXT NOT NULL REFERENCES clips(id) ON DELETE CASCADE,
+                        utiType TEXT NOT NULL,
+                        inlineData BLOB,
+                        blobFilename TEXT,
+                        byteSize INTEGER NOT NULL
+                    );
 
-            CREATE INDEX index_clip_payloads_on_clipId ON clip_payloads(clipId);
-            CREATE INDEX index_clip_payloads_on_blobFilename ON clip_payloads(blobFilename);
+                    CREATE INDEX index_clip_payloads_on_clipId ON clip_payloads(clipId);
+                    CREATE INDEX index_clip_payloads_on_blobFilename ON clip_payloads(blobFilename);
 
-            CREATE VIRTUAL TABLE clips_fts USING fts5(
-                plainText,
-                customName,
-                content='clips',
-                tokenize='unicode61 remove_diacritics 2'
-            );
+                    CREATE VIRTUAL TABLE clips_fts USING fts5(
+                        plainText,
+                        customName,
+                        content='clips',
+                        tokenize='unicode61 remove_diacritics 2'
+                    );
 
-            CREATE TRIGGER clips_ai AFTER INSERT ON clips BEGIN
-                INSERT INTO clips_fts(rowid, plainText, customName) VALUES (new.rowid, new.plainText, new.customName);
-            END;
+                    CREATE TRIGGER clips_ai AFTER INSERT ON clips BEGIN
+                        INSERT INTO clips_fts(rowid, plainText, customName) VALUES (new.rowid, new.plainText, new.customName);
+                    END;
 
-            CREATE TRIGGER clips_ad AFTER DELETE ON clips BEGIN
-                INSERT INTO clips_fts(clips_fts, rowid, plainText, customName) VALUES ('delete', old.rowid, old.plainText, old.customName);
-            END;
+                    CREATE TRIGGER clips_ad AFTER DELETE ON clips BEGIN
+                        INSERT INTO clips_fts(clips_fts, rowid, plainText, customName) VALUES ('delete', old.rowid, old.plainText, old.customName);
+                    END;
 
-            CREATE TRIGGER clips_au AFTER UPDATE ON clips BEGIN
-                INSERT INTO clips_fts(clips_fts, rowid, plainText, customName) VALUES ('delete', old.rowid, old.plainText, old.customName);
-                INSERT INTO clips_fts(rowid, plainText, customName) VALUES (new.rowid, new.plainText, new.customName);
-            END;
-            """)
+                    CREATE TRIGGER clips_au AFTER UPDATE ON clips BEGIN
+                        INSERT INTO clips_fts(clips_fts, rowid, plainText, customName) VALUES ('delete', old.rowid, old.plainText, old.customName);
+                        INSERT INTO clips_fts(rowid, plainText, customName) VALUES (new.rowid, new.plainText, new.customName);
+                    END;
+                    """)
         }
 
         migrator.registerMigration("v2_list_sorting_and_manual_order") { db in
-            try db.execute(sql: """
-            ALTER TABLE clip_lists ADD COLUMN sortMode TEXT NOT NULL DEFAULT 'updatedAtDesc';
-            ALTER TABLE clips ADD COLUMN manualSortIndex INTEGER NOT NULL DEFAULT 0;
-            CREATE INDEX index_clips_on_manualSortIndex ON clips(manualSortIndex);
-            """)
+            try db.execute(
+                sql: """
+                    ALTER TABLE clip_lists ADD COLUMN sortMode TEXT NOT NULL DEFAULT 'updatedAtDesc';
+                    ALTER TABLE clips ADD COLUMN manualSortIndex INTEGER NOT NULL DEFAULT 0;
+                    CREATE INDEX index_clips_on_manualSortIndex ON clips(manualSortIndex);
+                    """)
         }
 
         migrator.registerMigration("v3_snippets_schema") { db in
+            try db.execute(
+                sql: """
+                    CREATE TABLE IF NOT EXISTS snippets (
+                        id TEXT PRIMARY KEY NOT NULL,
+                        shortcut TEXT NOT NULL UNIQUE,
+                        content TEXT NOT NULL,
+                        title TEXT,
+                        createdAt DATETIME NOT NULL,
+                        updatedAt DATETIME NOT NULL
+                    );
+                    CREATE INDEX IF NOT EXISTS index_snippets_on_shortcut ON snippets(shortcut);
+                    """)
+        }
+
+        migrator.registerMigration("v4_sync_change_journal") { db in
+            // Previous snippet UUIDs were stored as 16-byte blobs by GRDB.
+            try db.execute(
+                sql: """
+                    UPDATE snippets SET id = lower(substr(hex(id),1,8) || '-' || substr(hex(id),9,4) || '-' ||
+                        substr(hex(id),13,4) || '-' || substr(hex(id),17,4) || '-' || substr(hex(id),21,12))
+                    WHERE typeof(id) = 'blob';
+                    CREATE TABLE sync_changes (
+                        kind TEXT NOT NULL, id TEXT NOT NULL, modifiedAt REAL NOT NULL,
+                        deleted INTEGER NOT NULL DEFAULT 0, contentHash TEXT,
+                        PRIMARY KEY(kind, id)
+                    );
+                    CREATE TABLE sync_aliases (alias TEXT PRIMARY KEY NOT NULL, canonical TEXT NOT NULL);
+                    """)
+            let now = "((julianday('now') - 2440587.5) * 86400.0)"
+            for (table, kind) in [("clips", "clip"), ("clip_lists", "list"), ("snippets", "snippet")] {
+                let hash = table == "clips" ? "new.contentHash" : "NULL"
+                let oldHash = table == "clips" ? "old.contentHash" : "NULL"
+                for event in ["INSERT", "UPDATE"] {
+                    try db.execute(
+                        sql: """
+                            CREATE TRIGGER sync_\(table)_\(event) AFTER \(event) ON \(table) BEGIN
+                                INSERT OR REPLACE INTO sync_changes(kind,id,modifiedAt,deleted,contentHash)
+                                VALUES ('\(kind)',new.id,MAX(\(now),COALESCE((SELECT modifiedAt + 0.000001 FROM sync_changes
+                                    WHERE kind='\(kind)' AND id=new.id),0)),0,\(hash));
+                            END;
+                            """)
+                }
+                try db.execute(
+                    sql: """
+                        CREATE TRIGGER sync_\(table)_DELETE AFTER DELETE ON \(table) BEGIN
+                            INSERT OR REPLACE INTO sync_changes(kind,id,modifiedAt,deleted,contentHash)
+                            VALUES ('\(kind)',old.id,MAX(\(now),COALESCE((SELECT modifiedAt + 0.000001 FROM sync_changes
+                                WHERE kind='\(kind)' AND id=old.id),0)),1,\(oldHash));
+                        END;
+                        """)
+            }
+        }
+
+        migrator.registerMigration("v5_independent_usage_counters") { db in
             try db.execute(sql: """
-            CREATE TABLE IF NOT EXISTS snippets (
-                id TEXT PRIMARY KEY NOT NULL,
-                shortcut TEXT NOT NULL UNIQUE,
-                content TEXT NOT NULL,
-                title TEXT,
-                createdAt DATETIME NOT NULL,
-                updatedAt DATETIME NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS index_snippets_on_shortcut ON snippets(shortcut);
-            """)
+                CREATE TABLE sync_metadata (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL);
+                CREATE TABLE sync_usage (
+                    clipId TEXT NOT NULL REFERENCES clips(id) ON DELETE CASCADE,
+                    deviceId TEXT NOT NULL, count INTEGER NOT NULL CHECK(count >= 0),
+                    PRIMARY KEY(clipId, deviceId)
+                );
+                INSERT INTO sync_usage SELECT id, 'legacy:' || id, pasteCount FROM clips WHERE pasteCount > 0;
+                DROP TRIGGER sync_clips_UPDATE;
+                CREATE TRIGGER sync_clips_UPDATE AFTER UPDATE ON clips
+                WHEN new.contentHash IS NOT old.contentHash OR new.plainText IS NOT old.plainText
+                  OR new.customName IS NOT old.customName OR new.primaryType IS NOT old.primaryType
+                  OR new.sourceAppBundleId IS NOT old.sourceAppBundleId OR new.isFavorite IS NOT old.isFavorite
+                  OR new.listId IS NOT old.listId OR new.manualSortIndex IS NOT old.manualSortIndex
+                  OR new.createdAt IS NOT old.createdAt OR new.updatedAt IS NOT old.updatedAt
+                BEGIN
+                    INSERT OR REPLACE INTO sync_changes(kind,id,modifiedAt,deleted,contentHash)
+                    VALUES ('clip',new.id,MAX((julianday('now') - 2440587.5) * 86400.0,
+                        COALESCE((SELECT modifiedAt + 0.000001 FROM sync_changes
+                            WHERE kind='clip' AND id=new.id),0)),0,new.contentHash);
+                END;
+                """)
+            try db.execute(sql: "INSERT INTO sync_metadata VALUES ('deviceId', ?)", arguments: [UUID().uuidString.lowercased()])
+            for event in ["INSERT", "UPDATE"] {
+                try db.execute(sql: """
+                    CREATE TRIGGER sync_usage_\(event) AFTER \(event) ON sync_usage BEGIN
+                        INSERT INTO sync_changes(kind,id,modifiedAt,deleted)
+                        VALUES ('usage',new.clipId,(julianday('now') - 2440587.5) * 86400.0,0)
+                        ON CONFLICT(kind,id) DO UPDATE SET
+                            modifiedAt=MAX(excluded.modifiedAt,sync_changes.modifiedAt+0.000001),deleted=0;
+                    END;
+                    """)
+            }
+        }
+
+        migrator.registerMigration("v6_binary_content_identity") { db in
+            try Self.migrateBinaryIdentities(in: db, blobStorage: blobStorage)
+        }
+
+        migrator.registerMigration("v7_independent_clip_metadata") { db in
+            try Self.installMetadataClocks(in: db)
+        }
+
+        migrator.registerMigration("v8_restore_origins_and_blob_cleanup") { db in
+            try Self.createBlobCleanupQueue(in: db)
+            try db.execute(sql: """
+                CREATE TABLE snippet_restore_origins (
+                    originalId TEXT NOT NULL, payloadHash TEXT NOT NULL,
+                    restoredId TEXT NOT NULL REFERENCES snippets(id) ON DELETE CASCADE,
+                    PRIMARY KEY(originalId,payloadHash)
+                );
+                """)
+            // Also collect representations orphaned by an already-applied version of migration v6.
+            let files = (try? FileManager.default.contentsOfDirectory(atPath: blobStorage.baseDirectoryURL.path)) ?? []
+            let hex = Set("0123456789abcdef")
+            for filename in files where filename.count == 69 && filename.hasSuffix(".blob")
+                && filename.prefix(64).allSatisfy({ hex.contains($0) }) {
+                try db.execute(sql: "INSERT OR IGNORE INTO blob_gc_candidates VALUES (?)", arguments: [filename])
+            }
         }
 
         return migrator
@@ -158,64 +265,53 @@ public final class DatabaseManager: Sendable {
     public func ingestCapturedClip(_ captured: CapturedClip) throws -> ClipRecord {
         try autoreleasepool {
             let contentHash = captured.computeContentHash()
+            var representations = captured.representations
+            if let text = captured.plainText { representations["public.utf8-plain-text"] = Data(text.utf8) }
+            let candidates = representations.values.filter { $0.count > 4096 }.map { CapturedClip.hash($0) + ".blob" }
+            var obsoleteBlobs: [String] = []
+            do {
+                let result = try dbWriter.write { db in
+                    let activeAutoStarList = try ClipListRecord.filter(Column("isAutoStarActive") == true).fetchOne(db)
 
-            return try dbWriter.write { db in
-                let activeAutoStarList = try ClipListRecord.filter(Column("isAutoStarActive") == true).fetchOne(db)
-
-                if var existing = try ClipRecord.filter(Column("contentHash") == contentHash).fetchOne(db) {
-                    if !existing.isFavorite {
-                        existing.updatedAt = Date()
+                    if var existing = try ClipRecord.filter(Column("contentHash") == contentHash).fetchOne(db) {
+                        if !existing.isFavorite {
+                            existing.updatedAt = Date()
+                        }
+                        // One capture supplies one coherent set of formats. Absent old formats are obsolete.
+                        obsoleteBlobs = try self.replacePayloads(clipId: existing.id, representations: representations, db: db)
+                        existing.primaryType = captured.primaryType
+                        existing.plainText = captured.plainText
+                        try existing.update(db)
+                        try self.recordContentCapture(clipId: existing.id, contentHash: contentHash, db: db)
+                        return existing
                     }
-                    try existing.update(db)
-                    return existing
+
+                    let isFavorite = activeAutoStarList != nil
+                    let listId = activeAutoStarList?.id
+                    let newClip = ClipRecord(
+                        contentHash: contentHash,
+                        plainText: captured.plainText,
+                        customName: nil,
+                        primaryType: captured.primaryType,
+                        sourceAppBundleId: captured.sourceAppBundleId,
+                        isFavorite: isFavorite,
+                        listId: listId,
+                        pasteCount: 0,
+                        manualSortIndex: 0,
+                        createdAt: Date(),
+                        updatedAt: Date()
+                    )
+                    try newClip.insert(db)
+
+                    try self.replacePayloads(clipId: newClip.id, representations: representations, db: db)
+
+                    return newClip
                 }
-
-                let isFavorite = activeAutoStarList != nil
-                let listId = activeAutoStarList?.id
-                let newClip = ClipRecord(
-                    contentHash: contentHash,
-                    plainText: captured.plainText,
-                    customName: nil,
-                    primaryType: captured.primaryType,
-                    sourceAppBundleId: captured.sourceAppBundleId,
-                    isFavorite: isFavorite,
-                    listId: listId,
-                    pasteCount: 0,
-                    manualSortIndex: 0,
-                    createdAt: Date(),
-                    updatedAt: Date()
-                )
-                try newClip.insert(db)
-
-                var representations = captured.representations
-                if let text = captured.plainText, representations["public.utf8-plain-text"] == nil {
-                    representations["public.utf8-plain-text"] = Data(text.utf8)
-                }
-
-                for (uti, data) in representations {
-                    let payload: ClipPayloadRecord
-                    if data.count > 4096 {
-                        let filename = try self.blobStorage.storeBlob(data: data)
-                        payload = ClipPayloadRecord(
-                            clipId: newClip.id,
-                            utiType: uti,
-                            inlineData: nil,
-                            blobFilename: filename,
-                            byteSize: data.count
-                        )
-                    } else {
-                        payload = ClipPayloadRecord(
-                            clipId: newClip.id,
-                            utiType: uti,
-                            inlineData: data,
-                            blobFilename: nil,
-                            byteSize: data.count
-                        )
-                    }
-                    try payload.insert(db)
-                }
-
-                return newClip
+                try removeUnreferencedBlobs(obsoleteBlobs)
+                return result
+            } catch {
+                try? removeUnreferencedBlobs(candidates)
+                throw error
             }
         }
     }
@@ -233,203 +329,207 @@ public final class DatabaseManager: Sendable {
             let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
 
             return try dbWriter.read { db in
-            var effectiveSortMode = sortMode
-            if let listId, sortMode == .updatedAtDesc {
-                if let list = try ClipListRecord.filter(Column("id") == listId.uuidString.lowercased()).fetchOne(db) {
-                    effectiveSortMode = list.sortMode
-                }
-            }
-
-            let orderClause: String
-            switch effectiveSortMode {
-            case .updatedAtDesc:
-                orderClause = "clips.updatedAt DESC, clips.createdAt DESC, clips.rowid DESC"
-            case .createdAtDesc:
-                orderClause = "clips.createdAt DESC, clips.rowid DESC"
-            case .pasteCountDesc:
-                orderClause = "clips.pasteCount DESC, clips.updatedAt DESC, clips.rowid DESC"
-            case .manualOrder:
-                orderClause = "clips.manualSortIndex ASC, clips.updatedAt DESC, clips.rowid DESC"
-            }
-
-            if trimmed.isEmpty {
-                var request = ClipRecord.all()
-                if let listId {
-                    request = request.filter(Column("listId") == listId.uuidString.lowercased())
-                }
-                if let sourceAppBundleId {
-                    request = request.filter(Column("sourceAppBundleId") == sourceAppBundleId)
-                }
-                if let primaryType {
-                    request = request.filter(Column("primaryType") == primaryType.rawValue)
-                }
-                if favoritesOnly {
-                    request = request.filter(Column("isFavorite") == true)
+                var effectiveSortMode = sortMode
+                if let listId, sortMode == .updatedAtDesc {
+                    if let list = try ClipListRecord.filter(Column("id") == listId.uuidString.lowercased()).fetchOne(db)
+                    {
+                        effectiveSortMode = list.sortMode
+                    }
                 }
 
+                let orderClause: String
                 switch effectiveSortMode {
                 case .updatedAtDesc:
-                    request = request.order(Column("updatedAt").desc, Column("createdAt").desc, Column("rowid").desc)
+                    orderClause = "clips.updatedAt DESC, clips.createdAt DESC, clips.rowid DESC"
                 case .createdAtDesc:
-                    request = request.order(Column("createdAt").desc, Column("rowid").desc)
+                    orderClause = "clips.createdAt DESC, clips.rowid DESC"
                 case .pasteCountDesc:
-                    request = request.order(Column("pasteCount").desc, Column("updatedAt").desc, Column("rowid").desc)
+                    orderClause = "clips.pasteCount DESC, clips.updatedAt DESC, clips.rowid DESC"
                 case .manualOrder:
-                    request = request.order(Column("manualSortIndex").asc, Column("updatedAt").desc, Column("rowid").desc)
+                    orderClause = "clips.manualSortIndex ASC, clips.updatedAt DESC, clips.rowid DESC"
                 }
 
-                return try request.limit(limit).fetchAll(db)
-            }
+                if trimmed.isEmpty {
+                    var request = ClipRecord.all()
+                    if let listId {
+                        request = request.filter(Column("listId") == listId.uuidString.lowercased())
+                    }
+                    if let sourceAppBundleId {
+                        request = request.filter(Column("sourceAppBundleId") == sourceAppBundleId)
+                    }
+                    if let primaryType {
+                        request = request.filter(Column("primaryType") == primaryType.rawValue)
+                    }
+                    if favoritesOnly {
+                        request = request.filter(Column("isFavorite") == true)
+                    }
 
-            let words = trimmed.unicodeScalars.split { !CharacterSet.alphanumerics.contains($0) }
-                .map { String($0) }
-                .filter { !$0.isEmpty }
+                    switch effectiveSortMode {
+                    case .updatedAtDesc:
+                        request = request.order(
+                            Column("updatedAt").desc, Column("createdAt").desc, Column("rowid").desc)
+                    case .createdAtDesc:
+                        request = request.order(Column("createdAt").desc, Column("rowid").desc)
+                    case .pasteCountDesc:
+                        request = request.order(
+                            Column("pasteCount").desc, Column("updatedAt").desc, Column("rowid").desc)
+                    case .manualOrder:
+                        request = request.order(
+                            Column("manualSortIndex").asc, Column("updatedAt").desc, Column("rowid").desc)
+                    }
 
-            guard !words.isEmpty else {
-                let likePattern = "%\(trimmed)%"
-                var fallbackSql = """
-                SELECT * FROM clips
-                WHERE (plainText LIKE ? OR customName LIKE ?)
-                """
-                var fallbackArgs: [DatabaseValueConvertible] = [likePattern, likePattern]
+                    return try request.limit(limit).fetchAll(db)
+                }
+
+                let words = trimmed.unicodeScalars.split { !CharacterSet.alphanumerics.contains($0) }
+                    .map { String($0) }
+                    .filter { !$0.isEmpty }
+
+                guard !words.isEmpty else {
+                    let likePattern = "%\(trimmed)%"
+                    var fallbackSql = """
+                        SELECT * FROM clips
+                        WHERE (plainText LIKE ? OR customName LIKE ?)
+                        """
+                    var fallbackArgs: [DatabaseValueConvertible] = [likePattern, likePattern]
+
+                    if let listId {
+                        fallbackSql += " AND listId = ?"
+                        fallbackArgs.append(listId.uuidString.lowercased())
+                    }
+                    if let sourceAppBundleId {
+                        fallbackSql += " AND sourceAppBundleId = ?"
+                        fallbackArgs.append(sourceAppBundleId)
+                    }
+                    if let primaryType {
+                        fallbackSql += " AND primaryType = ?"
+                        fallbackArgs.append(primaryType.rawValue)
+                    }
+                    if favoritesOnly {
+                        fallbackSql += " AND isFavorite = 1"
+                    }
+                    fallbackSql += " ORDER BY \(orderClause) LIMIT ?"
+                    fallbackArgs.append(limit)
+
+                    return try ClipRecord.fetchAll(db, sql: fallbackSql, arguments: StatementArguments(fallbackArgs))
+                }
+
+                let ftsQuery = words.map { "\"\($0)\"*" }.joined(separator: " ")
+
+                var sql = """
+                    SELECT clips.* FROM clips
+                    JOIN clips_fts ON clips.rowid = clips_fts.rowid
+                    WHERE clips_fts MATCH ?
+                    """
+                var arguments: [DatabaseValueConvertible] = [ftsQuery]
 
                 if let listId {
-                    fallbackSql += " AND listId = ?"
-                    fallbackArgs.append(listId.uuidString.lowercased())
+                    sql += " AND clips.listId = ?"
+                    arguments.append(listId.uuidString.lowercased())
                 }
                 if let sourceAppBundleId {
-                    fallbackSql += " AND sourceAppBundleId = ?"
-                    fallbackArgs.append(sourceAppBundleId)
+                    sql += " AND clips.sourceAppBundleId = ?"
+                    arguments.append(sourceAppBundleId)
                 }
                 if let primaryType {
-                    fallbackSql += " AND primaryType = ?"
-                    fallbackArgs.append(primaryType.rawValue)
+                    sql += " AND clips.primaryType = ?"
+                    arguments.append(primaryType.rawValue)
                 }
                 if favoritesOnly {
-                    fallbackSql += " AND isFavorite = 1"
+                    sql += " AND clips.isFavorite = 1"
                 }
-                fallbackSql += " ORDER BY \(orderClause) LIMIT ?"
-                fallbackArgs.append(limit)
+                sql += " ORDER BY \(orderClause) LIMIT ?"
+                arguments.append(limit)
 
-                return try ClipRecord.fetchAll(db, sql: fallbackSql, arguments: StatementArguments(fallbackArgs))
-            }
+                do {
+                    return try ClipRecord.fetchAll(db, sql: sql, arguments: StatementArguments(arguments))
+                } catch {
+                    let likePattern = "%\(trimmed)%"
+                    var fallbackSql = """
+                        SELECT * FROM clips
+                        WHERE (plainText LIKE ? OR customName LIKE ?)
+                        """
+                    var fallbackArgs: [DatabaseValueConvertible] = [likePattern, likePattern]
 
-            let ftsQuery = words.map { "\"\($0)\"*" }.joined(separator: " ")
+                    if let listId {
+                        fallbackSql += " AND listId = ?"
+                        fallbackArgs.append(listId.uuidString.lowercased())
+                    }
+                    if let sourceAppBundleId {
+                        fallbackSql += " AND sourceAppBundleId = ?"
+                        fallbackArgs.append(sourceAppBundleId)
+                    }
+                    if let primaryType {
+                        fallbackSql += " AND primaryType = ?"
+                        fallbackArgs.append(primaryType.rawValue)
+                    }
+                    if favoritesOnly {
+                        fallbackSql += " AND isFavorite = 1"
+                    }
+                    fallbackSql += " ORDER BY \(orderClause) LIMIT ?"
+                    fallbackArgs.append(limit)
 
-            var sql = """
-            SELECT clips.* FROM clips
-            JOIN clips_fts ON clips.rowid = clips_fts.rowid
-            WHERE clips_fts MATCH ?
-            """
-            var arguments: [DatabaseValueConvertible] = [ftsQuery]
-
-            if let listId {
-                sql += " AND clips.listId = ?"
-                arguments.append(listId.uuidString.lowercased())
-            }
-            if let sourceAppBundleId {
-                sql += " AND clips.sourceAppBundleId = ?"
-                arguments.append(sourceAppBundleId)
-            }
-            if let primaryType {
-                sql += " AND clips.primaryType = ?"
-                arguments.append(primaryType.rawValue)
-            }
-            if favoritesOnly {
-                sql += " AND clips.isFavorite = 1"
-            }
-            sql += " ORDER BY \(orderClause) LIMIT ?"
-            arguments.append(limit)
-
-            do {
-                return try ClipRecord.fetchAll(db, sql: sql, arguments: StatementArguments(arguments))
-            } catch {
-                let likePattern = "%\(trimmed)%"
-                var fallbackSql = """
-                SELECT * FROM clips
-                WHERE (plainText LIKE ? OR customName LIKE ?)
-                """
-                var fallbackArgs: [DatabaseValueConvertible] = [likePattern, likePattern]
-
-                if let listId {
-                    fallbackSql += " AND listId = ?"
-                    fallbackArgs.append(listId.uuidString.lowercased())
+                    return try ClipRecord.fetchAll(db, sql: fallbackSql, arguments: StatementArguments(fallbackArgs))
                 }
-                if let sourceAppBundleId {
-                    fallbackSql += " AND sourceAppBundleId = ?"
-                    fallbackArgs.append(sourceAppBundleId)
-                }
-                if let primaryType {
-                    fallbackSql += " AND primaryType = ?"
-                    fallbackArgs.append(primaryType.rawValue)
-                }
-                if favoritesOnly {
-                    fallbackSql += " AND isFavorite = 1"
-                }
-                fallbackSql += " ORDER BY \(orderClause) LIMIT ?"
-                fallbackArgs.append(limit)
-
-                return try ClipRecord.fetchAll(db, sql: fallbackSql, arguments: StatementArguments(fallbackArgs))
             }
         }
-    }
     }
 
     public func updateTextContent(clipId: UUID, newPlainText: String) throws {
         let idString = clipId.uuidString.lowercased()
-        let normalized = newPlainText.precomposedStringWithCanonicalMapping
-        let digest = SHA256.hash(data: Data(normalized.utf8))
-        let newHash = digest.map { String(format: "%02x", $0) }.joined()
-        let textData = Data(newPlainText.utf8)
-
-        try dbWriter.write { db in
-            guard var clip = try ClipRecord.filter(Column("id") == idString).fetchOne(db) else {
-                throw DatabaseError(message: "Clip not found")
+        let newHash = CapturedClip(plainText: newPlainText).computeContentHash()
+        var oldBlobs: [String] = []
+        do {
+            try dbWriter.write { db in
+                guard var clip = try ClipRecord.filter(Column("id") == idString).fetchOne(db) else {
+                    throw DatabaseError(message: "Clip not found")
+                }
+                clip.plainText = newPlainText
+                clip.contentHash = newHash
+                clip.primaryType = .text
+                clip.updatedAt = Date()
+                try clip.update(db)
+                // Old rich formats contain the old text and must not survive an edit.
+                oldBlobs = try replacePayloads(
+                    clipId: clipId,
+                    representations: ["public.utf8-plain-text": Data(newPlainText.utf8)], db: db)
             }
-            clip.plainText = newPlainText
-            clip.contentHash = newHash
-            clip.updatedAt = Date()
-            try clip.update(db)
+            try removeUnreferencedBlobs(oldBlobs)
+        } catch {
+            if newPlainText.utf8.count > 4096 {
+                try? removeUnreferencedBlobs([CapturedClip.hash(Data(newPlainText.utf8)) + ".blob"])
+            }
+            throw error
+        }
+    }
 
-            let textPayload = try ClipPayloadRecord.filter(
-                Column("clipId") == idString && Column("utiType") == "public.utf8-plain-text"
-            ).fetchOne(db)
-
-            if var payload = textPayload {
-                if let oldBlob = payload.blobFilename {
-                    try? self.blobStorage.deleteBlobIfExists(filename: oldBlob)
-                }
-                if textData.count > 4096 {
-                    let blobName = try self.blobStorage.storeBlob(data: textData)
-                    payload.inlineData = nil
-                    payload.blobFilename = blobName
-                } else {
-                    payload.inlineData = textData
-                    payload.blobFilename = nil
-                }
-                payload.byteSize = textData.count
-                try payload.update(db)
+    /// Called only while holding the database writer; filesystem cleanup happens after commit.
+    @discardableResult
+    internal func replacePayloads(clipId: UUID, representations: [String: Data], db: Database) throws -> [String] {
+        let id = clipId.uuidString.lowercased()
+        let previous = try ClipPayloadRecord.filter(Column("clipId") == id).fetchAll(db)
+        try ClipPayloadRecord.filter(Column("clipId") == id).deleteAll(db)
+        for (uti, data) in representations {
+            let payload: ClipPayloadRecord
+            if data.count > 4096 {
+                payload = ClipPayloadRecord(
+                    clipId: clipId, utiType: uti,
+                    blobFilename: try blobStorage.storeBlob(data: data), byteSize: data.count)
             } else {
-                let newPayload: ClipPayloadRecord
-                if textData.count > 4096 {
-                    let blobName = try self.blobStorage.storeBlob(data: textData)
-                    newPayload = ClipPayloadRecord(
-                        clipId: clipId,
-                        utiType: "public.utf8-plain-text",
-                        inlineData: nil,
-                        blobFilename: blobName,
-                        byteSize: textData.count
-                    )
-                } else {
-                    newPayload = ClipPayloadRecord(
-                        clipId: clipId,
-                        utiType: "public.utf8-plain-text",
-                        inlineData: textData,
-                        blobFilename: nil,
-                        byteSize: textData.count
-                    )
+                payload = ClipPayloadRecord(clipId: clipId, utiType: uti, inlineData: data, byteSize: data.count)
+            }
+            try payload.insert(db)
+        }
+        return previous.compactMap(\.blobFilename)
+    }
+
+    internal func removeUnreferencedBlobs(_ filenames: [String]) throws {
+        // Serialize the reference check AND deletion against all payload writes.
+        try dbWriter.write { db in
+            for filename in Set(filenames) {
+                if try ClipPayloadRecord.filter(Column("blobFilename") == filename).fetchCount(db) == 0 {
+                    try blobStorage.deleteBlobIfExists(filename: filename)
                 }
-                try newPayload.insert(db)
             }
         }
     }
@@ -478,9 +578,7 @@ public final class DatabaseManager: Sendable {
             }
         }
 
-        for filename in blobsToDelete {
-            try blobStorage.deleteBlobIfExists(filename: filename)
-        }
+        try removeUnreferencedBlobs(blobsToDelete)
     }
 
     public func loadPayloadData(for payload: ClipPayloadRecord) throws -> Data {
@@ -654,6 +752,23 @@ public final class DatabaseManager: Sendable {
         let idString = clipId.uuidString.lowercased()
         return try dbWriter.write { db in
             if var clip = try ClipRecord.filter(Column("id") == idString).fetchOne(db) {
+                guard clip.pasteCount >= 0, clip.pasteCount < Int.max else {
+                    throw DatabaseError(message: "Invalid usage counter")
+                }
+                let known = try Int.fetchOne(db, sql: "SELECT COALESCE(SUM(count),0) FROM sync_usage WHERE clipId=?",
+                    arguments: [idString]) ?? 0
+                if clip.pasteCount > known {
+                    try db.execute(sql: """
+                        INSERT INTO sync_usage(clipId,deviceId,count) VALUES (?,?,?)
+                        ON CONFLICT(clipId,deviceId) DO UPDATE SET count=count+excluded.count
+                        """, arguments: [idString, "legacy:" + idString, clip.pasteCount - known])
+                }
+                let device = (try String.fetchOne(db, sql: "SELECT value FROM sync_metadata WHERE key='deviceId'")
+                    ?? "local") + ":" + idString
+                try db.execute(sql: """
+                    INSERT INTO sync_usage(clipId,deviceId,count) VALUES (?,?,1)
+                    ON CONFLICT(clipId,deviceId) DO UPDATE SET count=count+1
+                    """, arguments: [idString, device])
                 clip.pasteCount += 1
                 try clip.update(db)
                 return clip
@@ -669,11 +784,10 @@ public final class DatabaseManager: Sendable {
         try dbWriter.read { db in
             var remainingNonFavorites: [ClipRecord] = []
 
-            let cutoffDate: Date? = (days != nil && days! > 0)
-                ? Date().addingTimeInterval(-Double(days!) * 86400.0)
-                : nil
+            let cutoffDate = days.flatMap { $0 > 0 ? Date().addingTimeInterval(-Double($0) * 86400) : nil }
 
-            let allNonFavorites = try ClipRecord
+            let allNonFavorites =
+                try ClipRecord
                 .filter(Column("isFavorite") == false && Column("listId") == nil)
                 .order(Column("updatedAt").desc, Column("createdAt").desc)
                 .fetchAll(db)
@@ -722,7 +836,7 @@ public final class DatabaseManager: Sendable {
 
     public func deleteSnippet(id: UUID) throws {
         try dbWriter.write { db in
-            _ = try SnippetRecord.filter(Column("id") == id).deleteAll(db)
+            _ = try SnippetRecord.filter(Column("id") == id.uuidString.lowercased()).deleteAll(db)
         }
     }
 }
