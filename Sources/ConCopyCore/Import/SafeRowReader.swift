@@ -24,6 +24,7 @@ internal enum SafeRowReader {
         case .int64(let val):
             return val
         case .double(let val):
+            guard val.isFinite, val >= Double(Int64.min), val < Double(Int64.max) else { return nil }
             return Int64(val)
         case .string(let val):
             return Int64(val.trimmingCharacters(in: .whitespacesAndNewlines))

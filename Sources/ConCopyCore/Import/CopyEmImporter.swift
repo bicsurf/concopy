@@ -20,7 +20,7 @@ internal final class PasteboardContentsItemTypeAndData: NSObject, NSSecureCoding
             NSData.self,
             NSNumber.self,
             NSArray.self,
-            NSDictionary.self
+            NSDictionary.self,
         ]
         self.data = coder.decodeObject(of: allowedClasses, forKey: "data")
     }
@@ -37,9 +37,10 @@ public struct CopyEmImporter: ExternalClipboardImporter {
 
     public static let standardLocations: [URL] = [
         FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Containers/com.apprywhere.Copy-Em-Pro/Data/Library/Application Support", isDirectory: true),
+            .appendingPathComponent(
+                "Library/Containers/com.apprywhere.Copy-Em-Pro/Data/Library/Application Support", isDirectory: true),
         FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/Copy'Em", isDirectory: true)
+            .appendingPathComponent("Library/Application Support/Copy'Em", isDirectory: true),
     ]
 
     public static func detectStandardDatabaseURL() -> URL? {
@@ -50,8 +51,9 @@ public struct CopyEmImporter: ExternalClipboardImporter {
                     for item in contents {
                         let ext = item.pathExtension.lowercased()
                         let name = item.lastPathComponent.lowercased()
-                        if (ext == "sqlite" || ext == "storedata" || ext == "db") &&
-                            !name.contains("changelog") && !name.contains("-wal") && !name.contains("-shm") {
+                        if (ext == "sqlite" || ext == "storedata" || ext == "db") && !name.contains("changelog")
+                            && !name.contains("-wal") && !name.contains("-shm")
+                        {
                             return item
                         }
                     }
@@ -107,10 +109,12 @@ public struct CopyEmImporter: ExternalClipboardImporter {
     ) throws -> ImportResult {
         var categoryMap: [Int64: String] = [:]
         if (try? db.tableExists("ZPASTEBOARDCONTENTSLIST")) == true {
-            let listRows = try Row.fetchAll(db, sql: "SELECT Z_PK, ZNAME FROM ZPASTEBOARDCONTENTSLIST WHERE ZTRASHDATE IS NULL")
+            let listRows = try Row.fetchAll(
+                db, sql: "SELECT Z_PK, ZNAME FROM ZPASTEBOARDCONTENTSLIST WHERE ZTRASHDATE IS NULL")
             for r in listRows {
                 if let id = SafeRowReader.int64(from: r, column: "Z_PK"),
-                   let name = SafeRowReader.string(from: r, column: "ZNAME") {
+                    let name = SafeRowReader.string(from: r, column: "ZNAME")
+                {
                     let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
                     if !trimmed.isEmpty {
                         categoryMap[id] = trimmed
@@ -124,7 +128,8 @@ public struct CopyEmImporter: ExternalClipboardImporter {
             let appRows = try Row.fetchAll(db, sql: "SELECT Z_PK, ZBUNDLEID FROM ZPASTEBOARDCONTENTSAPP")
             for r in appRows {
                 if let id = SafeRowReader.int64(from: r, column: "Z_PK"),
-                   let bundleId = SafeRowReader.string(from: r, column: "ZBUNDLEID") {
+                    let bundleId = SafeRowReader.string(from: r, column: "ZBUNDLEID")
+                {
                     appMap[id] = bundleId.trimmingCharacters(in: .whitespacesAndNewlines)
                 }
             }
@@ -134,30 +139,33 @@ public struct CopyEmImporter: ExternalClipboardImporter {
         let totalCount = try? Int.fetchOne(db, sql: "SELECT COUNT(*) FROM ZPASTEBOARDCONTENTS WHERE ZTRASHDATE IS NULL")
 
         let sql = """
-        SELECT 
-            c.Z_PK,
-            c.ZNAME,
-            c.ZDESC,
-            c.ZCREATIONDATE,
-            c.ZAPPLICATION,
-            c.ZITEMSWRAPPER,
-            c.ZLIST,
-            c.ZTRASHDATE,
-            w.ZSTRING
-        FROM ZPASTEBOARDCONTENTS c
-        LEFT JOIN ZPASTEBOARDCONTENTSITEMSWRAPPER w ON c.ZITEMSWRAPPER = w.Z_PK
-        WHERE c.ZTRASHDATE IS NULL
-        ORDER BY c.Z_PK ASC
-        """
-        let clipRows = try Row.fetchAll(db, sql: sql)
+            SELECT
+                c.Z_PK,
+                c.ZNAME,
+                c.ZDESC,
+                c.ZCREATIONDATE,
+                c.ZAPPLICATION,
+                c.ZITEMSWRAPPER,
+                c.ZLIST,
+                c.ZTRASHDATE,
+                w.ZSTRING
+            FROM ZPASTEBOARDCONTENTS c
+            LEFT JOIN ZPASTEBOARDCONTENTSITEMSWRAPPER w ON c.ZITEMSWRAPPER = w.Z_PK
+            WHERE c.ZTRASHDATE IS NULL
+            ORDER BY c.Z_PK ASC
+            """
+        if hasItemsTable { try validateBlobSizes(table: "ZPASTEBOARDCONTENTSITEM", columns: ["ZTYPESANDDATA"], db: db) }
+        try validateBlobSizes(table: "ZPASTEBOARDCONTENTSITEMSWRAPPER", columns: ["ZSTRING"], db: db)
+        try validateBlobSizes(table: "ZPASTEBOARDCONTENTS", columns: ["ZNAME", "ZDESC"], db: db)
+        let clipRows = try Row.fetchCursor(db, sql: sql)
 
         let batchImporter = ClipBatchImporter()
 
         return try batchImporter.run(
             into: databaseManager,
-            totalCount: totalCount ?? clipRows.count,
+            totalCount: totalCount,
             enumerate: { yield in
-                for row in clipRows {
+                while let row = try clipRows.next() {
                     try Task.checkCancellation()
                     try autoreleasepool {
                         if let item = try parseNativeClipRow(
@@ -193,32 +201,44 @@ public struct CopyEmImporter: ExternalClipboardImporter {
         var representations: [String: Data] = [:]
 
         if hasItemsTable, let wrapperId = SafeRowReader.int64(from: row, column: "ZITEMSWRAPPER") {
-            let blobs = try Data.fetchAll(
+            let blobs = try Data.fetchCursor(
                 db,
-                sql: "SELECT ZTYPESANDDATA FROM ZPASTEBOARDCONTENTSITEM WHERE Z5ITEMS = ? AND ZTYPESANDDATA IS NOT NULL",
+                sql:
+                    "SELECT ZTYPESANDDATA FROM ZPASTEBOARDCONTENTSITEM WHERE Z5ITEMS = ? AND ZTYPESANDDATA IS NOT NULL",
                 arguments: [wrapperId]
             )
-            for blob in blobs {
+            while let blob = try blobs.next() {
                 let extracted = extractRepresentations(from: blob, assetsBaseURL: assetsBaseURL)
                 for (uti, data) in extracted {
+                    guard data.count <= ClipBatchImporter.maxBlobSizeBytes,
+                        representations.values.reduce(0, { $0 + $1.count }) <= ClipBatchImporter.maxTotalImportBytes
+                            - data.count
+                    else {
+                        throw DatabaseError(message: "Copy 'Em item exceeds the import size limit")
+                    }
                     representations[uti] = data
                 }
             }
         }
 
-        if plainText == nil || plainText!.isEmpty {
+        if plainText?.isEmpty ?? true {
             if let utf8Data = representations["public.utf8-plain-text"],
-               let text = String(data: utf8Data, encoding: .utf8), !text.isEmpty {
+                let text = String(data: utf8Data, encoding: .utf8), !text.isEmpty
+            {
                 plainText = text
             } else if let rtfData = representations["public.rtf"],
-                      let text = String(data: rtfData, encoding: .utf8), !text.isEmpty {
+                let text = String(data: rtfData, encoding: .utf8), !text.isEmpty
+            {
                 plainText = text
-            } else if let desc = SafeRowReader.string(from: row, column: "ZDESC"), !desc.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            } else if let desc = SafeRowReader.string(from: row, column: "ZDESC"),
+                !desc.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            {
                 plainText = desc.trimmingCharacters(in: .whitespacesAndNewlines)
             }
         }
 
-        guard !representations.isEmpty || !(plainText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true) else {
+        guard !representations.isEmpty || !(plainText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+        else {
             return nil
         }
 
@@ -293,11 +313,13 @@ public struct CopyEmImporter: ExternalClipboardImporter {
             payload = payload.dropFirst()
         } else if payload.count > 0 && payload[0] == 0x02 {
             let remainder = payload.dropFirst()
-            if let ascii = String(data: remainder, encoding: .ascii)?.trimmingCharacters(in: .whitespacesAndNewlines), !ascii.isEmpty {
+            if let ascii = String(data: remainder, encoding: .ascii)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                !ascii.isEmpty
+            {
                 let candidateRelativePaths = [
                     "_EXTERNAL_DATA/\(ascii)",
                     ".Copy-em-Paste_SUPPORT/_EXTERNAL_DATA/\(ascii)",
-                    "Asset/\(ascii)"
+                    "Asset/\(ascii)",
                 ]
                 for rel in candidateRelativePaths {
                     let candidate = assetsBaseURL.appendingPathComponent(rel)
@@ -313,23 +335,27 @@ public struct CopyEmImporter: ExternalClipboardImporter {
         do {
             let unarchiver = try NSKeyedUnarchiver(forReadingFrom: payload)
             unarchiver.decodingFailurePolicy = .setErrorAndReturn
-            unarchiver.setClass(PasteboardContentsItemTypeAndData.self, forClassName: "PasteboardContentsItemTypeAndData")
+            unarchiver.setClass(
+                PasteboardContentsItemTypeAndData.self, forClassName: "PasteboardContentsItemTypeAndData")
 
             let allowedClasses: [AnyClass] = [NSArray.self, PasteboardContentsItemTypeAndData.self]
-            if let items = try unarchiver.decodeTopLevelObject(of: allowedClasses, forKey: NSKeyedArchiveRootObjectKey) as? [PasteboardContentsItemTypeAndData] {
+            if let items = try unarchiver.decodeTopLevelObject(of: allowedClasses, forKey: NSKeyedArchiveRootObjectKey)
+                as? [PasteboardContentsItemTypeAndData]
+            {
                 for item in items {
                     guard let rawType = item.type, !rawType.isEmpty else { continue }
                     if rawType.hasPrefix("@DATA_IN_FILE ") {
                         let realUTI = String(rawType.dropFirst("@DATA_IN_FILE ".count))
                         if let d = item.data as? Data, let refStr = String(data: d, encoding: .utf8) {
-                            let cleanRef = refStr.replacingOccurrences(of: "local:///", with: "")
+                            let cleanRef =
+                                refStr.replacingOccurrences(of: "local:///", with: "")
                                 .components(separatedBy: "?").first ?? ""
                             if !cleanRef.isEmpty {
                                 let candidateRelativePaths = [
                                     "Asset/\(cleanRef)",
                                     cleanRef,
                                     ".Copy-em-Paste_SUPPORT/_EXTERNAL_DATA/\(cleanRef)",
-                                    "_EXTERNAL_DATA/\(cleanRef)"
+                                    "_EXTERNAL_DATA/\(cleanRef)",
                                 ]
                                 for rel in candidateRelativePaths {
                                     let candidate = assetsBaseURL.appendingPathComponent(rel)
@@ -355,7 +381,7 @@ public struct CopyEmImporter: ExternalClipboardImporter {
         if result.isEmpty && payload.count >= 4 {
             if payload[0] == 0x89 && payload[1] == 0x50 && payload[2] == 0x4E && payload[3] == 0x47 {
                 result["public.png"] = payload
-            } else if ((payload[0] == 0x49 && payload[1] == 0x49) || (payload[0] == 0x4D && payload[1] == 0x4D)) {
+            } else if (payload[0] == 0x49 && payload[1] == 0x49) || (payload[0] == 0x4D && payload[1] == 0x4D) {
                 result["public.tiff"] = payload
             }
         }
@@ -378,9 +404,10 @@ public struct CopyEmImporter: ExternalClipboardImporter {
         }
 
         guard let values = try? resolvedFile.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
-              values.isRegularFile == true,
-              let size = values.fileSize,
-              size <= maxSizeBytes else {
+            values.isRegularFile == true,
+            let size = values.fileSize,
+            size <= maxSizeBytes
+        else {
             return nil
         }
 
@@ -408,9 +435,9 @@ public struct CopyEmImporter: ExternalClipboardImporter {
             totalCount: nil,
             enumerate: { yield in
                 let sql = "SELECT * FROM \"\(clipTable)\""
-                let rows = try Row.fetchAll(db, sql: sql)
-
-                for row in rows {
+                try validateBlobSizes(table: clipTable, columns: Array(columns.values), db: db)
+                let rows = try Row.fetchCursor(db, sql: sql)
+                while let row = try rows.next() {
                     try Task.checkCancellation()
                     try autoreleasepool {
                         if let item = try parseFallbackClipRow(
@@ -437,7 +464,8 @@ public struct CopyEmImporter: ExternalClipboardImporter {
         assetsBaseURL: URL
     ) throws -> ImportClipItem? {
         let contentCol = columns.keys.first(where: {
-            $0.contains("CONTENT") || $0.contains("VALUE") || $0.contains("TEXT") || $0.contains("DATA") || $0.contains("BODY") || $0.contains("STRING")
+            $0.contains("CONTENT") || $0.contains("VALUE") || $0.contains("TEXT") || $0.contains("DATA")
+                || $0.contains("BODY") || $0.contains("STRING")
         }).flatMap({ columns[$0] })
 
         guard let contentCol else { return nil }
@@ -456,10 +484,14 @@ public struct CopyEmImporter: ExternalClipboardImporter {
                     if let utf8 = extracted["public.utf8-plain-text"], let text = String(data: utf8, encoding: .utf8) {
                         plainText = text
                     }
-                } else if dataVal.count >= 4 && dataVal[0] == 0x89 && dataVal[1] == 0x50 && dataVal[2] == 0x4E && dataVal[3] == 0x47 {
+                } else if dataVal.count >= 4 && dataVal[0] == 0x89 && dataVal[1] == 0x50 && dataVal[2] == 0x4E
+                    && dataVal[3] == 0x47
+                {
                     representations["public.png"] = dataVal
                     plainText = nil
-                } else if dataVal.count >= 4 && ((dataVal[0] == 0x49 && dataVal[1] == 0x49) || (dataVal[0] == 0x4D && dataVal[1] == 0x4D)) {
+                } else if dataVal.count >= 4
+                    && ((dataVal[0] == 0x49 && dataVal[1] == 0x49) || (dataVal[0] == 0x4D && dataVal[1] == 0x4D))
+                {
                     representations["public.tiff"] = dataVal
                     plainText = nil
                 } else {
@@ -473,7 +505,8 @@ public struct CopyEmImporter: ExternalClipboardImporter {
             }
         }
 
-        guard !representations.isEmpty || !(plainText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true) else {
+        guard !representations.isEmpty || !(plainText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+        else {
             return nil
         }
 
@@ -528,8 +561,10 @@ public struct CopyEmImporter: ExternalClipboardImporter {
                     listName = trimmed
                 }
             }
-        } else if let clipId = SafeRowReader.int64(from: row, column: "Z_PK") ?? SafeRowReader.int64(from: row, column: "id"),
-                  let targetCatId = joinMap[clipId], let resolved = categoryMap[targetCatId] {
+        } else if let clipId = SafeRowReader.int64(from: row, column: "Z_PK")
+            ?? SafeRowReader.int64(from: row, column: "id"),
+            let targetCatId = joinMap[clipId], let resolved = categoryMap[targetCatId]
+        {
             listName = resolved
         }
 
@@ -555,6 +590,31 @@ public struct CopyEmImporter: ExternalClipboardImporter {
             listName: listName,
             createdAt: createdAt
         )
+    }
+
+    /// Inspect lengths without materializing any foreign BLOB. Run before opening row cursors.
+    private func validateBlobSizes(table: String, columns: [String], db: Database) throws {
+        try validateIdentifier(table)
+        for column in columns { try validateIdentifier(column) }
+        let sum = columns.map { "COALESCE(length(CAST(\"\($0)\" AS BLOB)),0)" }.joined(separator: " + ")
+        if !sum.isEmpty {
+            let maximum = try Int.fetchOne(db, sql: "SELECT MAX(\(sum)) FROM \"\(table)\"") ?? 0
+            guard maximum <= ClipBatchImporter.maxTotalImportBytes else {
+                throw DatabaseError(message: "Copy 'Em row exceeds the import memory budget")
+            }
+        }
+        for column in columns {
+            try validateIdentifier(column)
+            let largest =
+                try Int.fetchOne(
+                    db,
+                    sql:
+                        "SELECT MAX(length(CAST(\"\(column)\" AS BLOB))) FROM \"\(table)\" WHERE typeof(\"\(column)\") IN ('blob','text')"
+                ) ?? 0
+            guard largest <= ClipBatchImporter.maxBlobSizeBytes else {
+                throw DatabaseError(message: "Copy 'Em payload exceeds the import size limit")
+            }
+        }
     }
 
     // MARK: - Resolution and Discovery Helpers
@@ -601,9 +661,7 @@ public struct CopyEmImporter: ExternalClipboardImporter {
                     let e = u.pathExtension.lowercased()
                     var s = 0
                     if n.contains("copy-em-paste") || n.contains("copy'em") || n.contains("copyem") { s += 100 }
-                    if e == "storedata" { s += 50 }
-                    else if e == "sqlite" { s += 20 }
-                    else if e == "db" { s += 10 }
+                    if e == "storedata" { s += 50 } else if e == "sqlite" { s += 20 } else if e == "db" { s += 10 }
                     return s
                 }
                 return score(a) > score(b)
@@ -624,15 +682,9 @@ public struct CopyEmImporter: ExternalClipboardImporter {
         let raw = try String.fetchAll(db, sql: "SELECT name FROM sqlite_master WHERE type='table'")
         return raw.filter { name in
             let upper = name.uppercased()
-            return !upper.hasPrefix("SQLITE_") &&
-                !upper.hasPrefix("Z_METADATA") &&
-                !upper.hasPrefix("Z_PRIMARYKEY") &&
-                !upper.hasPrefix("Z_MODELCACHE") &&
-                !upper.hasPrefix("ACHANGE") &&
-                !upper.hasPrefix("ATRANSACTION") &&
-                !upper.hasPrefix("CHANGES") &&
-                !upper.hasPrefix("VECTORCLOCK") &&
-                !isJoinTable(name)
+            return !upper.hasPrefix("SQLITE_") && !upper.hasPrefix("Z_METADATA") && !upper.hasPrefix("Z_PRIMARYKEY")
+                && !upper.hasPrefix("Z_MODELCACHE") && !upper.hasPrefix("ACHANGE") && !upper.hasPrefix("ATRANSACTION")
+                && !upper.hasPrefix("CHANGES") && !upper.hasPrefix("VECTORCLOCK") && !isJoinTable(name)
         }
     }
 
@@ -695,32 +747,38 @@ public struct CopyEmImporter: ExternalClipboardImporter {
     }
 
     private func detectCategories(from tables: [String], in db: Database) throws -> [Int64: String] {
-        guard let catTable = tables.first(where: {
-            let u = $0.uppercased()
-            return u.contains("CATEGOR") || u.contains("LIST") || u.contains("FOLDER") || u.contains("GROUP")
-        }) else {
+        guard
+            let catTable = tables.first(where: {
+                let u = $0.uppercased()
+                return u.contains("CATEGOR") || u.contains("LIST") || u.contains("FOLDER") || u.contains("GROUP")
+            })
+        else {
             return [:]
         }
 
         try validateIdentifier(catTable)
         let catColumns = try fetchTableColumnNames(table: catTable, db: db)
-        guard let nameCol = catColumns.keys.first(where: {
-            $0.contains("NAME") || $0.contains("TITLE") || $0.contains("LABEL")
-        }).flatMap({ catColumns[$0] }) else {
+        guard
+            let nameCol = catColumns.keys.first(where: {
+                $0.contains("NAME") || $0.contains("TITLE") || $0.contains("LABEL")
+            }).flatMap({ catColumns[$0] })
+        else {
             return [:]
         }
         try validateIdentifier(nameCol)
 
-        let idCol = catColumns.keys.first(where: {
-            $0 == "Z_PK" || $0 == "ID" || $0.contains("ID")
-        }).flatMap({ catColumns[$0] }) ?? "rowid"
+        let idCol =
+            catColumns.keys.first(where: {
+                $0 == "Z_PK" || $0 == "ID" || $0.contains("ID")
+            }).flatMap({ catColumns[$0] }) ?? "rowid"
         try validateIdentifier(idCol)
 
         let rows = try Row.fetchAll(db, sql: "SELECT \"\(idCol)\" AS id, \"\(nameCol)\" AS name FROM \"\(catTable)\"")
         var map: [Int64: String] = [:]
         for row in rows {
             if let id = SafeRowReader.int64(from: row, column: "id"),
-               let name = SafeRowReader.string(from: row, column: "name") {
+                let name = SafeRowReader.string(from: row, column: "name")
+            {
                 let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !trimmed.isEmpty {
                     map[id] = trimmed
@@ -738,17 +796,21 @@ public struct CopyEmImporter: ExternalClipboardImporter {
 
         guard (try? validateIdentifier(joinTable)) != nil else { return [:] }
         let cols = try fetchTableColumnNames(table: joinTable, db: db)
-        let intCols = cols.values.filter { $0.uppercased().contains("CLIP") || $0.uppercased().contains("LIST") || $0.uppercased().contains("CATEGOR") }
+        let intCols = cols.values.filter {
+            $0.uppercased().contains("CLIP") || $0.uppercased().contains("LIST") || $0.uppercased().contains("CATEGOR")
+        }
         guard intCols.count >= 2 else { return [:] }
 
         let clipCol = intCols.first { $0.uppercased().contains("CLIP") } ?? intCols[0]
         let listCol = intCols.first { $0 != clipCol } ?? intCols[1]
 
-        let rows = try Row.fetchAll(db, sql: "SELECT \"\(clipCol)\" AS cid, \"\(listCol)\" AS lid FROM \"\(joinTable)\"")
+        let rows = try Row.fetchAll(
+            db, sql: "SELECT \"\(clipCol)\" AS cid, \"\(listCol)\" AS lid FROM \"\(joinTable)\"")
         var map: [Int64: Int64] = [:]
         for r in rows {
             if let cid = SafeRowReader.int64(from: r, column: "cid"),
-               let lid = SafeRowReader.int64(from: r, column: "lid") {
+                let lid = SafeRowReader.int64(from: r, column: "lid")
+            {
                 map[cid] = lid
             }
         }

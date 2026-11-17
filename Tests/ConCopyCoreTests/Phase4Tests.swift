@@ -1,5 +1,6 @@
 import AppKit
 import XCTest
+
 @testable import ConCopyCore
 
 final class Phase4Tests: XCTestCase {
@@ -121,6 +122,7 @@ final class Phase4Tests: XCTestCase {
         let mockPoster = MockCGEventPoster()
         let injector = PasteInjector(eventPoster: mockPoster)
         let pasteboard = NSPasteboard.withUniqueName()
+        mockPoster.observedPasteboard = pasteboard
 
         var hookCalled = false
         try await injector.pasteBatch(
@@ -135,8 +137,11 @@ final class Phase4Tests: XCTestCase {
         )
 
         XCTAssertTrue(hookCalled)
-        XCTAssertEqual(mockPoster.postCommandVCalledCount, 1)
-        XCTAssertEqual(pasteboard.string(forType: .string), "Name\tEmail\tCity")
+        XCTAssertEqual(mockPoster.postCommandVCalledCount, 3)
+        XCTAssertEqual(mockPoster.postTabCalledCount, 2)
+        XCTAssertEqual(mockPoster.events, ["paste", "tab", "paste", "tab", "paste"])
+        XCTAssertEqual(mockPoster.pastedValues, ["Name", "Email", "City"])
+        XCTAssertEqual(pasteboard.string(forType: .string), "City")
 
         let updated1 = try databaseManager.fetchClip(id: clip1.id)
         let updated2 = try databaseManager.fetchClip(id: clip2.id)

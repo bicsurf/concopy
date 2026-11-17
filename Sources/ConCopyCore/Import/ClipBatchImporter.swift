@@ -74,10 +74,11 @@ internal struct ClipBatchImporter: Sendable {
 
                     guard processedCount < Self.maxClipCount else {
                         if result.errors.count < 100 {
-                            result.errors.append(ImportErrorDetail(
-                                sourceIdentifier: "batch_limit",
-                                message: "Raggiunto il limite massimo di \(Self.maxClipCount) elementi importabili"
-                            ))
+                            result.errors.append(
+                                ImportErrorDetail(
+                                    sourceIdentifier: "batch_limit",
+                                    message: "Raggiunto il limite massimo di \(Self.maxClipCount) elementi importabili"
+                                ))
                         }
                         result.errorsCount += 1
                         return
@@ -85,10 +86,30 @@ internal struct ClipBatchImporter: Sendable {
 
                     processedCount += 1
 
+                    var representations = item.captured.representations
+                    if let text = item.captured.plainText, representations["public.utf8-plain-text"] == nil {
+                        representations["public.utf8-plain-text"] = Data(text.utf8)
+                    }
+                    let bytes = representations.values.reduce(0) { $0 + $1.count }
+                    guard !representations.isEmpty,
+                        representations.values.allSatisfy({ $0.count <= Self.maxBlobSizeBytes }),
+                        bytes <= Self.maxTotalImportBytes - totalBytesProcessed
+                    else {
+                        result.errorsCount += 1
+                        if result.errors.count < 100 {
+                            result.errors.append(
+                                ImportErrorDetail(
+                                    sourceIdentifier: item.contentHash,
+                                    message: "Elemento scartato: contenuto assente o limite di dimensione superato"))
+                        }
+                        return
+                    }
+
                     try autoreleasepool {
                         let existing = try ClipRecord.filter(Column("contentHash") == item.contentHash).fetchOne(db)
 
-                        let resolvedListId = try listCache.listId(for: item.listName, db: db, createdCount: &result.createdListsCount)
+                        let resolvedListId = try listCache.listId(
+                            for: item.listName, db: db, createdCount: &result.createdListsCount)
 
                         if var current = existing {
                             var didChange = false
@@ -126,41 +147,14 @@ internal struct ClipBatchImporter: Sendable {
                             )
                             try newClip.insert(db)
 
-                            var representations = item.captured.representations
-                            if let text = item.captured.plainText, representations["public.utf8-plain-text"] == nil {
-                                representations["public.utf8-plain-text"] = Data(text.utf8)
-                            }
-
+                            totalBytesProcessed += bytes
                             for (uti, data) in representations {
                                 let dataCount = data.count
-
-                                if dataCount > Self.maxBlobSizeBytes {
-                                    if result.errors.count < 100 {
-                                        result.errors.append(ImportErrorDetail(
-                                            sourceIdentifier: item.contentHash,
-                                            message: "Payload \(uti) supera la dimensione massima consentita (\(dataCount) byte)"
-                                        ))
-                                    }
-                                    result.errorsCount += 1
-                                    continue
-                                }
-
-                                totalBytesProcessed += dataCount
-                                if totalBytesProcessed > Self.maxTotalImportBytes {
-                                    if result.errors.count < 100 {
-                                        result.errors.append(ImportErrorDetail(
-                                            sourceIdentifier: "byte_limit",
-                                            message: "Superato il limite di byte complessivo consentito per l'importazione"
-                                        ))
-                                    }
-                                    result.errorsCount += 1
-                                    break
-                                }
-
                                 let payload: ClipPayloadRecord
                                 if dataCount > 4096 {
                                     let filename = try databaseManager.blobStorage.storeBlob(data: data)
-                                    let blobURL = databaseManager.blobStorage.baseDirectoryURL.appendingPathComponent(filename)
+                                    let blobURL = databaseManager.blobStorage.baseDirectoryURL.appendingPathComponent(
+                                        filename)
                                     newlyCreatedBlobURLs.append(blobURL)
 
                                     payload = ClipPayloadRecord(
@@ -186,18 +180,17 @@ internal struct ClipBatchImporter: Sendable {
                         }
                     }
 
-                    progress?(ImportProgress(
-                        processed: processedCount,
-                        total: totalCount,
-                        imported: result.importedCount,
-                        merged: result.mergedDuplicatesCount
-                    ))
+                    progress?(
+                        ImportProgress(
+                            processed: processedCount,
+                            total: totalCount,
+                            imported: result.importedCount,
+                            merged: result.mergedDuplicatesCount
+                        ))
                 }
             }
         } catch {
-            for blobURL in newlyCreatedBlobURLs {
-                try? FileManager.default.removeItem(at: blobURL)
-            }
+            try? databaseManager.removeUnreferencedBlobs(newlyCreatedBlobURLs.map(\.lastPathComponent))
             throw error
         }
 

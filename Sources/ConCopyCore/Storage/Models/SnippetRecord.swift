@@ -3,6 +3,9 @@ import GRDB
 
 public struct SnippetRecord: Codable, FetchableRecord, PersistableRecord, Identifiable, Equatable, Sendable {
     public static let databaseTableName = "snippets"
+    // GRDB 6 uses the property; GRDB 7 requests a per-column strategy.
+    public static let databaseUUIDEncodingStrategy = DatabaseUUIDEncodingStrategy.lowercaseString
+    public static func databaseUUIDEncodingStrategy(for column: String) -> DatabaseUUIDEncodingStrategy { .lowercaseString }
 
     public var id: UUID
     public var shortcut: String

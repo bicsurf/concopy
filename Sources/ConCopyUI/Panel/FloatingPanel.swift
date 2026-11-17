@@ -21,7 +21,7 @@ public final class FloatingPanel: NSPanel {
 
         self.isFloatingPanel = true
         self.level = .floating
-        self.becomesKeyOnlyIfNeeded = false
+        self.becomesKeyOnlyIfNeeded = true
         self.isMovableByWindowBackground = true
         self.titleVisibility = .hidden
         self.titlebarAppearsTransparent = true
@@ -40,13 +40,15 @@ public final class FloatingPanel: NSPanel {
         standardWindowButton(.zoomButton)?.isHidden = true
 
         if let frontApp = NSWorkspace.shared.frontmostApplication,
-           frontApp.bundleIdentifier != Bundle.main.bundleIdentifier {
+            frontApp.bundleIdentifier != Bundle.main.bundleIdentifier
+        {
             self.previousActiveApp = frontApp
         }
 
         viewModel.onClosePanel = { [weak self] in
             self?.hidePanel(restoreFocus: true)
         }
+        viewModel.onPasteFailure = { [weak self] in self?.activatePanelForInput() }
 
         self.contentView = NSHostingView(
             rootView: ClipboardListView(viewModel: viewModel)
@@ -116,7 +118,9 @@ public final class FloatingPanel: NSPanel {
     }
 
     @objc private func handleWorkspaceDidActivateApp(_ notification: Notification) {
-        guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
+        guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else {
+            return
+        }
         if app.bundleIdentifier != Bundle.main.bundleIdentifier {
             self.previousActiveApp = app
             if isVisible && attachedSheet == nil {
@@ -158,8 +162,8 @@ public final class FloatingPanel: NSPanel {
     }
 
     public func activatePanelForInput() {
-        makeKey()
-        NSApp.activate()
+        orderFrontRegardless()
+        makeKeyAndOrderFront(nil)
     }
 
     public override func cancelOperation(_ sender: Any?) {
@@ -291,12 +295,12 @@ public final class FloatingPanel: NSPanel {
         // Configurable shortcut: Focus search field
         if GlobalShortcutsManager.shared.matches(event: event, for: .focusSearch) {
             viewModel.isSearchFocused = true
-            return false // Let it propagate to focus the field
+            return false  // Let it propagate to focus the field
         }
 
         // Configurable shortcut: Paste selected clip
         if GlobalShortcutsManager.shared.matches(event: event, for: .pasteSelection) {
-            let optionHeld = event.modifierFlags.contains(.option)
+            let optionHeld = GlobalShortcutsManager.shared.plainTextOverride(for: event)
             viewModel.pasteSelected(optionHeld: optionHeld)
             return true
         }
@@ -372,7 +376,7 @@ public final class FloatingPanel: NSPanel {
 
         // Numeric shortcuts: Quick Paste Record (Default Option + 1..9, 0, or Cmd + 1..9, 0 if swapped)
         if let index = GlobalShortcutsManager.shared.matchedQuickPasteIndex(for: event) {
-            let optionHeld = event.modifierFlags.contains(.option)
+            let optionHeld = GlobalShortcutsManager.shared.plainTextOverride(for: event)
             if viewModel.isSnippetsOnly {
                 let list = viewModel.filteredSnippets
                 if index >= 0 && index < list.count {
@@ -388,13 +392,15 @@ public final class FloatingPanel: NSPanel {
 
         // Letters a-z quick paste fallback (when search is not actively focused), excluding reserved command shortcuts
         if !viewModel.isSearchFocused,
-           event.modifierFlags.contains(.command) && !event.modifierFlags.contains(.shift) && !event.modifierFlags.contains(.control),
-           let char = event.charactersIgnoringModifiers?.lowercased().first,
-           char >= "a" && char <= "z",
-           !GlobalShortcutsManager.shared.isCharacterReservedForCommands(char) {
+            event.modifierFlags.contains(.command) && !event.modifierFlags.contains(.shift)
+                && !event.modifierFlags.contains(.control),
+            let char = event.charactersIgnoringModifiers?.lowercased().first,
+            char >= "a" && char <= "z",
+            !GlobalShortcutsManager.shared.isCharacterReservedForCommands(char)
+        {
             let targetIndex = QuickPasteShortcutMapper.index(forCharacter: String(char))
             if let index = targetIndex {
-                let optionHeld = event.modifierFlags.contains(.option)
+                let optionHeld = GlobalShortcutsManager.shared.plainTextOverride(for: event)
                 if viewModel.isSnippetsOnly {
                     let list = viewModel.filteredSnippets
                     if index >= 0 && index < list.count {
@@ -414,16 +420,16 @@ public final class FloatingPanel: NSPanel {
 
     private func digitIndex(forKeyCode keyCode: UInt16) -> Int? {
         switch keyCode {
-        case 18, 83: return 0 // 1 or numpad 1
-        case 19, 84: return 1 // 2 or numpad 2
-        case 20, 85: return 2 // 3 or numpad 3
-        case 21, 86: return 3 // 4 or numpad 4
-        case 23, 87: return 4 // 5 or numpad 5
-        case 22, 88: return 5 // 6 or numpad 6
-        case 26, 89: return 6 // 7 or numpad 7
-        case 28, 91: return 7 // 8 or numpad 8
-        case 25, 92: return 8 // 9 or numpad 9
-        case 29, 82: return 9 // 0 or numpad 0
+        case 18, 83: return 0  // 1 or numpad 1
+        case 19, 84: return 1  // 2 or numpad 2
+        case 20, 85: return 2  // 3 or numpad 3
+        case 21, 86: return 3  // 4 or numpad 4
+        case 23, 87: return 4  // 5 or numpad 5
+        case 22, 88: return 5  // 6 or numpad 6
+        case 26, 89: return 6  // 7 or numpad 7
+        case 28, 91: return 7  // 8 or numpad 8
+        case 25, 92: return 8  // 9 or numpad 9
+        case 29, 82: return 9  // 0 or numpad 0
         default: return nil
         }
     }
@@ -446,7 +452,6 @@ public final class FloatingPanel: NSPanel {
             positionNearMouse()
             orderFrontRegardless()
             makeKeyAndOrderFront(nil)
-            NSApp.activate()
             DispatchQueue.main.async { [weak self] in
                 self?.viewModel.isSearchFocused = true
             }
@@ -455,7 +460,8 @@ public final class FloatingPanel: NSPanel {
 
     public func positionNearMouse() {
         let mouseLocation = NSEvent.mouseLocation
-        let targetScreen = NSScreen.screens.first { NSMouseInRect(mouseLocation, $0.frame, false) }
+        let targetScreen =
+            NSScreen.screens.first { NSMouseInRect(mouseLocation, $0.frame, false) }
             ?? NSScreen.main
             ?? NSScreen.screens.first
 

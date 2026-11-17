@@ -1,6 +1,7 @@
 import AppKit
-import XCTest
 import GRDB
+import XCTest
+
 @testable import ConCopyCore
 @testable import ConCopyUI
 
@@ -32,13 +33,16 @@ final class ClipboardViewModelTests: XCTestCase {
         let injector = PasteInjector(eventPoster: mockPoster)
         let vm = ClipboardViewModel(databaseManager: databaseManager, pasteInjector: injector, appSettings: settings)
 
-        let clip = try databaseManager.ingestCapturedClip(CapturedClip(plainText: "Hello Direct Paste", primaryType: .text))
+        let clip = try databaseManager.ingestCapturedClip(
+            CapturedClip(plainText: "Hello Direct Paste", primaryType: .text))
         vm.loadClips()
+        await vm.waitForPendingLoads()
 
         var panelClosed = false
         vm.onClosePanel = { panelClosed = true }
 
         vm.handleRowClick(clip: clip)
+        await vm.waitForPendingLoads()
 
         try await Task.sleep(nanoseconds: 100_000_000)
 
@@ -49,7 +53,7 @@ final class ClipboardViewModelTests: XCTestCase {
         XCTAssertEqual(NSPasteboard.general.string(forType: .string), "Hello Direct Paste")
     }
 
-    func testSingleClickWithDirectPasteDisabledCopiesWithoutClosingPanel() throws {
+    func testSingleClickWithDirectPasteDisabledCopiesWithoutClosingPanel() async throws {
         let settings = AppSettingsManager(userDefaults: UserDefaults(suiteName: "Test_\(UUID().uuidString)")!)
         settings.isDirectPasteEnabled = false
         let mockPoster = MockCGEventPoster()
@@ -58,11 +62,13 @@ final class ClipboardViewModelTests: XCTestCase {
 
         let clip = try databaseManager.ingestCapturedClip(CapturedClip(plainText: "Copy Only Mode", primaryType: .text))
         vm.loadClips()
+        await vm.waitForPendingLoads()
 
         var panelClosed = false
         vm.onClosePanel = { panelClosed = true }
 
         vm.handleRowClick(clip: clip)
+        await vm.waitForPendingLoads()
 
         XCTAssertEqual(vm.selectedClipId, clip.id)
         XCTAssertTrue(vm.selectedClipIds.isEmpty)
@@ -78,10 +84,13 @@ final class ClipboardViewModelTests: XCTestCase {
             CapturedClip(plainText: "Repeated copy", primaryType: .text)
         )
         vm.loadClips()
+        await vm.waitForPendingLoads()
 
         vm.handleRowClick(clip: clip)
+        await vm.waitForPendingLoads()
         try await Task.sleep(nanoseconds: 700_000_000)
         vm.handleRowClick(clip: clip)
+        await vm.waitForPendingLoads()
         XCTAssertEqual(vm.copiedClipId, clip.id)
 
         // The original deadline has elapsed, but the latest copy is still within 1.2 seconds.
@@ -101,10 +110,13 @@ final class ClipboardViewModelTests: XCTestCase {
             CapturedClip(plainText: "Second copy", primaryType: .text)
         )
         vm.loadClips()
+        await vm.waitForPendingLoads()
 
         vm.handleRowClick(clip: firstClip)
+        await vm.waitForPendingLoads()
         try await Task.sleep(nanoseconds: 700_000_000)
         vm.handleRowClick(clip: secondClip)
+        await vm.waitForPendingLoads()
         XCTAssertEqual(vm.copiedClipId, secondClip.id)
 
         try await Task.sleep(nanoseconds: 700_000_000)
@@ -114,7 +126,7 @@ final class ClipboardViewModelTests: XCTestCase {
         XCTAssertNil(vm.copiedClipId, "Feedback must clear after the latest copy's deadline")
     }
 
-    func testShiftClickUpdatesSelectedClipIdsWithoutCopyOrClosing() throws {
+    func testShiftClickUpdatesSelectedClipIdsWithoutCopyOrClosing() async throws {
         let settings = AppSettingsManager(userDefaults: UserDefaults(suiteName: "Test_\(UUID().uuidString)")!)
         let mockPoster = MockCGEventPoster()
         let injector = PasteInjector(eventPoster: mockPoster)
@@ -126,6 +138,7 @@ final class ClipboardViewModelTests: XCTestCase {
             clips.append(c)
         }
         vm.loadClips()
+        await vm.waitForPendingLoads()
 
         var panelClosed = false
         vm.onClosePanel = { panelClosed = true }
@@ -134,6 +147,7 @@ final class ClipboardViewModelTests: XCTestCase {
 
         let targetClip = vm.clips[2]
         vm.handleRowClick(clip: targetClip, shiftHeld: true)
+        await vm.waitForPendingLoads()
 
         XCTAssertFalse(panelClosed, "Shift+Click must not close panel")
         XCTAssertEqual(mockPoster.postCommandVCalledCount, 0, "Shift+Click must not paste")
@@ -145,7 +159,7 @@ final class ClipboardViewModelTests: XCTestCase {
         XCTAssertEqual(vm.selectedClipId, targetClip.id)
     }
 
-    func testShiftClickWhenNoInitialSelectionSelectsSingleRecord() throws {
+    func testShiftClickWhenNoInitialSelectionSelectsSingleRecord() async throws {
         let settings = AppSettingsManager(userDefaults: UserDefaults(suiteName: "Test_\(UUID().uuidString)")!)
         let mockPoster = MockCGEventPoster()
         let injector = PasteInjector(eventPoster: mockPoster)
@@ -154,6 +168,7 @@ final class ClipboardViewModelTests: XCTestCase {
         let clip1 = try databaseManager.ingestCapturedClip(CapturedClip(plainText: "A", primaryType: .text))
         let _ = try databaseManager.ingestCapturedClip(CapturedClip(plainText: "B", primaryType: .text))
         vm.loadClips()
+        await vm.waitForPendingLoads()
 
         vm.selectedIndex = -1
         XCTAssertNil(vm.selectedClipId)
@@ -162,6 +177,7 @@ final class ClipboardViewModelTests: XCTestCase {
         vm.onClosePanel = { panelClosed = true }
 
         vm.handleRowClick(clip: clip1, shiftHeld: true)
+        await vm.waitForPendingLoads()
 
         XCTAssertFalse(panelClosed)
         XCTAssertEqual(mockPoster.postCommandVCalledCount, 0)
@@ -170,7 +186,7 @@ final class ClipboardViewModelTests: XCTestCase {
         XCTAssertEqual(vm.selectedClipId, clip1.id)
     }
 
-    func testCommandClickTogglesSelectionWithoutCopyOrClosing() throws {
+    func testCommandClickTogglesSelectionWithoutCopyOrClosing() async throws {
         let settings = AppSettingsManager(userDefaults: UserDefaults(suiteName: "Test_\(UUID().uuidString)")!)
         let mockPoster = MockCGEventPoster()
         let injector = PasteInjector(eventPoster: mockPoster)
@@ -179,16 +195,19 @@ final class ClipboardViewModelTests: XCTestCase {
         let clip1 = try databaseManager.ingestCapturedClip(CapturedClip(plainText: "A", primaryType: .text))
         let _ = try databaseManager.ingestCapturedClip(CapturedClip(plainText: "B", primaryType: .text))
         vm.loadClips()
+        await vm.waitForPendingLoads()
 
         var panelClosed = false
         vm.onClosePanel = { panelClosed = true }
 
         vm.handleRowClick(clip: clip1, commandHeld: true)
+        await vm.waitForPendingLoads()
         XCTAssertFalse(panelClosed)
         XCTAssertEqual(mockPoster.postCommandVCalledCount, 0)
         XCTAssertTrue(vm.selectedClipIds.contains(clip1.id))
 
         vm.handleRowClick(clip: clip1, commandHeld: true)
+        await vm.waitForPendingLoads()
         XCTAssertFalse(panelClosed)
         XCTAssertFalse(vm.selectedClipIds.contains(clip1.id))
     }

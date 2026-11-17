@@ -19,7 +19,38 @@ public struct CapturedClip: Sendable, Equatable {
         self.representations = representations
     }
 
+    public static func hash(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func hash(_ data: Data, domain: String) -> String {
+        var hasher = SHA256()
+        hasher.update(data: Data(("ConCopy:" + domain + ":2\0").utf8))
+        hasher.update(data: data)
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
+    internal func migratedContentHash(fallback: String) -> String {
+        let hasFile = primaryType == .file && !FileURLRepresentation.urls(in: representations).isEmpty
+        let hasImage = primaryType == .image && ["public.png", "public.tiff"].contains {
+            representations[$0]?.isEmpty == false
+        }
+        return hasFile || hasImage ? computeContentHash() : fallback
+    }
+
     public func computeContentHash() -> String {
+        // Labels (image dimensions and file names) are not clipboard identity.
+        if primaryType == .file {
+            let urls = FileURLRepresentation.urls(in: representations)
+            if !urls.isEmpty {
+                return Self.hash(Data(urls.map { $0.standardizedFileURL.absoluteString }.joined(separator: "\n").utf8), domain: "file")
+            }
+        }
+        if primaryType == .image {
+            for uti in ["public.png", "public.tiff"] {
+                if let data = representations[uti], !data.isEmpty { return Self.hash(data, domain: "image") }
+            }
+        }
         if let plainText, !plainText.isEmpty {
             let normalized = plainText.precomposedStringWithCanonicalMapping
             let digest = SHA256.hash(data: Data(normalized.utf8))
@@ -32,7 +63,7 @@ public struct CapturedClip: Sendable, Equatable {
             "public.file-url",
             "public.rtf",
             "public.html",
-            "public.url"
+            "public.url",
         ]
 
         for uti in priorityUTIs {

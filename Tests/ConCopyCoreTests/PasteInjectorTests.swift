@@ -1,11 +1,15 @@
 import AppKit
 import XCTest
+
 @testable import ConCopyCore
 
 final class MockCGEventPoster: CGEventPosting, @unchecked Sendable {
     var postCommandVCalledCount = 0
     var postTabCalledCount = 0
     var trusted = true
+    var events: [String] = []
+    var observedPasteboard: NSPasteboard?
+    var pastedValues: [String] = []
 
     func isProcessTrusted() -> Bool {
         trusted
@@ -14,12 +18,15 @@ final class MockCGEventPoster: CGEventPosting, @unchecked Sendable {
     func postCommandV() -> Bool {
         guard isProcessTrusted() else { return false }
         postCommandVCalledCount += 1
+        events.append("paste")
+        if let observedPasteboard { pastedValues.append(observedPasteboard.string(forType: .string) ?? "") }
         return true
     }
 
     func postTab() -> Bool {
         guard isProcessTrusted() else { return false }
         postTabCalledCount += 1
+        events.append("tab")
         return true
     }
 }
@@ -52,7 +59,7 @@ final class PasteInjectorTests: XCTestCase {
             sourceAppBundleId: "com.apple.TextEdit",
             representations: [
                 "public.utf8-plain-text": Data("Rich text sample".utf8),
-                "public.rtf": rtfData
+                "public.rtf": rtfData,
             ]
         )
 
@@ -83,7 +90,7 @@ final class PasteInjectorTests: XCTestCase {
             representations: [
                 "public.utf8-plain-text": Data("Rich text sample".utf8),
                 "public.rtf": rtfData,
-                "public.html": htmlData
+                "public.html": htmlData,
             ]
         )
 
@@ -194,13 +201,13 @@ final class PasteInjectorTests: XCTestCase {
     }
 
     @MainActor
-    func testCopyToPasteboardWithoutCommandV() throws {
+    func testCopyToPasteboardWithoutCommandV() async throws {
         let clip = try databaseManager.ingestCapturedClip(CapturedClip(plainText: "Copy without auto-paste"))
         let mockPoster = MockCGEventPoster()
         let injector = PasteInjector(eventPoster: mockPoster)
         let pasteboard = NSPasteboard.withUniqueName()
 
-        try injector.copyToPasteboard(
+        try await injector.copyToPasteboard(
             clip: clip,
             databaseManager: databaseManager,
             pasteboard: pasteboard,
@@ -220,14 +227,14 @@ final class PasteInjectorTests: XCTestCase {
     }
 
     @MainActor
-    func testCopyBatchToPasteboardWithoutCommandV() throws {
+    func testCopyBatchToPasteboardWithoutCommandV() async throws {
         let clip1 = try databaseManager.ingestCapturedClip(CapturedClip(plainText: "First"))
         let clip2 = try databaseManager.ingestCapturedClip(CapturedClip(plainText: "Second"))
         let mockPoster = MockCGEventPoster()
         let injector = PasteInjector(eventPoster: mockPoster)
         let pasteboard = NSPasteboard.withUniqueName()
 
-        try injector.copyBatchToPasteboard(
+        try await injector.copyBatchToPasteboard(
             clips: [clip1, clip2],
             mode: .concatenated(separator: .newline),
             transformation: .none,

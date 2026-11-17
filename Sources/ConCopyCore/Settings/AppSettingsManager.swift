@@ -20,7 +20,7 @@ public final class AppSettingsManager: ObservableObject {
 
     public static let defaultExcludedAppBundleIds: [String] = [
         "com.agilebits.onepassword",
-        "com.apple.keychainaccess"
+        "com.apple.keychainaccess",
     ]
 
     private let defaults: UserDefaults
@@ -153,6 +153,10 @@ public final class AppSettingsManager: ObservableObject {
 
         self.lastUpdateCheckDate = userDefaults.object(forKey: Self.lastUpdateCheckDateKey) as? Date
         self.skippedUpdateVersion = userDefaults.string(forKey: Self.skippedUpdateVersionKey)
+    }
+
+    public var shouldCaptureScreenshots: Bool {
+        autoCaptureScreenshots && !isMonitoringPaused && !isAppExcluded(bundleId: ScreenshotWatcher.screenshotBundleId)
     }
 
     public func isAppExcluded(bundleId: String?) -> Bool {

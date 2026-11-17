@@ -53,7 +53,7 @@ public struct FilePasteExporter: Sendable {
         try ensureDirectoryExists()
 
         let baseName = sanitizeFilename(preferredName) ?? "clip_\(Date().timeIntervalSince1970)"
-        let filename = "\(baseName).txt"
+        let filename = "\(baseName)_\(UUID().uuidString).txt"
         let fileURL = exportDirectoryURL.appendingPathComponent(filename)
 
         let data = Data(text.utf8)
@@ -72,7 +72,8 @@ public struct FilePasteExporter: Sendable {
             throw FilePasteExporterError.invalidImageData
         }
 
-        let properties: [NSBitmapImageRep.PropertyKey: Any] = format == .jpeg
+        let properties: [NSBitmapImageRep.PropertyKey: Any] =
+            format == .jpeg
             ? [.compressionFactor: 0.85]
             : [:]
 
@@ -81,7 +82,7 @@ public struct FilePasteExporter: Sendable {
         }
 
         let baseName = sanitizeFilename(preferredName) ?? "clip_\(Date().timeIntervalSince1970)"
-        let filename = "\(baseName).\(format.fileExtension)"
+        let filename = "\(baseName)_\(UUID().uuidString).\(format.fileExtension)"
         let fileURL = exportDirectoryURL.appendingPathComponent(filename)
 
         try convertedData.write(to: fileURL, options: .atomic)

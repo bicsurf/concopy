@@ -3,7 +3,9 @@ import GRDB
 
 public struct ClipRecord: Identifiable, Codable, FetchableRecord, PersistableRecord, Sendable, Equatable {
     public static let databaseTableName = "clips"
+    // GRDB 6 uses the property; GRDB 7 requests a per-column strategy.
     public static let databaseUUIDEncodingStrategy = DatabaseUUIDEncodingStrategy.lowercaseString
+    public static func databaseUUIDEncodingStrategy(for column: String) -> DatabaseUUIDEncodingStrategy { .lowercaseString }
 
     public var id: UUID
     public var contentHash: String

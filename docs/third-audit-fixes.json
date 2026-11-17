@@ -1,0 +1,308 @@
+{
+  "date": "2026-11-17",
+  "fixed": 11,
+  "new_test_count": 17,
+  "excluded": [
+    "A30"
+  ],
+  "checks": [
+    {
+      "command": "swift build",
+      "status": "passed",
+      "compiler_warnings": 0,
+      "log": "verification-third-audit/debug.log"
+    },
+    {
+      "command": "swift build -c release",
+      "status": "passed",
+      "compiler_warnings": 0,
+      "log": "verification-third-audit/release.log"
+    },
+    {
+      "command": "swift test",
+      "status": "passed",
+      "compiler_warnings": 0,
+      "log": "verification-third-audit/tests.log",
+      "discovered": 170,
+      "passed": 169,
+      "skipped": 1,
+      "failures": 0,
+      "skip_reason": "CONCOPY_TEST_CEP_PATH non configurato: fixture reale Copy Em opzionale assente"
+    }
+  ],
+  "priority_order": [
+    "C01",
+    "C02",
+    "C07"
+  ],
+  "high_priority_evidence": {
+    "before": "verification-third-audit/high-before.log",
+    "after": "verification-third-audit/high-after.log",
+    "note": "I tre test iniziali riproducevano i difetti prima della correzione; verificati poi sulla correzione."
+  },
+  "a30": {
+    "unchanged": true,
+    "file": "Sources/ConCopyUI/Shortcuts/GlobalShortcuts.swift",
+    "file_sha256": "6cd3f4ae86c31af320bfb94acf5fedc944c35327895c8dce7a860aefe306a04f",
+    "regression_test_passed": true
+  },
+  "compatibility": {
+    "schema": "v7 metadati indipendenti; v8 provenienza snippet e pulizia blob",
+    "cloud": "Formato v2 con metadataRevisions e snippetOrigins opzionali; legge v1 e v2 precedenti. Aggiornare tutti i Mac coinvolti.",
+    "backup": "Legge archivi v1/v2 precedenti; i nuovi archivi v2 includono snippetOrigins opzionale."
+  },
+  "changed_code_and_test_files": [
+    "README.md",
+    "Sources/ConCopyCore/Screenshot/ScreenshotWatcher.swift",
+    "Sources/ConCopyCore/Storage/BlobStorageManager.swift",
+    "Sources/ConCopyCore/Storage/IdentityMigration.swift",
+    "Sources/ConCopyCore/Storage/DatabaseManager.swift",
+    "Sources/ConCopyCore/Sync/CloudDriveSyncWorker.swift",
+    "Sources/ConCopyCore/Backup/ArchiveManager.swift",
+    "Sources/ConCopyCore/Import/CopyEmImporter.swift",
+    "Sources/ConCopyCore/Import/MaccyImporter.swift",
+    "Sources/ConCopyCore/Paste/PasteInjector.swift",
+    "Sources/ConCopyUI/ViewModels/ClipboardViewModel.swift",
+    "Sources/ConCopyCore/Screenshot/CompleteImageDecoder.swift",
+    "Sources/ConCopyCore/Storage/ClipMetadata.swift",
+    "Sources/ConCopyCore/Backup/SnippetRestoreOrigin.swift",
+    "Tests/ConCopyCoreTests/ThirdAuditPasteTests.swift",
+    "Tests/ConCopyCoreTests/ThirdAuditSyncTests.swift",
+    "Tests/ConCopyCoreTests/ThirdAuditImportAndScreenshotTests.swift",
+    "Tests/ConCopyCoreTests/ThirdAuditStorageTests.swift"
+  ],
+  "findings": [
+    {
+      "id": "C01",
+      "priority": "P1",
+      "title": "La migrazione v6 annulla edit remoti e può far ricomparire clip eliminate",
+      "status": "fixed",
+      "correction": "La migrazione conserva le revisioni e i tombstone precedenti; il ricalcolo degli hash non diventa una nuova modifica utente.",
+      "sources": [
+        "/Users/francescoconoscenti/Developer/concopy/Sources/ConCopyCore/Storage/IdentityMigration.swift"
+      ],
+      "regression_tests": [
+        {
+          "file": "/Users/francescoconoscenti/Developer/concopy/Tests/ConCopyCoreTests/ThirdAuditSyncTests.swift",
+          "line": 38,
+          "function": "testC01UpgradeDoesNotSupersedeRemoteRenameOrDeletion"
+        }
+      ]
+    },
+    {
+      "id": "C02",
+      "priority": "P1",
+      "title": "Ricopiare una vecchia clip alias cancella ancora preferito ed etichetta",
+      "status": "fixed",
+      "correction": "Orologi indipendenti per preferito, nome, lista e ordine manuale. Alias e ricatture fondono questi metadati separatamente dai formati del contenuto, comprese le rimozioni esplicite.",
+      "sources": [
+        "/Users/francescoconoscenti/Developer/concopy/Sources/ConCopyCore/Storage/ClipMetadata.swift",
+        "/Users/francescoconoscenti/Developer/concopy/Sources/ConCopyCore/Sync/CloudDriveSyncWorker.swift"
+      ],
+      "regression_tests": [
+        {
+          "file": "/Users/francescoconoscenti/Developer/concopy/Tests/ConCopyCoreTests/ThirdAuditSyncTests.swift",
+          "line": 62,
+          "function": "testC02OfflineAliasRecapturePreservesMetadataAndExplicitRemoval"
+        },
+        {
+          "file": "/Users/francescoconoscenti/Developer/concopy/Tests/ConCopyCoreTests/ThirdAuditSyncTests.swift",
+          "line": 98,
+          "function": "testC02IndependentMetadataFieldsAndContentConvergeAfterSerialization"
+        }
+      ]
+    },
+    {
+      "id": "C03",
+      "priority": "P2",
+      "title": "Un backup legacy raddoppia il contatore dopo la deduplicazione",
+      "status": "fixed",
+      "correction": "I componenti legacy mantengono l’ID della clip nel backup come origine del contatore anche quando la destinazione è un ID canonico diverso.",
+      "sources": [
+        "/Users/francescoconoscenti/Developer/concopy/Sources/ConCopyCore/Backup/ArchiveManager.swift"
+      ],
+      "regression_tests": [
+        {
+          "file": "/Users/francescoconoscenti/Developer/concopy/Tests/ConCopyCoreTests/ThirdAuditStorageTests.swift",
+          "line": 22,
+          "function": "testC03LegacyAliasRestoreDoesNotCountTheSameUsageTwice"
+        }
+      ]
+    },
+    {
+      "id": "C04",
+      "priority": "P2",
+      "title": "Il ripristino in un database vuoto può perdere uno snippet legittimo",
+      "status": "fixed",
+      "correction": "La deduplicazione degli snippet ripristinati usa provenienza persistente e ID deterministici; i prefissi delle shortcut non sono più una prova di duplicazione. La provenienza viene conservata da backup e sync.",
+      "sources": [
+        "/Users/francescoconoscenti/Developer/concopy/Sources/ConCopyCore/Backup/ArchiveManager.swift",
+        "/Users/francescoconoscenti/Developer/concopy/Sources/ConCopyCore/Backup/SnippetRestoreOrigin.swift",
+        "/Users/francescoconoscenti/Developer/concopy/Sources/ConCopyCore/Sync/CloudDriveSyncWorker.swift"
+      ],
+      "regression_tests": [
+        {
+          "file": "/Users/francescoconoscenti/Developer/concopy/Tests/ConCopyCoreTests/ThirdAuditStorageTests.swift",
+          "line": 39,
+          "function": "testC04LegitimateRestoredSuffixesAreNotMistakenForDuplicates"
+        },
+        {
+          "file": "/Users/francescoconoscenti/Developer/concopy/Tests/ConCopyCoreTests/ThirdAuditStorageTests.swift",
+          "line": 49,
+          "function": "testC04SnippetProvenanceSurvivesBackupRoundTripAndSync"
+        }
+      ]
+    },
+    {
+      "id": "C05",
+      "priority": "P2",
+      "title": "Un backup integro conserva un blob corrotto se la dimensione è corretta",
+      "status": "fixed",
+      "correction": "La lettura verifica l’hash SHA-256 del blob; il salvataggio sostituisce atomicamente un file corrotto già presente. Il ripristino usa i bytes integri del backup anche in caso di corruzione a dimensione invariata.",
+      "sources": [
+        "/Users/francescoconoscenti/Developer/concopy/Sources/ConCopyCore/Storage/BlobStorageManager.swift"
+      ],
+      "regression_tests": [
+        {
+          "file": "/Users/francescoconoscenti/Developer/concopy/Tests/ConCopyCoreTests/ThirdAuditStorageTests.swift",
+          "line": 75,
+          "function": "testC05BackupRepairsTruncatedAndSameLengthCorruptedBlobs"
+        },
+        {
+          "file": "/Users/francescoconoscenti/Developer/concopy/Tests/ConCopyCoreTests/ThirdAuditStorageTests.swift",
+          "line": 90,
+          "function": "testC05StoreRepairsExistingCorruptContentAddressedFile"
+        }
+      ]
+    },
+    {
+      "id": "C06",
+      "priority": "P2",
+      "title": "La migrazione delle identità lascia rappresentazioni orfane su disco",
+      "status": "fixed",
+      "correction": "La migrazione registra i candidati alla pulizia in SQL. Dopo il commit elimina solo i file privi di riferimenti; v8 raccoglie anche gli orfani di un v6 già applicato. La coda persiste se la pulizia deve essere ritentata.",
+      "sources": [
+        "/Users/francescoconoscenti/Developer/concopy/Sources/ConCopyCore/Storage/IdentityMigration.swift",
+        "/Users/francescoconoscenti/Developer/concopy/Sources/ConCopyCore/Storage/DatabaseManager.swift"
+      ],
+      "regression_tests": [
+        {
+          "file": "/Users/francescoconoscenti/Developer/concopy/Tests/ConCopyCoreTests/ThirdAuditStorageTests.swift",
+          "line": 97,
+          "function": "testC06IdentityMigrationCollectsOnlyUnreferencedBlobsAfterCommit"
+        },
+        {
+          "file": "/Users/francescoconoscenti/Developer/concopy/Tests/ConCopyCoreTests/ThirdAuditStorageTests.swift",
+          "line": 125,
+          "function": "testC06UpgradeAlsoCollectsOrphansFromAlreadyAppliedV6"
+        }
+      ]
+    },
+    {
+      "id": "C07",
+      "priority": "P1",
+      "title": "Un cambio di app nell’attesa iniziale indirizza l’intero batch alla nuova app",
+      "status": "fixed",
+      "correction": "Il PID destinatario viene acquisito all’ingresso del batch, prima di elaborazione e attesa iniziale; ogni invio successivo controlla ancora destinatario e permessi.",
+      "sources": [
+        "/Users/francescoconoscenti/Developer/concopy/Sources/ConCopyCore/Paste/PasteInjector.swift"
+      ],
+      "regression_tests": [
+        {
+          "file": "/Users/francescoconoscenti/Developer/concopy/Tests/ConCopyCoreTests/ThirdAuditPasteTests.swift",
+          "line": 100,
+          "function": "testC07InitialContextSwitchCancelsBeforeAnyEvent"
+        }
+      ]
+    },
+    {
+      "id": "C08",
+      "priority": "P2",
+      "title": "Un errore delle statistiche riapre il pannello come se l’incollaggio fosse fallito",
+      "status": "fixed",
+      "correction": "Gli errori delle statistiche successivi al trasferimento non diventano errori di incollaggio. PasteResult distingue evento inviato e uso registrato; il batch prosegue anche se non può registrare il conteggio.",
+      "sources": [
+        "/Users/francescoconoscenti/Developer/concopy/Sources/ConCopyCore/Paste/PasteInjector.swift"
+      ],
+      "regression_tests": [
+        {
+          "file": "/Users/francescoconoscenti/Developer/concopy/Tests/ConCopyCoreTests/ThirdAuditPasteTests.swift",
+          "line": 37,
+          "function": "testC08StatisticsFailureDoesNotTurnSuccessfulTransferIntoPasteFailure"
+        },
+        {
+          "file": "/Users/francescoconoscenti/Developer/concopy/Tests/ConCopyCoreTests/ThirdAuditPasteTests.swift",
+          "line": 60,
+          "function": "testC08ViewModelDoesNotReopenPanelWhenOnlyStatisticsFail"
+        }
+      ]
+    },
+    {
+      "id": "C09",
+      "priority": "P2",
+      "title": "Il percorso degli snippet continua a ignorare il fallimento dell’evento",
+      "status": "fixed",
+      "correction": "Gli snippet usano lo stesso controllo centralizzato dell’evento e degli errori. In assenza di Accessibilità la copia resta disponibile e il toast indica l’incollaggio manuale.",
+      "sources": [
+        "/Users/francescoconoscenti/Developer/concopy/Sources/ConCopyCore/Paste/PasteInjector.swift",
+        "/Users/francescoconoscenti/Developer/concopy/Sources/ConCopyUI/ViewModels/ClipboardViewModel.swift"
+      ],
+      "regression_tests": [
+        {
+          "file": "/Users/francescoconoscenti/Developer/concopy/Tests/ConCopyCoreTests/ThirdAuditPasteTests.swift",
+          "line": 79,
+          "function": "testC09SnippetEventFailureIsReportedAndManualCopyRemainsAvailable"
+        }
+      ]
+    },
+    {
+      "id": "C10",
+      "priority": "P2",
+      "title": "Il limite preventivo degli importatori misura caratteri invece di byte",
+      "status": "fixed",
+      "correction": "Il preflight SQLite misura length(CAST(valore AS BLOB)), verificando bytes anziché caratteri. Copre anche stringa, titolo e descrizione nel formato nativo Copy Em.",
+      "sources": [
+        "/Users/francescoconoscenti/Developer/concopy/Sources/ConCopyCore/Import/CopyEmImporter.swift",
+        "/Users/francescoconoscenti/Developer/concopy/Sources/ConCopyCore/Import/MaccyImporter.swift"
+      ],
+      "regression_tests": [
+        {
+          "file": "/Users/francescoconoscenti/Developer/concopy/Tests/ConCopyCoreTests/ThirdAuditImportAndScreenshotTests.swift",
+          "line": 26,
+          "function": "testC10UnicodePayloadLimitsUseBytesBeforeMaterializingContent"
+        }
+      ]
+    },
+    {
+      "id": "C11",
+      "priority": "P2",
+      "title": "Uno screenshot troncato viene archiviato prima che i pixel siano disponibili",
+      "status": "fixed",
+      "correction": "L’acquisizione richiede chunk PNG completi fino a IEND e pixel decodificabili tramite ImageIO. JPEG e TIFF validi vengono convertiti in PNG; i file parziali restano in attesa del contenuto completo.",
+      "sources": [
+        "/Users/francescoconoscenti/Developer/concopy/Sources/ConCopyCore/Screenshot/CompleteImageDecoder.swift",
+        "/Users/francescoconoscenti/Developer/concopy/Sources/ConCopyCore/Screenshot/ScreenshotWatcher.swift"
+      ],
+      "regression_tests": [
+        {
+          "file": "/Users/francescoconoscenti/Developer/concopy/Tests/ConCopyCoreTests/ThirdAuditImportAndScreenshotTests.swift",
+          "line": 63,
+          "function": "testC11PNGHeaderAndIncompletePixelsAreNotCapturedBeforeTheFullFile"
+        },
+        {
+          "file": "/Users/francescoconoscenti/Developer/concopy/Tests/ConCopyCoreTests/ThirdAuditImportAndScreenshotTests.swift",
+          "line": 86,
+          "function": "testC11CompleteJPEGAndTIFFAreConvertedToRealPNG"
+        }
+      ]
+    }
+  ],
+  "limits": [
+    "Il fixture reale Copy Em opzionale non è disponibile: un test è saltato.",
+    "Sync verificato con worker reali e database su disco in cartelle temporanee; non su due Mac fisici o con conflitti reali iCloud.",
+    "Incollaggio verificato tramite PID ed eventi simulati e pasteboard dedicate; nessun evento sintetico reale inviato durante i nuovi test.",
+    "Le revisioni artificiali già pubblicate dal vecchio v6 non possono essere ricostruite retroattivamente senza una fonte storica. La correzione preserva i clock negli upgrade successivi; v8 raccoglie i blob già orfani.",
+    "Gli archivi legacy non contengono informazioni sufficienti per distinguere vecchi valori predefiniti da rimozioni esplicite. I nuovi clock preservano le operazioni successive; aggiornare tutti i dispositivi.",
+    "Non sono state eseguite una toolchain Swift 5.9 o una build x86_64."
+  ]
+}
