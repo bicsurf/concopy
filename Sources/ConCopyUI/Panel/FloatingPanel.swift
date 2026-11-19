@@ -48,6 +48,7 @@ public final class FloatingPanel: NSPanel {
         viewModel.onClosePanel = { [weak self] in
             self?.hidePanel(restoreFocus: true)
         }
+        viewModel.pasteTargetProcessIdentifier = { [weak self] in self?.previousActiveApp?.processIdentifier }
         viewModel.onPasteFailure = { [weak self] in self?.activatePanelForInput() }
 
         self.contentView = NSHostingView(
@@ -175,10 +176,6 @@ public final class FloatingPanel: NSPanel {
             viewModel.editingClip = nil
             return
         }
-        if viewModel.renamingClip != nil {
-            viewModel.renamingClip = nil
-            return
-        }
         if viewModel.movingClip != nil {
             viewModel.movingClip = nil
             return
@@ -229,6 +226,7 @@ public final class FloatingPanel: NSPanel {
     }
 
     private func handleKeyDown(_ event: NSEvent) -> Bool {
+        let isUnmodified = event.modifierFlags.intersection([.command, .option, .control, .shift, .function]).isEmpty
         // Escape: close preview/modals, clear selection, clear search, or close panel
         if event.keyCode == 53 {
             if viewModel.isQuickLookVisible {
@@ -237,10 +235,6 @@ public final class FloatingPanel: NSPanel {
             }
             if viewModel.editingClip != nil {
                 viewModel.editingClip = nil
-                return true
-            }
-            if viewModel.renamingClip != nil {
-                viewModel.renamingClip = nil
                 return true
             }
             if viewModel.movingClip != nil {
@@ -261,19 +255,19 @@ public final class FloatingPanel: NSPanel {
         }
 
         // Spacebar: toggle QuickLook preview when query is empty or search is not focused
-        if event.keyCode == 49 && (!viewModel.isSearchFocused || viewModel.searchQuery.isEmpty) {
+        if event.keyCode == 49 && isUnmodified && (!viewModel.isSearchFocused || viewModel.searchQuery.isEmpty) {
             viewModel.toggleQuickLook()
             return true
         }
 
         // Left Arrow (123): open QuickLook (allowed if query is empty or not in search)
-        if event.keyCode == 123 && (!viewModel.isSearchFocused || viewModel.searchQuery.isEmpty) {
+        if event.keyCode == 123 && isUnmodified && (!viewModel.isSearchFocused || viewModel.searchQuery.isEmpty) {
             viewModel.isQuickLookVisible = true
             return true
         }
 
         // Right Arrow (124): close QuickLook
-        if event.keyCode == 124 && viewModel.isQuickLookVisible {
+        if event.keyCode == 124 && isUnmodified && viewModel.isQuickLookVisible {
             viewModel.isQuickLookVisible = false
             return true
         }
@@ -350,13 +344,13 @@ public final class FloatingPanel: NSPanel {
             }
         }
 
-        // List / Tab Selection: All Clips (Option + A, or Cmd + A matching list shortcuts)
+        // List / Tab Selection: All Clips (Cmd + Option + A, or Cmd + A matching list shortcuts)
         if GlobalShortcutsManager.shared.matchesAllClips(event: event) {
             viewModel.selectAllClips()
             return true
         }
 
-        // Numeric shortcuts: List / Tab Selection (Default Cmd + 1..9, 0, or Option + 1..9, 0 if swapped)
+        // Numeric shortcuts: List / Tab Selection (Default Cmd + 1..9, 0, or Cmd + Option + 1..9, 0 if swapped)
         if let digit = GlobalShortcutsManager.shared.matchedListDigit(for: event) {
             if digit == 1 {
                 viewModel.selectFavorites()
@@ -374,7 +368,7 @@ public final class FloatingPanel: NSPanel {
             }
         }
 
-        // Numeric shortcuts: Quick Paste Record (Default Option + 1..9, 0, or Cmd + 1..9, 0 if swapped)
+        // Numeric shortcuts: Quick Paste Record (Default Cmd + Option + 1..9, 0, or Cmd + 1..9, 0 if swapped)
         if let index = GlobalShortcutsManager.shared.matchedQuickPasteIndex(for: event) {
             let optionHeld = GlobalShortcutsManager.shared.plainTextOverride(for: event)
             if viewModel.isSnippetsOnly {
@@ -391,27 +385,20 @@ public final class FloatingPanel: NSPanel {
         }
 
         // Letters a-z quick paste fallback (when search is not actively focused), excluding reserved command shortcuts
-        if !viewModel.isSearchFocused,
-            event.modifierFlags.contains(.command) && !event.modifierFlags.contains(.shift)
-                && !event.modifierFlags.contains(.control),
-            let char = event.charactersIgnoringModifiers?.lowercased().first,
-            char >= "a" && char <= "z",
-            !GlobalShortcutsManager.shared.isCharacterReservedForCommands(char)
+        if let index = GlobalShortcutsManager.shared.matchedLetterQuickPasteIndex(
+            for: event, searchFocused: viewModel.isSearchFocused)
         {
-            let targetIndex = QuickPasteShortcutMapper.index(forCharacter: String(char))
-            if let index = targetIndex {
-                let optionHeld = GlobalShortcutsManager.shared.plainTextOverride(for: event)
-                if viewModel.isSnippetsOnly {
-                    let list = viewModel.filteredSnippets
-                    if index >= 0 && index < list.count {
-                        viewModel.selectedSnippetIndex = index
-                        viewModel.pasteSnippet(list[index])
-                        return true
-                    }
-                } else {
-                    viewModel.paste(at: index, optionHeld: optionHeld)
+            let optionHeld = GlobalShortcutsManager.shared.plainTextOverride(for: event)
+            if viewModel.isSnippetsOnly {
+                let list = viewModel.filteredSnippets
+                if index >= 0 && index < list.count {
+                    viewModel.selectedSnippetIndex = index
+                    viewModel.pasteSnippet(list[index])
                     return true
                 }
+            } else {
+                viewModel.paste(at: index, optionHeld: optionHeld)
+                return true
             }
         }
 

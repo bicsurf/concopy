@@ -31,7 +31,7 @@ struct PanelShortcutBadge: View {
     var body: some View {
         HStack(spacing: 2) {
             if let modifier {
-                Image(systemName: modifier)
+                Text(modifier)
             }
             Text(text)
         }

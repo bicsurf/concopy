@@ -63,25 +63,55 @@ final class Phase5Tests: XCTestCase {
         XCTAssertEqual(searchBySecondWord.count, 1)
     }
 
-    func testLinkMetadataExtraction() {
-        let fetcher = LinkMetadataFetcher()
-        let sampleHTML = """
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Apple &amp; Swift Developers &quot;Portal&quot;</title>
-            <link rel="icon" href="/static/favicon.png">
-        </head>
-        <body><h1>Hello</h1></body>
-        </html>
-        """
+    @MainActor
+    func testURLCaptureAndCopyKeepOriginalContentWithoutName() async throws {
+        let domain = "ConCopy.URLCapture.\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let settings = AppSettingsManager(userDefaults: defaults)
+        settings.isMonitoringPaused = false
+        let input = NSPasteboard.withUniqueName()
+        let output = NSPasteboard.withUniqueName()
+        defer { input.releaseGlobally(); output.releaseGlobally() }
+        let original = "http://127.0.0.1:8000"
+        input.setString(original, forType: .string)
+        let monitor = ClipboardMonitor(
+            pasteboard: input, captureInitialState: true, settingsManager: settings,
+            frontmostAppBundleIdProvider: { nil })
 
-        let title = fetcher.extractTitle(from: sampleHTML)
-        XCTAssertEqual(title, "Apple & Swift Developers \"Portal\"")
+        let capture = try XCTUnwrap(monitor.captureCurrentClip())
+        XCTAssertEqual(capture.primaryType, .url)
+        let clip = try databaseManager.ingestCapturedClip(capture)
+        XCTAssertEqual(clip.plainText, original)
+        XCTAssertNil(clip.customName)
 
-        let baseURL = URL(string: "https://developer.apple.com/news/")!
-        let favicon = fetcher.extractFavicon(from: sampleHTML, baseURL: baseURL)
-        XCTAssertEqual(favicon?.absoluteString, "https://developer.apple.com/static/favicon.png")
+        let result = try await PasteInjector().copyToPasteboard(
+            clip: clip, databaseManager: databaseManager, pasteboard: output)
+        XCTAssertFalse(result.eventSent)
+        XCTAssertEqual(output.string(forType: .string), original)
+        XCTAssertEqual(output.string(forType: PasteInjector.internalPasteMarker), "1")
+        XCTAssertNil(try databaseManager.fetchClip(id: clip.id)?.customName)
+    }
+
+    @MainActor
+    func testLegacyURLNameDoesNotReplaceCopiedContentOrPayloads() async throws {
+        let original = "https://example.test/original"
+        let bytes = Data(original.utf8)
+        let stored = try databaseManager.ingestCapturedClip(CapturedClip(
+            plainText: original, primaryType: .url,
+            representations: ["public.utf8-plain-text": bytes, "public.url": bytes]))
+        try databaseManager.updateCustomName(clipId: stored.id, name: "Legacy page title")
+        let clip = try XCTUnwrap(databaseManager.fetchClip(id: stored.id))
+        let output = NSPasteboard.withUniqueName()
+        defer { output.releaseGlobally() }
+
+        try await PasteInjector().copyToPasteboard(
+            clip: clip, databaseManager: databaseManager, pasteboard: output)
+
+        XCTAssertEqual(output.string(forType: .string), original)
+        XCTAssertEqual(output.data(forType: .URL), bytes)
+        XCTAssertEqual(try databaseManager.fetchClip(id: clip.id)?.customName, "Legacy page title")
+        XCTAssertEqual(try databaseManager.fetchClip(id: clip.id)?.contentHash, stored.contentHash)
     }
 
     func testExportAndImportJSON() async throws {

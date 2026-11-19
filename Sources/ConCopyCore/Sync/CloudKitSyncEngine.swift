@@ -103,11 +103,11 @@ public final class CloudKitSyncCoordinator: NSObject, @unchecked Sendable {
     }
     public func performSync() async {
         let token = lock.withLock { generation }
-        await performSync(token: token)
+        await performSync(token: token, force: true)
     }
-    private func performSync(token: UInt64) async {
+    private func performSync(token: UInt64, force: Bool = false) async {
         guard isAuthorized(token), !Task.isCancelled else { return }
-        let result = await worker.performSync(isAuthorized: { [weak self] in self?.isAuthorized(token) == true })
+        let result = await worker.performSync(force: force, isAuthorized: { [weak self] in self?.isAuthorized(token) == true })
         guard isAuthorized(token) else { return }
         await MainActor.run {
             self.onStatusChanged?(result.status)

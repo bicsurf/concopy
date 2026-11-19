@@ -40,7 +40,7 @@ final class ReauditPasteTests: XCTestCase {
         defer { manager.setSwapNumericModifiers(original) }
         for swapped in [false, true] {
             manager.setSwapNumericModifiers(swapped)
-            let flags: NSEvent.ModifierFlags = swapped ? [.command] : [.option]
+            let flags: NSEvent.ModifierFlags = swapped ? [.command] : [.command, .option]
             let event = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags,
                 timestamp: 0, windowNumber: 0, context: nil, characters: "1", charactersIgnoringModifiers: "1", isARepeat: false, keyCode: 18))
             XCTAssertEqual(manager.matchedQuickPasteIndex(for: event), 0)

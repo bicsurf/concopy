@@ -183,7 +183,7 @@ public enum ConCopyTheme {
             }
         }
 
-        /// Badge scorciatoia per schede liste (⌥1..⌥9)
+        /// Badge scorciatoia per schede liste (⌘1..⌘9 oppure ⌘⌥1..⌘⌥9)
         public static func tabShortcutBackground(isSelected: Bool) -> Color {
             if isSelected {
                 return ConCopyTheme.dynamicColor(

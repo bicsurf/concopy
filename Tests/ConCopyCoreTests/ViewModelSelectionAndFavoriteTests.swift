@@ -534,7 +534,7 @@ final class ViewModelSelectionAndFavoriteTests: XCTestCase {
         XCTAssertTrue(viewModel.isSnippetEditorPresented)
         XCTAssertEqual(viewModel.editingSnippet?.content, "Test snippet from clip")
 
-        // 7. Test Move Dialog (⌘M) with Snippet Option (⌥2)
+        // 7. Test Move Dialog (⌘M) with Snippet Option (⌘2, or ⌘⌥2 if swapped)
         viewModel.loadClips()
         await viewModel.waitForPendingLoads()
         viewModel.selectedIndex = 0

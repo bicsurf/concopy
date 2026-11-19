@@ -154,7 +154,7 @@ public struct PreferencesView: View {
                     Text(
                         settingsManager.isDirectPasteEnabled
                             ? "A click pastes the clip into the app you were using and closes the panel."
-                            : "A click copies the clip and keeps the panel open. Paste with ⌘V when you’re ready."
+                            : "A click copies the clip and closes the panel. Paste with ⌘V when you’re ready."
                     )
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -334,12 +334,12 @@ public struct PreferencesView: View {
                         )
                     ) {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Swap numeric modifiers (⌘ ⇋ ⌥)")
+                            Text("Swap numeric modifiers (⌘ ⇋ ⌘⌥)")
                                 .font(.system(size: 13, weight: .semibold))
                             Text(
                                 shortcutsManager.swapNumericModifiers
-                                    ? "Active: ⌥ to select lists and ⌘ for quick paste"
-                                    : "Default: ⌘ to select lists and ⌥ for quick paste"
+                                    ? "Active: ⌘⌥ to select lists and ⌘ for quick paste"
+                                    : "Default: ⌘ to select lists and ⌘⌥ for quick paste"
                             )
                             .font(.caption)
                             .foregroundColor(.secondary)

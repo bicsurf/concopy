@@ -8,7 +8,6 @@ public struct ClipboardListView: View {
     @ObservedObject private var shortcutsManager = GlobalShortcutsManager.shared
     @FocusState private var isFieldFocused: Bool
     @State private var editTextValue: String = ""
-    @State private var editNameValue: String = ""
     @ObservedObject private var settings: AppSettingsManager
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -20,6 +19,14 @@ public struct ClipboardListView: View {
     public var body: some View {
         VStack(spacing: 0) {
             panelHeader
+
+            if viewModel.isHistoryTemporary {
+                PanelNotice(
+                    title: "Temporary history",
+                    message: "Your saved history could not be opened. New clips are temporary; cleanup and iCloud sync are paused. Export a backup from Settings before quitting.",
+                    systemImage: "exclamationmark.triangle", actionTitle: "Settings"
+                ) { viewModel.onOpenSettings?() }
+            }
 
             // Update Available Banner
             if let update = updateChecker.availableUpdate {
@@ -60,7 +67,7 @@ public struct ClipboardListView: View {
             if settings.iCloudSyncEnabled && viewModel.cloudSyncStatus == .error {
                 PanelNotice(
                     title: "iCloud sync needs attention",
-                    message: "Your local history is safe. Sync could not be completed.",
+                    message: "Sync could not be completed. Retry to recover available data from iCloud, or restore a backup in Settings.",
                     systemImage: "exclamationmark.icloud", actionTitle: "Retry"
                 ) { viewModel.onRetrySync?() }
             }
@@ -102,6 +109,7 @@ public struct ClipboardListView: View {
                     ScrollView {
                         LazyVStack(spacing: 2) {
                             ForEach(Array(viewModel.clips.enumerated()), id: \.element.id) { index, clip in
+                                let shortcut = shortcutsManager.quickPasteShortcut(for: index, searchFocused: viewModel.isSearchFocused)
                                 ClipRowView(
                                     clip: clip,
                                     index: index,
@@ -110,8 +118,8 @@ public struct ClipboardListView: View {
                                     isPasting: viewModel.pastingClipId == clip.id,
                                     isCopied: viewModel.copiedClipId == clip.id,
                                     actionTitle: settings.isDirectPasteEnabled ? "Paste" : "Copy",
-                                    shortcutLabel: QuickPasteShortcutMapper.label(forIndex: index),
-                                    quickPasteModifier: shortcutsManager.quickPasteModifierSystemImage,
+                                    shortcutLabel: shortcut?.label,
+                                    quickPasteModifier: shortcut?.modifierSymbol ?? shortcutsManager.quickPasteModifierSymbol,
                                     thumbnailImage: clip.primaryType == .image
                                         ? viewModel.imageThumbnail(for: clip) : nil,
                                     fileIconImage: clip.primaryType == .file ? viewModel.fileIcon(for: clip) : nil,
@@ -255,36 +263,6 @@ public struct ClipboardListView: View {
                 editTextValue = clip.plainText ?? ""
             }
         }
-        // Rename / Custom Name sheet
-        .sheet(item: $viewModel.renamingClip) { clip in
-            VStack(alignment: .leading, spacing: 12) {
-                Text(clip.customName == nil ? "Add Custom Name" : "Rename Clip")
-                    .font(.headline)
-                TextField("Name / Label...", text: $editNameValue)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(minWidth: 300)
-
-                HStack {
-                    if clip.customName != nil {
-                        Button("Remove Name", role: .destructive) {
-                            viewModel.saveCustomName(for: clip.id, newName: nil)
-                        }
-                    }
-                    Spacer()
-                    Button("Cancel") {
-                        viewModel.renamingClip = nil
-                    }
-                    Button("Save") {
-                        viewModel.saveCustomName(for: clip.id, newName: editNameValue)
-                    }
-                    .keyboardShortcut(.defaultAction)
-                }
-            }
-            .padding()
-            .onAppear {
-                editNameValue = clip.customName ?? ""
-            }
-        }
         // Move to List sheet
         .sheet(item: $viewModel.movingClip) { clip in
             MoveToListSheetView(viewModel: viewModel, clip: clip)
@@ -349,7 +327,7 @@ public struct ClipboardListView: View {
                 .help(
                     settings.isDirectPasteEnabled
                         ? "Click a clip to paste it into the active app. Change this in Settings."
-                        : "Click a clip to copy it and keep this panel open. Change this in Settings.")
+                        : "Click a clip to copy it and close this panel. Change this in Settings.")
                 Menu {
                     ForEach(ClipSortMode.allCases, id: \.self) { mode in
                         Button {
@@ -685,12 +663,6 @@ public struct ClipboardListView: View {
             Label("Edit Text...", systemImage: "pencil")
         }
 
-        Button(action: {
-            viewModel.renamingClip = clip
-        }) {
-            Label(clip.customName == nil ? "Add Name..." : "Rename...", systemImage: "tag")
-        }
-
         Divider()
 
         Button(clip.isFavorite ? "Remove from Favorites" : "Add to Favorites") {
@@ -829,7 +801,7 @@ struct ClipRowView: View, Equatable {
     var isCopied: Bool = false
     var actionTitle: String = "Copy"
     let shortcutLabel: String?
-    var quickPasteModifier: String = GlobalShortcutsManager.shared.quickPasteModifierSystemImage
+    var quickPasteModifier: String = GlobalShortcutsManager.shared.quickPasteModifierSymbol
     var thumbnailImage: NSImage? = nil
     var fileIconImage: NSImage? = nil
     var appIconImage: NSImage? = nil
@@ -849,7 +821,6 @@ struct ClipRowView: View, Equatable {
     }
 
     private var accessibilityTitle: String {
-        if let name = clip.customName, !name.isEmpty { return name }
         return String((clip.plainText ?? clip.primaryType.rawValue).prefix(160))
     }
 
@@ -927,28 +898,13 @@ struct ClipRowView: View, Equatable {
                         }
                     }
 
-                    VStack(alignment: .leading, spacing: 3) {
-                        if let name = clip.customName, !name.isEmpty {
-                            Text(name)
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(.primary)
-                                .lineLimit(1)
-                            if let text = clip.plainText, !text.isEmpty {
-                                Text(text.trimmingCharacters(in: .whitespacesAndNewlines))
-                                    .font(.system(size: 11.5))
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                            }
-                        } else {
-                            Text(
-                                clip.plainText?.trimmingCharacters(in: .whitespacesAndNewlines)
-                                    ?? "No preview available"
-                            )
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(.primary)
-                            .lineLimit(2)
-                        }
-                    }
+                    Text(
+                        clip.plainText?.trimmingCharacters(in: .whitespacesAndNewlines)
+                            ?? "No preview available"
+                    )
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.primary)
+                    .lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     if isPasting {
                         ProgressView().controlSize(.mini)
@@ -1330,11 +1286,12 @@ struct SnippetsListView: View {
                     ScrollView {
                         LazyVStack(spacing: 2) {
                             ForEach(Array(displayedSnippets.enumerated()), id: \.element.id) { index, snippet in
+                                let shortcut = shortcutsManager.quickPasteShortcut(for: index, searchFocused: viewModel.isSearchFocused)
                                 SnippetRowView(
                                     snippet: snippet,
                                     index: index,
                                     isSelected: viewModel.selectedSnippetIndex == index,
-                                    shortcutLabel: QuickPasteShortcutMapper.label(forIndex: index),
+                                    shortcutLabel: shortcut?.label,
                                     onSelect: { viewModel.selectedSnippetIndex = index },
                                     onPaste: {
                                         viewModel.selectedSnippetIndex = index
@@ -1347,7 +1304,7 @@ struct SnippetsListView: View {
                                     onDelete: {
                                         viewModel.deleteSnippet(snippet)
                                     },
-                                    quickPasteModifier: shortcutsManager.quickPasteModifierSystemImage
+                                    quickPasteModifier: shortcut?.modifierSymbol ?? shortcutsManager.quickPasteModifierSymbol
                                 )
                                 .id(snippet.id)
                             }
@@ -1377,7 +1334,7 @@ struct SnippetRowView: View {
     let onPaste: () -> Void
     let onEdit: () -> Void
     let onDelete: () -> Void
-    var quickPasteModifier: String = GlobalShortcutsManager.shared.quickPasteModifierSystemImage
+    var quickPasteModifier: String = GlobalShortcutsManager.shared.quickPasteModifierSymbol
     @State private var isHovered = false
 
     var body: some View {

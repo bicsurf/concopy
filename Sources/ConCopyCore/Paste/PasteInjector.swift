@@ -137,6 +137,8 @@ public struct PasteInjector: Sendable {
         pasteboard: NSPasteboard = .general, forcePlainText: Bool = false,
         transformation: TextTransformation = .none
     ) async throws -> PasteResult {
+        let slot = try await PasteOperationCoordinator.shared.acquire(pasteboard)
+        defer { PasteOperationCoordinator.shared.release(pasteboard, id: slot) }
         let recorded = try await copyToPasteboard(clip: clip, databaseManager: databaseManager, pasteboard: pasteboard,
             forcePlainText: forcePlainText, transformation: transformation, countUsage: true)
         return PasteResult(eventSent: false, usageRecorded: recorded)
@@ -147,6 +149,7 @@ public struct PasteInjector: Sendable {
         clip: ClipRecord, databaseManager: DatabaseManager, pasteboard: NSPasteboard,
         forcePlainText: Bool, transformation: TextTransformation, countUsage: Bool
     ) async throws -> Bool {
+        let originalChangeCount = pasteboard.changeCount
         let prepared = try await Task.detached(priority: .userInitiated) {
             var representations: [String: Data] = [:]
             if forcePlainText || transformation != .none {
@@ -160,6 +163,7 @@ public struct PasteInjector: Sendable {
             return representations
         }.value
         try Task.checkCancellation()
+        guard pasteboard.changeCount == originalChangeCount else { throw CocoaError(.userCancelled) }
         writePrepared(
             clip: clip, representations: prepared, pasteboard: pasteboard,
             forcePlainText: false)
@@ -187,6 +191,8 @@ public struct PasteInjector: Sendable {
         transformation: TextTransformation = .none, databaseManager: DatabaseManager,
         pasteboard: NSPasteboard = .general
     ) async throws -> PasteResult {
+        let slot = try await PasteOperationCoordinator.shared.acquire(pasteboard)
+        defer { PasteOperationCoordinator.shared.release(pasteboard, id: slot) }
         let recorded = try await copyBatchToPasteboard(clips: clips, mode: mode, transformation: transformation,
             databaseManager: databaseManager, pasteboard: pasteboard, countUsage: true)
         return PasteResult(eventSent: false, usageRecorded: recorded)
@@ -203,6 +209,7 @@ public struct PasteInjector: Sendable {
                 clip: clip, databaseManager: databaseManager, pasteboard: pasteboard, forcePlainText: false,
                 transformation: transformation, countUsage: countUsage)
         }
+        let originalChangeCount = pasteboard.changeCount
         let joinedText = await Task.detached(priority: .userInitiated) {
             let separator: String
             switch mode {
@@ -213,6 +220,7 @@ public struct PasteInjector: Sendable {
                 separator: separator)
         }.value
         try Task.checkCancellation()
+        guard pasteboard.changeCount == originalChangeCount else { throw CocoaError(.userCancelled) }
         pasteboard.clearContents()
         pasteboard.setString("1", forType: Self.internalPasteMarker)
         pasteboard.setString(joinedText, forType: .string)
@@ -221,8 +229,21 @@ public struct PasteInjector: Sendable {
     }
 
     @MainActor
-    private func postPasteIfRequested(_ requested: Bool) throws {
+    private func validateDestination(_ target: pid_t?, allowingOwnProcess: Bool = false) throws {
+        let current = frontmostProcessIdentifier()
+        guard let target, current == target
+            || (allowingOwnProcess && current == ProcessInfo.processInfo.processIdentifier)
+        else { throw CocoaError(.userCancelled) }
+    }
+
+    @MainActor
+    private func postPasteIfRequested(_ requested: Bool, target: pid_t?,
+        pasteboard: NSPasteboard, changeCount: Int) throws
+    {
+        try Task.checkCancellation()
+        guard pasteboard.changeCount == changeCount else { throw CocoaError(.userCancelled) }
         if requested {
+            try validateDestination(target)
             guard eventPoster.isProcessTrusted(), eventPoster.postCommandV() else {
                 throw PasteInjectionError.eventFailed
             }
@@ -230,19 +251,34 @@ public struct PasteInjector: Sendable {
     }
 
     @MainActor
+    private func clipboardConsumptionGracePeriod() async {
+        // CGEvent posting has no read acknowledgement. Do not let the next queued request
+        // replace the clipboard immediately; cancellation after posting must not skip this grace.
+        await Task { @MainActor in try? await Task.sleep(nanoseconds: 50_000_000) }.value
+    }
+
+    @MainActor
     @discardableResult
     public func paste(
         clip: ClipRecord, databaseManager: DatabaseManager, pasteboard: NSPasteboard = .general,
         forcePlainText: Bool = false, transformation: TextTransformation = .none,
+        targetProcessIdentifier: pid_t? = nil,
         beforeEventHook: (() -> Void)? = nil
     ) async throws -> PasteResult {
+        let target = targetProcessIdentifier ?? frontmostProcessIdentifier()
         let shouldInject = eventPoster.isProcessTrusted()
+        let slot = try await PasteOperationCoordinator.shared.acquire(pasteboard)
+        defer { PasteOperationCoordinator.shared.release(pasteboard, id: slot) }
+        if shouldInject { try validateDestination(target, allowingOwnProcess: true) }
         _ = try await copyToPasteboard(
             clip: clip, databaseManager: databaseManager, pasteboard: pasteboard,
             forcePlainText: forcePlainText, transformation: transformation, countUsage: false)
+        let changeCount = pasteboard.changeCount
+        if shouldInject { try validateDestination(target, allowingOwnProcess: true) }
         beforeEventHook?()
         try await Task.sleep(nanoseconds: 80_000_000)
-        try postPasteIfRequested(shouldInject)
+        try postPasteIfRequested(shouldInject, target: target, pasteboard: pasteboard, changeCount: changeCount)
+        if shouldInject { await clipboardConsumptionGracePeriod() }
         return PasteResult(eventSent: shouldInject, usageRecorded: await recordUsageIfPossible([clip], databaseManager))
     }
 
@@ -251,9 +287,15 @@ public struct PasteInjector: Sendable {
     public func pasteAsFile(
         clip: ClipRecord, imageFormat: ImageExportFormat = .png,
         databaseManager: DatabaseManager, pasteboard: NSPasteboard = .general,
+        targetProcessIdentifier: pid_t? = nil,
         beforeEventHook: (() -> Void)? = nil
     ) async throws -> PasteResult {
+        let target = targetProcessIdentifier ?? frontmostProcessIdentifier()
         let shouldInject = eventPoster.isProcessTrusted()
+        let slot = try await PasteOperationCoordinator.shared.acquire(pasteboard)
+        defer { PasteOperationCoordinator.shared.release(pasteboard, id: slot) }
+        if shouldInject { try validateDestination(target, allowingOwnProcess: true) }
+        let originalChangeCount = pasteboard.changeCount
         let exporter = fileExporter
         let fileURL = try await Task.detached(priority: .userInitiated) {
             if clip.primaryType == .image,
@@ -268,13 +310,17 @@ public struct PasteInjector: Sendable {
             return try exporter.exportTextAsFile(clip.plainText ?? "", preferredName: clip.customName)
         }.value
         try Task.checkCancellation()
+        guard pasteboard.changeCount == originalChangeCount else { throw CocoaError(.userCancelled) }
+        if shouldInject { try validateDestination(target, allowingOwnProcess: true) }
         pasteboard.clearContents()
         pasteboard.setString("1", forType: Self.internalPasteMarker)
         pasteboard.writeObjects([fileURL as NSURL])
         pasteboard.setString("1", forType: Self.internalPasteMarker)
+        let changeCount = pasteboard.changeCount
         beforeEventHook?()
         try await Task.sleep(nanoseconds: 80_000_000)
-        try postPasteIfRequested(shouldInject)
+        try postPasteIfRequested(shouldInject, target: target, pasteboard: pasteboard, changeCount: changeCount)
+        if shouldInject { await clipboardConsumptionGracePeriod() }
         return PasteResult(eventSent: shouldInject, usageRecorded: await recordUsageIfPossible([clip], databaseManager))
     }
 
@@ -283,35 +329,42 @@ public struct PasteInjector: Sendable {
     public func pasteBatch(
         clips: [ClipRecord], mode: BatchPasteMode,
         transformation: TextTransformation = .none, databaseManager: DatabaseManager,
-        pasteboard: NSPasteboard = .general, beforeEventHook: (() -> Void)? = nil
+        pasteboard: NSPasteboard = .general, targetProcessIdentifier: pid_t? = nil,
+        beforeEventHook: (() -> Void)? = nil
     ) async throws -> PasteResult {
         guard !clips.isEmpty else { return PasteResult(eventSent: false, usageRecorded: true) }
-        let targetPID = frontmostProcessIdentifier()
-        if case .sequentialFormFields(let delayMs) = mode, eventPoster.isProcessTrusted() {
+        let targetPID = targetProcessIdentifier ?? frontmostProcessIdentifier()
+        let shouldInject = eventPoster.isProcessTrusted()
+        let slot = try await PasteOperationCoordinator.shared.acquire(pasteboard)
+        defer { PasteOperationCoordinator.shared.release(pasteboard, id: slot) }
+        if shouldInject { try validateDestination(targetPID, allowingOwnProcess: true) }
+        var changeCount = pasteboard.changeCount
+        if case .sequentialFormFields(let delayMs) = mode, shouldInject {
             var recordedAll = true
             let values = await Task.detached(priority: .userInitiated) {
                 clips.map { TextTransformer.apply(transformation, to: $0.plainText ?? "") }
             }.value
+            try validateDestination(targetPID, allowingOwnProcess: true)
             beforeEventHook?()
             try await Task.sleep(nanoseconds: 80_000_000)
             let delay = min(delayMs, 5000) * 1_000_000
             for (index, value) in values.enumerated() {
                 try Task.checkCancellation()
-                guard eventPoster.isProcessTrusted(),
-                    targetPID == frontmostProcessIdentifier()
-                else {
-                    throw CocoaError(.userCancelled)
-                }
+                try validateDestination(targetPID)
+                guard pasteboard.changeCount == changeCount else { throw CocoaError(.userCancelled) }
                 pasteboard.clearContents()
                 pasteboard.setString("1", forType: Self.internalPasteMarker)
                 pasteboard.setString(value, forType: .string)
-                guard eventPoster.postCommandV() else { throw PasteInjectionError.eventFailed }
+                changeCount = pasteboard.changeCount
+                try postPasteIfRequested(true, target: targetPID, pasteboard: pasteboard, changeCount: changeCount)
+                await clipboardConsumptionGracePeriod()
                 let recorded = await recordUsageIfPossible([clips[index]], databaseManager)
                 recordedAll = recordedAll && recorded
-                // Give the destination time to consume the clipboard before replacing its content.
-                try await Task.sleep(nanoseconds: max(delay, 50_000_000))
+                try Task.checkCancellation()
+                if delay > 50_000_000 { try await Task.sleep(nanoseconds: delay - 50_000_000) }
                 if index < values.count - 1 {
-                    guard eventPoster.isProcessTrusted(), targetPID == frontmostProcessIdentifier() else {
+                    guard eventPoster.isProcessTrusted(), targetPID == frontmostProcessIdentifier(),
+                        pasteboard.changeCount == changeCount else {
                         throw CocoaError(.userCancelled)
                     }
                     guard eventPoster.postTab() else { throw PasteInjectionError.eventFailed }
@@ -320,13 +373,15 @@ public struct PasteInjector: Sendable {
             }
             return PasteResult(eventSent: true, usageRecorded: recordedAll)
         } else {
-            let shouldInject = eventPoster.isProcessTrusted()
             _ = try await copyBatchToPasteboard(
                 clips: clips, mode: mode, transformation: transformation,
                 databaseManager: databaseManager, pasteboard: pasteboard, countUsage: false)
+            changeCount = pasteboard.changeCount
+            if shouldInject { try validateDestination(targetPID, allowingOwnProcess: true) }
             beforeEventHook?()
             try await Task.sleep(nanoseconds: 80_000_000)
-            try postPasteIfRequested(shouldInject)
+            try postPasteIfRequested(shouldInject, target: targetPID, pasteboard: pasteboard, changeCount: changeCount)
+            if shouldInject { await clipboardConsumptionGracePeriod() }
             return PasteResult(eventSent: shouldInject, usageRecorded: await recordUsageIfPossible(clips, databaseManager))
         }
     }
@@ -334,15 +389,22 @@ public struct PasteInjector: Sendable {
     @MainActor
     @discardableResult
     public func pasteText(_ text: String, pasteboard: NSPasteboard = .general,
+        targetProcessIdentifier: pid_t? = nil,
         beforeEventHook: ((_ willSendEvent: Bool) -> Void)? = nil) async throws -> PasteResult {
+        let target = targetProcessIdentifier ?? frontmostProcessIdentifier()
         let shouldInject = eventPoster.isProcessTrusted()
+        let slot = try await PasteOperationCoordinator.shared.acquire(pasteboard)
+        defer { PasteOperationCoordinator.shared.release(pasteboard, id: slot) }
+        if shouldInject { try validateDestination(target, allowingOwnProcess: true) }
         try Task.checkCancellation()
         pasteboard.clearContents()
         pasteboard.setString("1", forType: Self.internalPasteMarker)
         pasteboard.setString(text, forType: .string)
+        let changeCount = pasteboard.changeCount
         beforeEventHook?(shouldInject)
         try await Task.sleep(nanoseconds: 80_000_000)
-        try postPasteIfRequested(shouldInject)
+        try postPasteIfRequested(shouldInject, target: target, pasteboard: pasteboard, changeCount: changeCount)
+        if shouldInject { await clipboardConsumptionGracePeriod() }
         return PasteResult(eventSent: shouldInject, usageRecorded: true)
     }
 }

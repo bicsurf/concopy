@@ -41,7 +41,7 @@ public struct QuickLookPopoverView: View {
             HStack(spacing: 8) {
                 Image(systemName: iconName)
                     .foregroundColor(.accentColor)
-                Text(clip.customName ?? clip.primaryType.rawValue.capitalized)
+                Text(clip.primaryType.rawValue.capitalized)
                     .font(.headline)
                     .lineLimit(1)
                 Spacer()

@@ -144,7 +144,21 @@ public struct ArchiveManager: Sendable {
         do {
             let obsoleteBlobs = try await databaseManager.dbWriter.write { db -> [String] in
                 var obsoleteBlobs: [String] = []
-                for list in archive.lists { try list.save(db) }
+                let localLists = try ClipListRecord.fetchAll(db)
+                let localIDs = Set(localLists.map(\.id))
+                var activeID = localLists.filter(\.isAutoStarActive).sorted { $0.id.uuidString < $1.id.uuidString }.first?.id
+                // Restore is additive for lists as well: retain current names, order and explicit disables.
+                for var list in archive.lists.sorted(by: { $0.id.uuidString < $1.id.uuidString }) where !localIDs.contains(list.id) {
+                    if list.isAutoStarActive {
+                        if activeID == nil { activeID = list.id }
+                        else { list.isAutoStarActive = false }
+                    }
+                    try list.insert(db)
+                }
+                if let activeID {
+                    try db.execute(sql: "UPDATE clip_lists SET isAutoStarActive=0 WHERE isAutoStarActive=1 AND id != ?",
+                        arguments: [activeID.uuidString.lowercased()])
+                }
                 for item in archive.clips {
                     try autoreleasepool {
                         let representations = try Self.validatedRepresentations(item.payloads)

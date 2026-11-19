@@ -12,6 +12,7 @@ public final class ClipboardViewModel: ObservableObject {
     @Published public private(set) var hasMoreClips = false
     @Published public private(set) var isLoadingClips = false
     @Published public var cloudSyncStatus: CloudSyncStatus = .idle
+    @Published public var isHistoryTemporary = false
     @Published public var snippetSaveError: String?
     private var visibleLimit = 100
     private var loadVersion: UInt64 = 0
@@ -77,7 +78,6 @@ public final class ClipboardViewModel: ObservableObject {
     @Published public var isSearchFocused: Bool = false
     @Published public var isQuickLookVisible: Bool = false
     @Published public var editingClip: ClipRecord? = nil
-    @Published public var renamingClip: ClipRecord? = nil
     @Published public var movingClip: ClipRecord? = nil
     @Published public var pastingClipId: UUID? = nil
     @Published public var copiedClipId: UUID? = nil
@@ -97,6 +97,7 @@ public final class ClipboardViewModel: ObservableObject {
     public let appSettings: AppSettingsManager
     public let pasteboard: NSPasteboard
     public var onClosePanel: (() -> Void)?
+    public var pasteTargetProcessIdentifier: (() -> pid_t?)?
     public var onPasteFailure: (() -> Void)?
     public var onOpenSettings: (() -> Void)?
     public var onRetrySync: (() -> Void)?
@@ -200,22 +201,6 @@ public final class ClipboardViewModel: ObservableObject {
                 loadClips()
             } catch {
                 print("[ConCopy] Failed to update text content: \(error)")
-            }
-
-        }
-    }
-
-    public func saveCustomName(for clipId: UUID, newName: String?) {
-        performUIAction { [self] in
-
-            do {
-                let db = databaseManager
-                try await Task.detached(priority: .utility) { try db.updateCustomName(clipId: clipId, name: newName) }
-                    .value
-                renamingClip = nil
-                loadClips()
-            } catch {
-                print("[ConCopy] Failed to update custom name: \(error)")
             }
 
         }
@@ -588,11 +573,7 @@ public final class ClipboardViewModel: ObservableObject {
         selectedClipIds.removeAll()
         selectionAnchorId = clip.id
 
-        if appSettings.isDirectPasteEnabled {
-            paste(clip: clip, optionHeld: optionHeld)
-        } else {
-            copyClipToPasteboardWithoutClosing(clip: clip, optionHeld: optionHeld)
-        }
+        paste(clip: clip, optionHeld: optionHeld)
     }
 
     public func copyClipToPasteboardWithoutClosing(clip: ClipRecord, optionHeld: Bool = false) {
@@ -644,9 +625,10 @@ public final class ClipboardViewModel: ObservableObject {
         let forcePlainText = optionHeld || isPlainTextModeEnabled
         let transformation = activeTransformation
         let isTrusted = pasteInjector.eventPoster.isProcessTrusted()
+        let target = pasteTargetProcessIdentifier?()
 
         if !appSettings.isDirectPasteEnabled {
-            Task { @MainActor [weak self] in
+            performUIAction { [weak self] in
                 guard let self else { return }
                 do {
                     try await self.pasteInjector.copyToPasteboard(
@@ -667,7 +649,7 @@ public final class ClipboardViewModel: ObservableObject {
             return
         }
 
-        Task { @MainActor [weak self] in
+        performUIAction { [weak self] in
             guard let self else { return }
             do {
                 if !isTrusted {
@@ -679,6 +661,7 @@ public final class ClipboardViewModel: ObservableObject {
                     pasteboard: self.pasteboard,
                     forcePlainText: forcePlainText,
                     transformation: transformation,
+                    targetProcessIdentifier: target,
                     beforeEventHook: { [weak self] in
                         if isTrusted {
                             self?.onClosePanel?()
@@ -707,7 +690,7 @@ public final class ClipboardViewModel: ObservableObject {
         let orderedClips: [ClipRecord]
         if !selectedClipIds.isEmpty {
             orderedClips = clips.filter { selectedClipIds.contains($0.id) }
-        } else if selectedIndex < clips.count {
+        } else if selectedIndex >= 0 && selectedIndex < clips.count {
             orderedClips = [clips[selectedIndex]]
         } else {
             return
@@ -715,6 +698,7 @@ public final class ClipboardViewModel: ObservableObject {
 
         let transformation = activeTransformation
         let isTrusted = pasteInjector.eventPoster.isProcessTrusted()
+        let target = pasteTargetProcessIdentifier?()
 
         if !appSettings.isDirectPasteEnabled {
             Task { @MainActor [weak self] in
@@ -749,6 +733,7 @@ public final class ClipboardViewModel: ObservableObject {
                     transformation: transformation,
                     databaseManager: self.databaseManager,
                     pasteboard: self.pasteboard,
+                    targetProcessIdentifier: target,
                     beforeEventHook: { [weak self] in
                         if isTrusted {
                             self?.onClosePanel?()
@@ -839,6 +824,7 @@ public final class ClipboardViewModel: ObservableObject {
 
     public func pasteAsFile(clip: ClipRecord, imageFormat: ImageExportFormat = .png) {
         guard canActOnClips else { return }
+        let target = pasteTargetProcessIdentifier?()
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
@@ -847,6 +833,7 @@ public final class ClipboardViewModel: ObservableObject {
                     imageFormat: imageFormat,
                     databaseManager: self.databaseManager,
                     pasteboard: self.pasteboard,
+                    targetProcessIdentifier: target,
                     beforeEventHook: { [weak self] in
                         self?.onClosePanel?()
                     }
@@ -859,7 +846,7 @@ public final class ClipboardViewModel: ObservableObject {
     }
 
     private func reportPasteFailure(_ error: Error) {
-        guard (error as? CocoaError)?.code != .userCancelled else { return }
+        guard !(error is CancellationError), (error as? CocoaError)?.code != .userCancelled else { return }
         onPasteFailure?()
         showToast(error.localizedDescription, duration: 5)
     }
@@ -1066,10 +1053,12 @@ public final class ClipboardViewModel: ObservableObject {
     }
 
     public func pasteSnippet(_ snippet: SnippetRecord) {
+        let target = pasteTargetProcessIdentifier?()
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                try await pasteInjector.pasteText(snippet.content, pasteboard: pasteboard) { [weak self] willSend in
+                try await pasteInjector.pasteText(snippet.content, pasteboard: pasteboard,
+                    targetProcessIdentifier: target) { [weak self] willSend in
                     guard let self else { return }
                     if willSend { onClosePanel?() }
                     else {
