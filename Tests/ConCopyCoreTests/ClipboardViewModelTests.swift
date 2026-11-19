@@ -44,8 +44,6 @@ final class ClipboardViewModelTests: XCTestCase {
         vm.handleRowClick(clip: clip)
         await vm.waitForPendingLoads()
 
-        try await Task.sleep(nanoseconds: 100_000_000)
-
         XCTAssertEqual(vm.selectedClipId, clip.id)
         XCTAssertTrue(vm.selectedClipIds.isEmpty)
         XCTAssertTrue(panelClosed, "Panel must close when isDirectPasteEnabled is true")
@@ -53,7 +51,7 @@ final class ClipboardViewModelTests: XCTestCase {
         XCTAssertEqual(NSPasteboard.general.string(forType: .string), "Hello Direct Paste")
     }
 
-    func testSingleClickWithDirectPasteDisabledCopiesWithoutClosingPanel() async throws {
+    func testSingleClickWithDirectPasteDisabledCopiesAndClosesPanel() async throws {
         let settings = AppSettingsManager(userDefaults: UserDefaults(suiteName: "Test_\(UUID().uuidString)")!)
         settings.isDirectPasteEnabled = false
         let mockPoster = MockCGEventPoster()
@@ -72,10 +70,80 @@ final class ClipboardViewModelTests: XCTestCase {
 
         XCTAssertEqual(vm.selectedClipId, clip.id)
         XCTAssertTrue(vm.selectedClipIds.isEmpty)
-        XCTAssertFalse(panelClosed, "Panel must NOT close when isDirectPasteEnabled is false")
+        XCTAssertTrue(panelClosed, "Panel must close after copying when isDirectPasteEnabled is false")
         XCTAssertEqual(mockPoster.postCommandVCalledCount, 0, "Must not inject paste command")
-        XCTAssertEqual(vm.copiedClipId, clip.id, "Must set copiedClipId for visual feedback")
         XCTAssertEqual(NSPasteboard.general.string(forType: .string), "Copy Only Mode")
+    }
+
+    func testSingleClickUsesClickedRecordAndClosesAfterPreparingClipboard() async throws {
+        for directPaste in [false, true] {
+            let defaults = try XCTUnwrap(UserDefaults(suiteName: "ClickTarget_\(UUID())"))
+            let settings = AppSettingsManager(userDefaults: defaults)
+            settings.isDirectPasteEnabled = directPaste
+            let board = NSPasteboard.withUniqueName()
+            let poster = MockCGEventPoster()
+            poster.observedPasteboard = board
+            let vm = ClipboardViewModel(
+                databaseManager: databaseManager, pasteInjector: PasteInjector(eventPoster: poster),
+                appSettings: settings, pasteboard: board
+            )
+            _ = try databaseManager.ingestCapturedClip(CapturedClip(plainText: "Previously selected \(directPaste)"))
+            _ = try databaseManager.ingestCapturedClip(CapturedClip(plainText: "Clicked record \(directPaste)"))
+            vm.loadClips()
+            await vm.waitForPendingLoads()
+            let clicked = try XCTUnwrap(vm.clips.last)
+            vm.selectedIndex = 0
+            XCTAssertNotEqual(vm.selectedClipId, clicked.id)
+            vm.selectedClipIds = Set(vm.clips.map(\.id))
+
+            var closeCount = 0
+            vm.onClosePanel = {
+                closeCount += 1
+                XCTAssertEqual(board.string(forType: .string), clicked.plainText, "Prepare the clicked record before closing")
+                XCTAssertEqual(board.string(forType: PasteInjector.internalPasteMarker), "1")
+                XCTAssertEqual(poster.postCommandVCalledCount, 0, "Restore focus before injecting the paste command")
+            }
+
+            vm.handleRowClick(clip: clicked)
+            await vm.waitForPendingLoads()
+
+            XCTAssertEqual(closeCount, 1)
+            XCTAssertTrue(vm.selectedClipIds.isEmpty)
+            XCTAssertEqual(vm.selectedClipId, clicked.id)
+            XCTAssertEqual(board.string(forType: .string), clicked.plainText)
+            XCTAssertEqual(poster.pastedValues, directPaste ? [clicked.plainText ?? ""] : [])
+            XCTAssertEqual(poster.postCommandVCalledCount, directPaste ? 1 : 0)
+            XCTAssertNil(vm.pastingClipId)
+        }
+    }
+
+    func testOptionClickKeepsPlainTextOverrideAndClosesPanelInBothModes() async throws {
+        let clip = try databaseManager.ingestCapturedClip(CapturedClip(
+            plainText: "Formatted clip", primaryType: .richText,
+            representations: ["public.rtf": Data("{\\rtf1 Formatted clip}".utf8)]
+        ))
+        for directPaste in [false, true] {
+            let defaults = try XCTUnwrap(UserDefaults(suiteName: "OptionClick_\(UUID())"))
+            let settings = AppSettingsManager(userDefaults: defaults)
+            settings.isDirectPasteEnabled = directPaste
+            let board = NSPasteboard.withUniqueName()
+            let poster = MockCGEventPoster()
+            let vm = ClipboardViewModel(
+                databaseManager: databaseManager, pasteInjector: PasteInjector(eventPoster: poster),
+                appSettings: settings, pasteboard: board
+            )
+            await vm.waitForPendingLoads()
+            var panelClosed = false
+            vm.onClosePanel = { panelClosed = true }
+
+            vm.handleRowClick(clip: clip, modifiers: [.option])
+            await vm.waitForPendingLoads()
+
+            XCTAssertTrue(panelClosed)
+            XCTAssertEqual(board.string(forType: .string), "Formatted clip")
+            XCTAssertNil(board.data(forType: .rtf))
+            XCTAssertEqual(poster.postCommandVCalledCount, directPaste ? 1 : 0)
+        }
     }
 
     func testRepeatedCopyOfSameClipRestartsFeedbackDuration() async throws {
@@ -86,10 +154,10 @@ final class ClipboardViewModelTests: XCTestCase {
         vm.loadClips()
         await vm.waitForPendingLoads()
 
-        vm.handleRowClick(clip: clip)
+        vm.copyClipToPasteboardWithoutClosing(clip: clip)
         await vm.waitForPendingLoads()
         try await Task.sleep(nanoseconds: 700_000_000)
-        vm.handleRowClick(clip: clip)
+        vm.copyClipToPasteboardWithoutClosing(clip: clip)
         await vm.waitForPendingLoads()
         XCTAssertEqual(vm.copiedClipId, clip.id)
 
@@ -112,10 +180,10 @@ final class ClipboardViewModelTests: XCTestCase {
         vm.loadClips()
         await vm.waitForPendingLoads()
 
-        vm.handleRowClick(clip: firstClip)
+        vm.copyClipToPasteboardWithoutClosing(clip: firstClip)
         await vm.waitForPendingLoads()
         try await Task.sleep(nanoseconds: 700_000_000)
-        vm.handleRowClick(clip: secondClip)
+        vm.copyClipToPasteboardWithoutClosing(clip: secondClip)
         await vm.waitForPendingLoads()
         XCTAssertEqual(vm.copiedClipId, secondClip.id)
 

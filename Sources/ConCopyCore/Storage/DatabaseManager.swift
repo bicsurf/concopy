@@ -3,6 +3,19 @@ import Foundation
 import GRDB
 
 public final class DatabaseManager: Sendable {
+    private static func literalSearchKey(_ value: String) -> String {
+        value.precomposedStringWithCanonicalMapping
+            .folding(options: .caseInsensitive, locale: Locale(identifier: "en_US_POSIX"))
+            .precomposedStringWithCanonicalMapping
+    }
+
+    private static let literalContains = DatabaseFunction("concopy_literal_contains", argumentCount: 2, pure: true) { values in
+        autoreleasepool {
+            guard let text = String.fromDatabaseValue(values[0]), let query = String.fromDatabaseValue(values[1])
+            else { return false }
+            return literalSearchKey(text).contains(query)
+        }
+    }
     public let dbWriter: any DatabaseWriter
     public let blobStorage: BlobStorageManager
 
@@ -23,6 +36,7 @@ public final class DatabaseManager: Sendable {
         do { try collectMigrationBlobs() } catch { print("[ConCopy] Deferred blob cleanup: \(error)") }
     }
 
+    /// Independent databases must own distinct blob directories; GC is scoped to one database.
     public init(inMemoryWithBlobDirectoryURL blobDirectoryURL: URL) throws {
         var config = Configuration()
         config.foreignKeysEnabled = true
@@ -381,17 +395,16 @@ public final class DatabaseManager: Sendable {
                     return try request.limit(limit).fetchAll(db)
                 }
 
-                let words = trimmed.unicodeScalars.split { !CharacterSet.alphanumerics.contains($0) }
-                    .map { String($0) }
-                    .filter { !$0.isEmpty }
-
-                guard !words.isEmpty else {
-                    let likePattern = "%\(trimmed)%"
+                func fetchLiteralMatches() throws -> [ClipRecord] {
+                    // Register on this reader too, including externally supplied writers. There is
+                    // no pattern syntax: %, _ and backslashes remain literal after Unicode folding.
+                    db.add(function: Self.literalContains)
+                    let query = Self.literalSearchKey(trimmed)
                     var fallbackSql = """
                         SELECT * FROM clips
-                        WHERE (plainText LIKE ? OR customName LIKE ?)
+                        WHERE (concopy_literal_contains(plainText, ?) OR concopy_literal_contains(customName, ?))
                         """
-                    var fallbackArgs: [DatabaseValueConvertible] = [likePattern, likePattern]
+                    var fallbackArgs: [DatabaseValueConvertible] = [query, query]
 
                     if let listId {
                         fallbackSql += " AND listId = ?"
@@ -412,6 +425,23 @@ public final class DatabaseManager: Sendable {
                     fallbackArgs.append(limit)
 
                     return try ClipRecord.fetchAll(db, sql: fallbackSql, arguments: StatementArguments(fallbackArgs))
+                }
+
+                // Keep punctuation and symbols significant, including in mixed text such as ~/Library or c++.
+                // Combining marks belong to words and must not switch ordinary accented text to literal search.
+                let wordCharacters = CharacterSet.alphanumerics.union(.nonBaseCharacters)
+                let containsSymbols = trimmed.unicodeScalars.contains {
+                    !wordCharacters.contains($0) && !CharacterSet.whitespacesAndNewlines.contains($0)
+                }
+                if containsSymbols {
+                    return try fetchLiteralMatches()
+                }
+
+                let words = trimmed.unicodeScalars.split { !wordCharacters.contains($0) }
+                    .map { String($0) }
+                    .filter { !$0.isEmpty }
+                guard !words.isEmpty else {
+                    return try fetchLiteralMatches()
                 }
 
                 let ftsQuery = words.map { "\"\($0)\"*" }.joined(separator: " ")
@@ -444,32 +474,7 @@ public final class DatabaseManager: Sendable {
                 do {
                     return try ClipRecord.fetchAll(db, sql: sql, arguments: StatementArguments(arguments))
                 } catch {
-                    let likePattern = "%\(trimmed)%"
-                    var fallbackSql = """
-                        SELECT * FROM clips
-                        WHERE (plainText LIKE ? OR customName LIKE ?)
-                        """
-                    var fallbackArgs: [DatabaseValueConvertible] = [likePattern, likePattern]
-
-                    if let listId {
-                        fallbackSql += " AND listId = ?"
-                        fallbackArgs.append(listId.uuidString.lowercased())
-                    }
-                    if let sourceAppBundleId {
-                        fallbackSql += " AND sourceAppBundleId = ?"
-                        fallbackArgs.append(sourceAppBundleId)
-                    }
-                    if let primaryType {
-                        fallbackSql += " AND primaryType = ?"
-                        fallbackArgs.append(primaryType.rawValue)
-                    }
-                    if favoritesOnly {
-                        fallbackSql += " AND isFavorite = 1"
-                    }
-                    fallbackSql += " ORDER BY \(orderClause) LIMIT ?"
-                    fallbackArgs.append(limit)
-
-                    return try ClipRecord.fetchAll(db, sql: fallbackSql, arguments: StatementArguments(fallbackArgs))
+                    return try fetchLiteralMatches()
                 }
             }
         }
@@ -561,24 +566,32 @@ public final class DatabaseManager: Sendable {
     }
 
     public func deleteClip(clipId: UUID) throws {
-        let idString = clipId.uuidString.lowercased()
-        var blobsToDelete: [String] = []
-
-        try dbWriter.write { db in
-            let payloads = try ClipPayloadRecord.filter(Column("clipId") == idString).fetchAll(db)
-            let candidateBlobs = payloads.compactMap { $0.blobFilename }
-
-            try ClipRecord.filter(Column("id") == idString).deleteAll(db)
-
-            for filename in candidateBlobs {
-                let stillUsed = try ClipPayloadRecord.filter(Column("blobFilename") == filename).fetchCount(db) > 0
-                if !stillUsed {
-                    blobsToDelete.append(filename)
-                }
-            }
+        let result = try dbWriter.write { db in
+            try deleteClips([clipId], in: db)
         }
+        try removeUnreferencedBlobs(result.blobs)
+    }
 
-        try removeUnreferencedBlobs(blobsToDelete)
+    /// The caller owns one write transaction for candidate selection and all deletions.
+    private func deleteClips(_ ids: [UUID], in db: Database, preserveSaved: Bool = false) throws
+        -> (count: Int, blobs: [String])
+    {
+        var deleted = 0
+        var blobs: [String] = []
+        for id in ids {
+            let key = id.uuidString.lowercased()
+            var request = ClipRecord.filter(Column("id") == key)
+            if preserveSaved {
+                request = request.filter(Column("isFavorite") == false && Column("listId") == nil)
+            }
+            guard try request.fetchCount(db) > 0 else { continue }
+            let candidates = try ClipPayloadRecord.filter(Column("clipId") == key).fetchAll(db)
+                .compactMap(\.blobFilename)
+            let count = try request.deleteAll(db)
+            deleted += count
+            if count > 0 { blobs += candidates }
+        }
+        return (deleted, blobs)
     }
 
     public func loadPayloadData(for payload: ClipPayloadRecord) throws -> Data {
@@ -633,41 +646,32 @@ public final class DatabaseManager: Sendable {
 
     public func deleteList(listId: UUID, deleteContainedClips: Bool = false) throws {
         let idString = listId.uuidString.lowercased()
-        var clipsToDelete: [UUID] = []
-
-        try dbWriter.write { db in
+        let blobs = try dbWriter.write { db -> [String] in
+            var blobs: [String] = []
             if deleteContainedClips {
                 let clips = try ClipRecord.filter(Column("listId") == idString).fetchAll(db)
-                clipsToDelete = clips.map(\.id)
+                blobs = try deleteClips(clips.map(\.id), in: db).blobs
             } else {
                 try db.execute(sql: "UPDATE clips SET listId = NULL WHERE listId = ?", arguments: [idString])
             }
             try ClipListRecord.filter(Column("id") == idString).deleteAll(db)
+            return blobs
         }
-
-        if deleteContainedClips {
-            for clipId in clipsToDelete {
-                try deleteClip(clipId: clipId)
-            }
-        }
+        try removeUnreferencedBlobs(blobs)
     }
 
     @discardableResult
     public func clearAllHistory(preserveFavorites: Bool = true) throws -> Int {
-        var clipsToDelete: [UUID] = []
-        try dbWriter.read { db in
+        let result = try dbWriter.write { db in
             var request = ClipRecord.all()
             if preserveFavorites {
                 request = request.filter(Column("isFavorite") == false && Column("listId") == nil)
             }
             let clips = try request.fetchAll(db)
-            clipsToDelete = clips.map(\.id)
+            return try deleteClips(clips.map(\.id), in: db, preserveSaved: preserveFavorites)
         }
-
-        for clipId in clipsToDelete {
-            try deleteClip(clipId: clipId)
-        }
-        return clipsToDelete.count
+        try removeUnreferencedBlobs(result.blobs)
+        return result.count
     }
 
     public func fetchAllLists() throws -> [ClipListRecord] {
@@ -779,9 +783,8 @@ public final class DatabaseManager: Sendable {
 
     @discardableResult
     public func pruneClips(olderThanDays days: Int? = nil, maxCount: Int? = nil) throws -> Int {
-        var clipsToDelete: [UUID] = []
-
-        try dbWriter.read { db in
+        let result = try dbWriter.write { db in
+            var clipsToDelete: [UUID] = []
             var remainingNonFavorites: [ClipRecord] = []
 
             let cutoffDate = days.flatMap { $0 > 0 ? Date().addingTimeInterval(-Double($0) * 86400) : nil }
@@ -789,7 +792,7 @@ public final class DatabaseManager: Sendable {
             let allNonFavorites =
                 try ClipRecord
                 .filter(Column("isFavorite") == false && Column("listId") == nil)
-                .order(Column("updatedAt").desc, Column("createdAt").desc)
+                .order(Column("updatedAt").desc, Column("createdAt").desc, Column("rowid").desc)
                 .fetchAll(db)
 
             for clip in allNonFavorites {
@@ -806,13 +809,10 @@ public final class DatabaseManager: Sendable {
                     clipsToDelete.append(clip.id)
                 }
             }
+            return try deleteClips(clipsToDelete, in: db, preserveSaved: true)
         }
-
-        for clipId in clipsToDelete {
-            try deleteClip(clipId: clipId)
-        }
-
-        return clipsToDelete.count
+        try removeUnreferencedBlobs(result.blobs)
+        return result.count
     }
 
     // MARK: - Snippets Management

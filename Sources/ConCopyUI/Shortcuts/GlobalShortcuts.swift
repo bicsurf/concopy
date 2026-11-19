@@ -1,4 +1,5 @@
 import AppKit
+import ConCopyCore
 import Foundation
 import KeyboardShortcuts
 
@@ -126,6 +127,10 @@ public enum ConCopyShortcutKey: String, CaseIterable, Identifiable, Sendable {
 
 @MainActor
 public final class GlobalShortcutsManager: ObservableObject {
+    public struct QuickPasteShortcut: Equatable, Sendable {
+        public let label: String
+        public let modifierSymbol: String
+    }
     public static let shared = GlobalShortcutsManager()
     public static let swapNumericModifiersKey = "ConCopy.Shortcuts.swapNumericModifiers"
 
@@ -135,15 +140,28 @@ public final class GlobalShortcutsManager: ObservableObject {
     private var notificationObserver: (any NSObjectProtocol)?
 
     public var listModifierSymbol: String {
-        swapNumericModifiers ? "⌥" : "⌘"
+        swapNumericModifiers ? "⌘⌥" : "⌘"
     }
 
     public var quickPasteModifierSymbol: String {
-        swapNumericModifiers ? "⌘" : "⌥"
+        swapNumericModifiers ? "⌘" : "⌘⌥"
     }
 
-    public var quickPasteModifierSystemImage: String {
-        swapNumericModifiers ? "command" : "option"
+    public func quickPasteShortcut(for index: Int, searchFocused: Bool) -> QuickPasteShortcut? {
+        guard let label = QuickPasteShortcutMapper.label(forIndex: index) else { return nil }
+        if index < 10 { return QuickPasteShortcut(label: label, modifierSymbol: quickPasteModifierSymbol) }
+        guard !searchFocused, let character = label.first, !isCharacterReservedForCommands(character) else { return nil }
+        return QuickPasteShortcut(label: label, modifierSymbol: "⌘")
+    }
+
+    public func matchedLetterQuickPasteIndex(for event: NSEvent, searchFocused: Bool) -> Int? {
+        let flags = event.modifierFlags
+        guard flags.contains(.command), !flags.contains(.shift), !flags.contains(.control),
+            let character = event.charactersIgnoringModifiers?.lowercased().first,
+            character >= "a", character <= "z",
+            let index = QuickPasteShortcutMapper.index(forCharacter: String(character)),
+            quickPasteShortcut(for: index, searchFocused: searchFocused) != nil else { return nil }
+        return index
     }
 
     public init() {
@@ -298,17 +316,17 @@ public final class GlobalShortcutsManager: ObservableObject {
     }
 
     /// Determines if an incoming `NSEvent` matches the shortcut for selecting "All" (All clips).
-    /// Always matches Option+A, and matches Cmd+A when `swapNumericModifiers` is false.
+    /// Always matches Cmd+Option+A, and matches Cmd+A when `swapNumericModifiers` is false.
     public func matchesAllClips(event: NSEvent) -> Bool {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
 
-        let isOptionA =
-            flags.contains(.option) && !flags.contains(.command) && !flags.contains(.control) && !flags.contains(.shift)
+        let isCommandOptionA =
+            flags.contains(.command) && flags.contains(.option) && !flags.contains(.control) && !flags.contains(.shift)
         let isCommandA =
             flags.contains(.command) && !flags.contains(.option) && !flags.contains(.control) && !flags.contains(.shift)
             && !swapNumericModifiers
 
-        guard isOptionA || isCommandA else {
+        guard isCommandOptionA || isCommandA else {
             return false
         }
 
@@ -326,25 +344,8 @@ public final class GlobalShortcutsManager: ObservableObject {
 
     /// Resolves list digit 1..9 (and 0) from the given keyboard event according to the current modifier configuration.
     public func matchedListDigit(for event: NSEvent) -> Int? {
-        let isOptionRequired = swapNumericModifiers
-        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-
-        if isOptionRequired {
-            guard flags.contains(.option),
-                !flags.contains(.command),
-                !flags.contains(.control),
-                !flags.contains(.shift)
-            else {
-                return nil
-            }
-        } else {
-            guard flags.contains(.command),
-                !flags.contains(.option),
-                !flags.contains(.control),
-                !flags.contains(.shift)
-            else {
-                return nil
-            }
+        guard matchesNumericModifiers(event, optionRequired: swapNumericModifiers) else {
+            return nil
         }
 
         if let idx = digitIndex(forKeyCode: event.keyCode) {
@@ -366,23 +367,8 @@ public final class GlobalShortcutsManager: ObservableObject {
 
     /// Resolves quick paste item index 0..9 from the given keyboard event according to the current modifier configuration.
     public func matchedQuickPasteIndex(for event: NSEvent) -> Int? {
-        let isCommandRequired = swapNumericModifiers
-        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-
-        if isCommandRequired {
-            guard flags.contains(.command),
-                !flags.contains(.shift),
-                !flags.contains(.control)
-            else {
-                return nil
-            }
-        } else {
-            guard flags.contains(.option),
-                !flags.contains(.command),
-                !flags.contains(.control)
-            else {
-                return nil
-            }
+        guard matchesNumericModifiers(event, optionRequired: !swapNumericModifiers) else {
+            return nil
         }
 
         if let idx = digitIndex(forKeyCode: event.keyCode) {
@@ -398,6 +384,12 @@ public final class GlobalShortcutsManager: ObservableObject {
         }
 
         return nil
+    }
+
+    private func matchesNumericModifiers(_ event: NSEvent, optionRequired: Bool) -> Bool {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        return flags.contains(.command) && flags.contains(.option) == optionRequired
+            && !flags.contains(.control) && !flags.contains(.shift)
     }
 
     private func digitIndex(forKeyCode keyCode: UInt16) -> Int? {

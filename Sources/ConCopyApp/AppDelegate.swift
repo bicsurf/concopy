@@ -14,7 +14,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var syncCoordinator: CloudKitSyncCoordinator?
     private var databaseManager: DatabaseManager?
     private var viewModel: ClipboardViewModel?
-    private let linkMetadataFetcher = LinkMetadataFetcher()
     private var settingsObservers = Set<AnyCancellable>()
     private var cleanupTimer: Timer?
     private var cleanupTask: Task<Void, Never>?
@@ -31,16 +30,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         Task { [weak self] in
             do {
-                let db = try await Task.detached(priority: .userInitiated) { try Self.setupDatabase() }.value
-                self?.configure(database: db)
+                let startup = try await Task.detached(priority: .userInitiated) { try Self.setupDatabase() }.value
+                self?.configure(database: startup.database, isTemporary: startup.isTemporary)
+                if let reason = startup.failureDescription { print("[ConCopy] Temporary history: \(reason)") }
             } catch { print("[ConCopy] Failed to initialize database: \(error)") }
         }
     }
 
-    private func configure(database db: DatabaseManager) {
+    private func configure(database db: DatabaseManager, isTemporary: Bool) {
         self.databaseManager = db
 
         let vm = ClipboardViewModel(databaseManager: db)
+        vm.isHistoryTemporary = isTemporary
         self.viewModel = vm
 
         PreferencesWindowController.shared.configure(databaseManager: db) { [weak vm] in
@@ -62,7 +63,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let button = statusController.statusButton {
             button.image = MenuBarIcon.create()
             button.imagePosition = .imageOnly
-            button.toolTip = "ConCopy"
+            button.toolTip = isTemporary ? "ConCopy — Temporary history" : "ConCopy"
         }
         self.statusItemController = statusController
 
@@ -77,7 +78,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         monitor.onNewCapturedClip = { [weak self] captured in
             guard let self else { return }
             let db = self.databaseManager
-            let fetcher = self.linkMetadataFetcher
             let sync = self.syncCoordinator
             let vm = self.viewModel
 
@@ -86,18 +86,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     let saved = try db?.ingestCapturedClip(captured)
                     if let clip = saved {
                         sync?.queueUpload(for: clip)
-                        if clip.primaryType == .url,
-                            let plain = clip.plainText,
-                            let url = URL(string: plain),
-                            let db
-                        {
-                            Task {
-                                await fetcher.fetchAndUpdateMetadata(clipId: clip.id, url: url, databaseManager: db)
-                                await MainActor.run {
-                                    vm?.loadClips()
-                                }
-                            }
-                        }
                     }
                     await MainActor.run {
                         vm?.loadClips()
@@ -158,7 +146,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sync.onStatusChanged = { [weak vm] status in vm?.cloudSyncStatus = status }
         vm.onRetrySync = { [weak sync] in Task { await sync?.performSync() } }
         settings.$iCloudSyncEnabled.removeDuplicates().sink { [weak sync] enabled in
-            if enabled { sync?.startIfPossible() } else { sync?.stop() }
+            if enabled && !isTemporary { sync?.startIfPossible() } else { sync?.stop() }
         }.store(in: &settingsObservers)
         self.syncCoordinator = sync
 
@@ -173,7 +161,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func scheduleCleanup() {
-        guard let db = databaseManager else { return }
+        guard let db = databaseManager, viewModel?.isHistoryTemporary == false else { return }
         let settings = AppSettingsManager.shared
         let policy = HistoryRetentionPolicy(
             enabled: settings.autoCleanupEnabled, days: settings.retentionDays, maxCount: settings.maxHistoryCount)
@@ -187,7 +175,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    nonisolated private static func setupDatabase() throws -> DatabaseManager {
+    nonisolated private static func setupDatabase() throws -> DatabaseStartup {
         let appSupport =
             FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSTemporaryDirectory())
@@ -195,12 +183,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let dbURL = dbDirectory.appendingPathComponent("concopy.sqlite")
         let blobsURL = dbDirectory.appendingPathComponent("blobs", isDirectory: true)
 
-        do {
-            return try DatabaseManager(diskDatabaseURL: dbURL, blobDirectoryURL: blobsURL)
-        } catch {
-            print("[ConCopy] Failed to open disk database, falling back to memory: \(error)")
-            return try DatabaseManager(inMemoryWithBlobDirectoryURL: blobsURL)
-        }
+        return try DatabaseStartup.open(diskDatabaseURL: dbURL, blobDirectoryURL: blobsURL)
     }
 
     @discardableResult

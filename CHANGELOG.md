@@ -8,15 +8,19 @@ Le voci da 1.2.1 a 1.3.1 sono state ricostruite dai tag e dai commit locali. Le 
 
 ### Aggiunto
 
+- 25 test di regressione per i dieci rilievi D01–D10 dell'audit di produzione del 19 novembre: destinazione, concorrenza e annullamento degli incollaggi, Unicode, fallback, transazioni, recupero cloud e coerenza dei badge.
 - Sincronizzazione v2 di payload, liste e snippet, con identità stabili, alias e cancellazioni persistenti; lettura del precedente file v1 per la migrazione.
 - Componenti dei contatori d’uso indipendenti per dispositivo e clock separati per preferiti, nomi, liste e ordine manuale.
 - Provenienza persistente degli snippet ripristinati, conservata anche attraverso backup e sincronizzazione.
 - Paginazione della cronologia oltre i primi 100 risultati.
 - Test di regressione per storage, backup, importazione, sync, incollaggio, privacy, interfaccia e servizi di rete, inclusi 17 test per C01–C11.
-- Report degli interventi: [primo audit](docs/audit-fixes.json), [secondo audit](docs/reaudit-fixes.html) e [terzo audit](docs/third-audit-fixes.html), con esiti e limiti delle verifiche.
 
 ### Modificato
 
+- Le righe della cronologia mostrano soltanto il contenuto copiato, anche per record che avevano un nome salvato; anteprima e accessibilità non usano più il nome della clip.
+- Un clic semplice su una clip chiude il pannello sia in modalità incollaggio automatico sia in modalità solo copia, agendo sempre sulla clip cliccata. Mantenuta la selezione multipla tramite Shift, Command e cerchi di selezione.
+- Scorciatoie numeriche con Option e comando Tutte le clip spostati su ⌘⌥ per consentire la digitazione di simboli e accenti; scambio configurabile aggiornato a ⌘/⌘⌥, con badge e impostazioni coerenti. Mantenuto ⌥Invio per il testo semplice.
+- Query con punteggiatura o simboli cercate come sottostringhe letterali nel testo e nei nomi personalizzati, inclusi `%`, `_` e backslash; mantenuta la ricerca FTS5 per prefisso sulle query composte da parole.
 - Ripristino degli archivi additivo, con conservazione delle versioni locali modificate e recupero degli snippet in conflitto tramite shortcut alternative.
 - Elaborazioni di ricerca, payload e immagini spostate fuori dal thread principale nei percorsi corretti dagli audit.
 - Pulizia automatica della cronologia aggiornata anche in risposta alle impostazioni e alle nuove catture.
@@ -25,6 +29,7 @@ Le voci da 1.2.1 a 1.3.1 sono state ricostruite dai tag e dai commit locali. Le 
 
 ### Risolto
 
+- Audit D01–D10: coda condivisa degli incollaggi con controllo di destinazione e `changeCount`; fallback con blob isolati e avviso; pulizie e cancellazioni delle liste atomiche; ricerca letterale Unicode; ripristino additivo delle liste con una sola Auto-Star; recupero di blob da copie cloud integre; inoltro degli input modificati e badge coerenti con focus e comandi riservati.
 - Sincronizzazione: scritture dopo la disattivazione, aggiornamenti remoti mancati durante sessioni inattive, troncamento della cronologia e sovrascrittura di file cloud illeggibili.
 - Identità e merge: collisioni fra immagini o file omonimi, perdita di metadati durante deduplicazione e ricattura di alias offline, ripristino di clip eliminate causato dai clock artificiali della migrazione v6.
 - Contatori: incrementi offline che annullavano modifiche al contenuto e conteggi duplicati dopo il ripristino di backup legacy.
@@ -36,15 +41,23 @@ Le voci da 1.2.1 a 1.3.1 sono state ricostruite dai tag e dai commit locali. Le 
 - Statistiche: un errore nel salvataggio dell’uso dopo un trasferimento riuscito non viene più presentato come un fallimento dell’incollaggio.
 - Screenshot: pausa del monitoraggio non rispettata, file incompleti ignorati definitivamente o acquisiti prima che fossero disponibili i pixel.
 - Interfaccia: azioni su risultati di ricerca precedenti, selezioni nascoste, attivazione del pannello, percorsi errati nelle anteprime e chiusura dell’editor snippet dopo un salvataggio fallito.
-- Rete e file temporanei: limite dei metadati URL applicato dopo il download, controllo aggiornamenti non ripetuto e collisioni fra esportazioni con la stessa etichetta.
+- Rete e file temporanei: controllo aggiornamenti non ripetuto e collisioni fra esportazioni con la stessa etichetta.
 
 ### Compatibilità e verifiche
 
+- Correzioni D01–D10 del 19 novembre 2026: `swift build` e `swift build -c release` riusciti senza warning; `swift test` con **204 test, 203 passati, uno opzionale saltato e zero fallimenti**, comprese tutte le **25 nuove regressioni**.
+- Verifiche su applicazioni reali del 19 novembre 2026: 13 controlli nativi superati in TextEdit e Sublime Text su macOS 27.2.1 arm64, inclusi focus, ricerca con `~`, copia al clic, testo semplice, cambio app durante il paste e nove incollaggi consecutivi senza duplicazioni; apertura fisica del pannello confermata. Copertura limitata a testo inline e RTF nelle due applicazioni.
+- Verifica delle nuove scorciatoie, della ricerca letterale e del clic sulle clip del 19 novembre 2026: build debug e release riuscite senza warning; suite completa con **179 test, 178 passati, uno opzionale saltato e zero fallimenti**. Il test opzionale richiede `CONCOPY_TEST_CEP_PATH` per un export reale Copy ’Em.
 - Migrazioni locali v5–v8 per contatori, identità binarie, clock dei metadati, provenienza degli snippet e pulizia dei blob.
 - Backup v1/v2 precedenti leggibili; i nuovi campi del formato v2 sono opzionali in decodifica. Aggiornare tutti i Mac che sincronizzano per preservare `usage`, `metadataRevisions` e `snippetOrigins`.
-- **A30 escluso dagli interventi:** mantenuto il comportamento corrente di ⌥A/⌘A; test dedicato passato.
+- **A30 escluso dall'audit del 17 novembre:** in quell'intervento era stato mantenuto il comportamento di ⌥A/⌘A. La successiva modifica delle scorciatoie descritta sopra sposta ⌥A su ⌘⌥A e conserva l'alias ⌘A con il mapping predefinito.
 - Verifica del 17 novembre 2026 con Swift 6.4.2 su arm64: `swift build` e `swift build -c release` riusciti, zero warning; `swift test` con **170 test, 169 passati, uno opzionale saltato e zero fallimenti**.
-- Il test saltato richiede un fixture reale Copy ’Em tramite `CONCOPY_TEST_CEP_PATH`. Non sono stati verificati due Mac fisici con iCloud, la toolchain Swift 5.9 o il packaging universale di queste correzioni. [Log e limiti completi](docs/third-audit-fixes.html).
+- Il test saltato richiede una fixture reale Copy ’Em tramite `CONCOPY_TEST_CEP_PATH`. Non sono stati verificati due Mac fisici con iCloud, la toolchain Swift 5.9 o il packaging universale di queste correzioni.
+
+### Rimosso
+
+- Recupero automatico dei titoli delle pagine web e comandi per aggiungere o modificare i nomi delle clip. I metadati storici restano compatibili con archivi e sincronizzazione.
+- Script di prova manuale, log, report diagnostici e bundle QA temporanei degli audit; conservati i test di regressione della suite.
 
 ## [1.3.1] - 2026-11-16
 

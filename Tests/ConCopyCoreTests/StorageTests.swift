@@ -234,11 +234,12 @@ final class StorageTests: XCTestCase {
             CapturedClip(plainText: "Unit testing with \"quoted strings\" and (parentheses)")
         )
 
-        // 1. Quoted string query
-        let quotedResults = try databaseManager.searchClips(query: "\"quoted\"")
+        // 1. Quotes are literal parts of the query, rather than FTS syntax.
+        let quotedResults = try databaseManager.searchClips(query: "\"quoted strings\"")
         XCTAssertEqual(quotedResults.count, 1)
+        XCTAssertTrue(try databaseManager.searchClips(query: "\"quoted\"").isEmpty)
 
-        // 2. Query with special characters: c++ (sanitized to "c"*, matches without FTS5 syntax crash)
+        // 2. Query with special characters: c++ preserves the plus signs.
         let cppResults = try databaseManager.searchClips(query: "c++")
         XCTAssertFalse(cppResults.isEmpty)
         XCTAssertTrue(cppResults.contains { $0.plainText?.contains("c++") == true })
@@ -260,7 +261,95 @@ final class StorageTests: XCTestCase {
         XCTAssertEqual(portResults.count, 1)
     }
 
-    func testURLMetadataUpdateAndFTS5SearchCycle() throws {
+    func testLiteralSearchPreservesPunctuationInMixedQueries() throws {
+        let cases = [
+            ("~prova", "shell ~prova path", "shell prova path"),
+            ("~/Library", "open ~/Library/Preferences", "open /Library/Preferences"),
+            ("c++", "Learning c++ programming", "Learning c programming"),
+            ("hello@example.com", "Contact hello@example.com", "Contact hello example com"),
+            ("file_name", "open file_name.txt", "open fileXname.txt"),
+            ("50%", "discount 50% today", "discount 500 today"),
+            (#"\temp\file"#, #"open C:\temp\file.txt"#, "open C temp file txt"),
+            ("\"quoted\"", "a \"quoted\" word", "a quoted word")
+        ]
+        for (query, matching, nonmatching) in cases {
+            let db = try DatabaseManager(inMemoryWithBlobDirectoryURL: tempBlobDir)
+            let expected = try db.ingestCapturedClip(CapturedClip(plainText: matching))
+            _ = try db.ingestCapturedClip(CapturedClip(plainText: nonmatching))
+            XCTAssertEqual(try db.searchClips(query: query).map(\.id), [expected.id], query)
+            XCTAssertEqual(try db.searchClips(query: query.uppercased()).map(\.id), [expected.id], query)
+        }
+    }
+
+    func testLiteralSearchEscapesWildcardsAndBackslashes() throws {
+        let cases = [
+            ("%", "50% discount", "ordinary text"),
+            ("_", "user_name", "username"),
+            (#"\"#, #"C:\Temp"#, "C Temp"),
+            (#"\%_"#, #"escaped \%_ value"#, #"escaped \abcX value"#),
+            ("***", "literal *** stars", "ordinary stars"),
+            ("🙂", "a 🙂 symbol", "no symbol here"),
+            ("' OR 1=1 --", "literal ' OR 1=1 -- string", "unrelated string")
+        ]
+        for (query, matching, nonmatching) in cases {
+            let db = try DatabaseManager(inMemoryWithBlobDirectoryURL: tempBlobDir)
+            let expected = try db.ingestCapturedClip(CapturedClip(plainText: matching))
+            _ = try db.ingestCapturedClip(CapturedClip(plainText: nonmatching))
+            XCTAssertEqual(try db.searchClips(query: query).map(\.id), [expected.id], query)
+        }
+    }
+
+    func testLiteralSearchFindsSymbolsInCustomNames() throws {
+        let expected = try databaseManager.ingestCapturedClip(CapturedClip(plainText: "first body"))
+        try databaseManager.updateCustomName(clipId: expected.id, name: "~/Library/user_name 50%")
+        let other = try databaseManager.ingestCapturedClip(CapturedClip(plainText: "second body"))
+        try databaseManager.updateCustomName(clipId: other.id, name: "/Library/userXname 500")
+
+        for query in ["~/Library", "user_name", "50%", "%", "_"] {
+            XCTAssertEqual(try databaseManager.searchClips(query: query).map(\.id), [expected.id], query)
+        }
+    }
+
+    func testLiteralSearchRespectsFiltersOrderingAndLimit() throws {
+        let list = ClipListRecord(name: "Literal search")
+        try databaseManager.saveList(list)
+        var records: [ClipRecord] = []
+        for index in 0..<6 {
+            let clip = try databaseManager.ingestCapturedClip(CapturedClip(
+                plainText: "~token item \(index)",
+                primaryType: index == 5 ? .image : .text,
+                sourceAppBundleId: index == 4 ? "com.apple.Terminal" : "com.apple.Safari"
+            ))
+            try databaseManager.dbWriter.write { db in
+                var stored = try XCTUnwrap(ClipRecord.fetchOne(db, id: clip.id))
+                stored.listId = index == 3 ? nil : list.id
+                stored.isFavorite = index != 2
+                stored.manualSortIndex = index == 0 ? 10 : index
+                try stored.update(db)
+            }
+            records.append(clip)
+        }
+
+        XCTAssertEqual(try databaseManager.searchClips(query: "~token", listId: list.id).count, 5)
+        XCTAssertEqual(try databaseManager.searchClips(query: "~token", sourceAppBundleId: "com.apple.Safari").count, 5)
+        XCTAssertEqual(try databaseManager.searchClips(query: "~token", primaryType: .text).count, 5)
+        XCTAssertEqual(try databaseManager.searchClips(query: "~token", favoritesOnly: true).count, 5)
+        let results = try databaseManager.searchClips(
+            query: "~token", listId: list.id, sourceAppBundleId: "com.apple.Safari", primaryType: .text,
+            favoritesOnly: true, sortMode: .manualOrder, limit: 1
+        )
+        XCTAssertEqual(results.map(\.id), [records[1].id])
+    }
+
+    func testWordSearchRetainsPrefixesWordOrderAndAccentedText() throws {
+        let expected = try databaseManager.ingestCapturedClip(CapturedClip(plainText: "Learning Rust at the café"))
+        _ = try databaseManager.ingestCapturedClip(CapturedClip(plainText: "Learning Swift at home"))
+        for query in ["rust learn", "café rust", "cafe\u{301} rust", "  rust   learn  "] {
+            XCTAssertEqual(try databaseManager.searchClips(query: query).map(\.id), [expected.id], query)
+        }
+    }
+
+    func testLegacyURLNameRemainsSearchable() throws {
         let clip = try databaseManager.ingestCapturedClip(
             CapturedClip(
                 plainText: "https://news.ycombinator.com",
@@ -273,7 +362,7 @@ final class StorageTests: XCTestCase {
         XCTAssertEqual(initialSearch.count, 1)
         XCTAssertEqual(initialSearch.first?.id, clip.id)
 
-        // Simulate LinkMetadataFetcher title update
+        // Names from older histories and imported archives remain compatible.
         let fetchedTitle = "Hacker News: Computer Technology and Startups"
         try databaseManager.updateCustomName(clipId: clip.id, name: fetchedTitle)
 

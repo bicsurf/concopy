@@ -1,18 +1,18 @@
 # Stato di lavoro — ConCopy
 
-Aggiornato il **17 novembre 2026**. Questo file riassume lo stato verificato del working tree per chi riprende lo sviluppo. I vincoli architetturali restano definiti in [AGENTS.md](AGENTS.md); la cronologia delle versioni è in [CHANGELOG.md](CHANGELOG.md).
+Aggiornato il **19 novembre 2026**. Questo file riassume lo stato verificato del working tree per chi riprende lo sviluppo. I vincoli architetturali restano definiti in [AGENTS.md](AGENTS.md); la cronologia delle versioni è in [CHANGELOG.md](CHANGELOG.md).
 
 ## Stato attuale
 
 | Voce | Stato |
 | --- | --- |
-| Branch rilevato | `FIX_check_bug_and_test` |
-| Base Git | `580411e`, tag locale `v1.3.1` |
-| Working tree | Contiene modifiche e nuovi file non ancora committati, inclusi gli interventi dei tre audit. Preservarli quando si riprende il lavoro. |
-| Ultimo intervento funzionale | Correzioni C01–C11, iniziate dai tre P1 C01, C02 e C07; aggiunti 17 test di regressione. |
-| Eccezione esplicita | **A30 deve rimanere invariato**, salvo nuova istruzione dell’utente. Il test dedicato è passato. |
-| Attività documentale | README, stato di lavoro e changelog riallineati al codice e ai tag locali. |
-| Pubblicazione | Le correzioni degli audit sono in lavorazione; nessun nuovo commit, tag o rilascio è stato creato in queste sessioni di correzione. |
+| Branch rilevato | `main` |
+| Base Git | `8a6d344`; ultimo tag locale `v1.3.2`. |
+| Working tree | Contiene modifiche e nuovi file non ancora committati, inclusi gli interventi D01–D10. Preservarli quando si riprende il lavoro. |
+| Ultimo intervento funzionale | Rimossi titoli automatici e nomi aggiuntivi dalle righe; la cronologia mostra il contenuto copiato. Completate in precedenza le correzioni D01–D10 e le prove di focus/incollaggio in applicazioni reali. |
+| Scorciatoie | La successiva istruzione dell’utente ha spostato i comandi Option su ⌘⌥; mantenuti ⌥Invio e l’alias ⌘A con mapping predefinito. |
+| Pulizia | Rimossi script manuali, report, log e bundle QA temporanei. Gli esiti sono riassunti qui e nel changelog; la suite di regressione è conservata. |
+| Pubblicazione | La 1.3.2 è già rilasciata. La prossima release non è stata preparata. |
 
 Branch, tag e pulizia del working tree sono uno snapshot: verificarli nuovamente con `git status --short` e `git log -1 --oneline --decorate` prima di operare.
 
@@ -40,13 +40,14 @@ Percorsi di produzione:
 
 ## Correzioni degli audit
 
-I report documentano i casi verificati nelle rispettive revisioni. Una chiusura storica non certifica l’assenza di difetti successivi nella stessa funzione.
+Gli esiti riassumono i casi verificati nelle rispettive revisioni. Una chiusura storica non certifica l’assenza di difetti successivi nella stessa funzione.
 
-| Ciclo | Interventi | Evidenze |
-| --- | --- | --- |
-| Primo audit | 37 interventi applicati; A30 escluso. | [Dati e test](docs/audit-fixes.json) |
-| Secondo audit | B01–B20 corretti, con verifica iniziale di B19 e 24 test aggiunti. Alcuni percorsi sono stati ulteriormente corretti nel terzo ciclo. | [Report](docs/reaudit-fixes.html) · [Dati](docs/reaudit-fixes.json) |
-| Terzo audit | C01–C11 corretti, con 17 test aggiunti. | [Report](docs/third-audit-fixes.html) · [Dati](docs/third-audit-fixes.json) |
+| Ciclo | Interventi |
+| --- | --- |
+| Primo audit | 37 interventi applicati; A30 escluso in quel ciclo. |
+| Secondo audit | B01–B20 corretti, con verifica iniziale di B19 e 24 test aggiunti. Alcuni percorsi sono stati ulteriormente corretti nel terzo ciclo. |
+| Terzo audit | C01–C11 corretti, con 17 test aggiunti. |
+| Audit di produzione | D01–D10 corretti, con 25 test aggiunti; coperti destinazione, concorrenza, Unicode, fallback, transazioni, recupero cloud e badge. |
 
 ### Invarianti da conservare
 
@@ -59,9 +60,11 @@ I report documentano i casi verificati nelle rispettive revisioni. Una chiusura 
 - **C08–C09 / incollaggio:** distinguere evento fallito e statistiche non salvate dopo un trasferimento riuscito. Anche gli snippet devono controllare l’esito dell’evento e consentire l’incollaggio manuale.
 - **C10 / importazione:** misurare i limiti SQLite in byte prima di materializzare i payload, comprese le stringhe Unicode.
 - **C11 / screenshot:** un header PNG leggibile non basta. Attendere chunk completi e pixel decodificabili prima della cattura.
-- **A30 / tastiera:** conservare `matchesAllClips(event:)` e il comportamento attuale di ⌥A/⌘A. Non correggerli incidentalmente durante un intervento sulle scorciatoie.
+- **Tastiera:** rispettare il mapping ⌘/⌘⌥ configurato; lasciare Option alla digitazione e mantenere ⌥Invio. I badge devono condividere i resolver degli eventi.
+- **D01–D02 / incollaggio:** mantenere la coda condivisa per pasteboard anche durante gli `await`; rivalutare PID congelato, permessi e `changeCount` prima degli eventi.
+- **Contenuto delle righe:** visualizzare testo o URL copiato senza anteporre `customName`, anche per le cronologie esistenti. Il recupero dei titoli web è stato rimosso; il campo storico resta leggibile per compatibilità con backup, importazione e sync.
 
-I test del terzo ciclo si trovano in `Tests/ConCopyCoreTests/ThirdAudit*Tests.swift`; quelli dei cicli precedenti in `Audit*Tests.swift` e `Reaudit*Tests.swift`.
+I test del terzo ciclo si trovano in `Tests/ConCopyCoreTests/ThirdAudit*Tests.swift`; quelli dei cicli precedenti in `Audit*Tests.swift` e `Reaudit*Tests.swift`. Le 25 regressioni D01–D10 sono in `Tests/ConCopyCoreTests/ProductionAuditRegressionTests.swift`.
 
 ## Schema e compatibilità
 
@@ -99,16 +102,18 @@ swift build -c release
 swift test
 ```
 
-Come richiesto da AGENTS.md, la release deve produrre **zero warning**. Il riferimento ai 58 test in AGENTS.md è storico: la suite attuale contiene **170 test**, incluso uno opzionale.
+Come richiesto da AGENTS.md, la release deve produrre **zero warning**. La suite attuale contiene **204 test**, incluso uno opzionale.
 
-Ultimo esito verificato per C01–C11, 17 novembre 2026:
+Ultimo esito verificato, 19 novembre 2026:
 
-| Controllo | Esito | Log |
-| --- | --- | --- |
-| `swift build` | Passato, zero warning. | [Debug](docs/verification-third-audit/debug.log) |
-| `swift build -c release` | Passato, zero warning. | [Release](docs/verification-third-audit/release.log) |
-| `swift test` | 170 test, 169 passati, uno saltato, zero fallimenti. | [Suite completa](docs/verification-third-audit/tests.log) |
-| A30 | File delle scorciatoie invariato rispetto alla baseline delle correzioni C; test dedicato passato. | [Integrità e test](docs/third-audit-fixes.json) |
+| Controllo | Esito |
+| --- | --- |
+| `swift build` | Passato, zero warning. |
+| `swift build -c release` | Passato, zero warning. |
+| `swift test` | 204 test, 203 passati, uno saltato, zero fallimenti. |
+| Applicazioni reali | 13 controlli nativi superati in TextEdit e Sublime Text su macOS 27.2.1 arm64; apertura fisica confermata. |
+
+Le prove reali coprono focus immediato sulla ricerca, digitazione di `~`, ricerca letterale, clic con copia o paste, ⌘⌥1, ⌥Invio, conservazione o rimozione del grassetto RTF, cambio app durante il paste e nove incollaggi consecutivi senza duplicazioni. La QA e i documenti dedicati sono stati chiusi e il permesso temporaneo di Accessibilità revocato.
 
 Il test opzionale `ExternalImportTests.testRealUserExportIfPresent` richiede `CONCOPY_TEST_CEP_PATH` con un export reale Copy ’Em esistente. Il suo skip non deve essere contato come test passato.
 
@@ -116,10 +121,10 @@ Il test opzionale `ExternalImportTests.testRealUserExportIfPresent` richiede `CO
 
 1. **Export reale Copy ’Em:** fornire un fixture tramite `CONCOPY_TEST_CEP_PATH` ed eseguire il test opzionale. Le prove attuali usano fixture sintetiche.
 2. **iCloud su due Mac:** verificare idratazione, lavoro offline, conflitti e convergenza sui dispositivi reali. I test usano worker reali con database e cartelle temporanee.
-3. **Permessi e focus reali:** confermare l’interazione AppKit/Accessibilità nelle app di destinazione. I nuovi test di incollaggio usano PID ed eventi simulati e pasteboard dedicate.
-4. **Compatibilità di compilazione:** eseguire la toolchain Swift 5.9 e il packaging universale su `arm64`/`x86_64`. Le ultime verifiche degli audit coprono solo Swift 6.4.2 su arm64.
+3. **Copertura aggiuntiva su app reali:** verificare immagini/file, altre applicazioni e altri sistemi macOS; le prove concluse coprono testo inline e RTF nelle due applicazioni indicate.
+4. **Compatibilità di compilazione:** eseguire la toolchain Swift 5.9 e il packaging universale su `arm64`/`x86_64`. Le ultime verifiche coprono solo Swift 6.4.2 su arm64.
 5. **Packaging della prossima versione:** verificare bundle, risorse, firma e DMG con gli script dedicati prima di un rilascio. Una build SPM nativa riuscita non equivale a questa verifica.
 
 ## Ripresa del lavoro
 
-Leggere lo stato Git e le istruzioni locali, scegliere i test pertinenti al componente modificato e preservare le modifiche già presenti. Aggiornare questo file quando cambiano schema, compatibilità, verifiche o attività pendenti; lasciare il dettaglio storico nel changelog e nei report degli audit. Non considerare una verifica locale come prova di commit, tag o pubblicazione.
+Leggere lo stato Git e le istruzioni locali, scegliere i test pertinenti al componente modificato e preservare le modifiche già presenti. Aggiornare questo file quando cambiano schema, compatibilità, verifiche o attività pendenti; lasciare il dettaglio storico nel changelog. Non considerare una verifica locale come prova di commit, tag o pubblicazione.

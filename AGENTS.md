@@ -60,8 +60,10 @@ Il pannello deve chiudersi immediatamente al cambio di contesto:
    - In `FloatingPanel.sendEvent(_:)`, intercettare i tasti funzione critici **prima** che l'evento venga inoltrato alla responder chain di AppKit/SwiftUI:
      - `Return / Enter` (keyCodes 36, 76): incolla la clip selezionata.
      - `↑ / ↓` (keyCodes 126, 125): muovono la selezione nella lista (Shift espande per multi-selezione).
-     - `Cmd + 1 ... 9`, `Cmd + 0`: incollaggio rapido senza Shift, con fallback hardware keycode.
-     - `Option + 1 ... 9`: cambio scheda/lista (senza inserire caratteri accentati o simboli nel campo di ricerca).
+     - `Cmd + 1 ... 9`, `Cmd + 0`: cambio scheda/lista; `Cmd + Option + 1 ... 9`, `Cmd + Option + 0`: incollaggio rapido. L'impostazione di scambio inverte queste due famiglie; entrambe escludono Shift e Control e usano il fallback hardware keycode.
+     - `Cmd + Option + A`: Tutte le clip; con il mapping predefinito funziona anche `Cmd + A`.
+     - `Option` e `Option + Shift` con tasti di testo: lasciare gli eventi alla responder chain per simboli e accenti, senza intercettarli come scorciatoie numeriche o di navigazione.
+     - `Option + Return / Enter`: mantenere l'incollaggio come testo semplice.
      - `Cmd + D`: deselezione rapida se selezione multipla attiva, altrimenti toggle preferiti.
      - `Cmd + M`: apertura modale lista.
      - `Escape`: chiude fogli modali, deseleziona il batch se attivo, svuota la query se valorizzata, o chiude il pannello (`orderOut(nil)`).
@@ -72,7 +74,17 @@ Il pannello deve chiudersi immediatamente al cambio di contesto:
 
 4. **Monitor Locale nei Fogli Modali (`NSEvent.addLocalMonitorForEvents`)**:
    - I fogli modali (es. `MoveToListSheetView`) isolano la responder chain della finestra principale.
-   - Utilizzare `NSEvent.addLocalMonitorForEvents(matching: .keyDown)` in `.onAppear` e rimuoverlo in `.onDisappear` per intercettare `Option + 1..9` e `Esc`.
+   - Utilizzare `NSEvent.addLocalMonitorForEvents(matching: .keyDown)` in `.onAppear` e rimuoverlo in `.onDisappear` per intercettare le scorciatoie lista configurate (`Cmd` oppure `Cmd + Option` con `1..9`, `0` e `A`) ed `Esc`.
+
+5. **Ricerca Letterale**:
+   - Le query con punteggiatura o simboli (es. `~/Library`, `c++`, `%`, `_`) devono cercare l'intera stringa come sottostringa letterale di testo o nome personalizzato, mantenendo filtri, ordinamento e limite.
+   - Il confronto letterale deve rispettare l'equivalenza canonica Unicode e ignorare le maiuscole anche fuori da ASCII. La funzione SQL `concopy_literal_contains` deve essere registrata sul reader usato dalla query; passare sempre il testo come parametro, senza interpretare `%`, `_` o backslash come jolly.
+   - Se si introducono query SQL `LIKE`, escapare sempre `%`, `_` e il carattere di escape.
+   - Mantenere la ricerca FTS5 per prefisso sulle query composte da parole e spazi, includendo i segni diacritici combinanti fra i caratteri delle parole.
+
+6. **Coerenza dei Badge**:
+   - Generare badge e routing con `GlobalShortcutsManager.quickPasteShortcut` e i resolver condivisi. Non mostrare badge alfabetici mentre la ricerca è focalizzata o per lettere riservate ai comandi.
+   - Spazio e frecce orizzontali modificati devono raggiungere la responder chain, senza attivare QuickLook.
 
 ---
 
@@ -122,13 +134,19 @@ Il pannello deve chiudersi immediatamente al cambio di contesto:
      ```
    - `ClipboardMonitor` deve verificare la presenza di questo marcatore e ignorare l'evento per evitare la duplicazione infinita della clip incollata.
 
+3. **Integrità di Incollaggio e Storage**:
+   - Tutti gli injector devono condividere una coda per pasteboard, mantenuta anche durante gli `await`; prima degli eventi rivalutare destinazione congelata, permessi e `changeCount`. Annullare l'operazione se il contesto o gli appunti sono cambiati.
+   - Ogni database indipendente deve possedere la propria cartella blob. Il fallback usa `DatabaseStartup`, una cartella temporanea separata e un avviso persistente; in quella sessione cleanup e sincronizzazione sono sospesi senza cambiare le preferenze salvate.
+   - Selezionare e cancellare i record in una sola transazione, rivalutando preferiti e appartenenza a liste nelle pulizie protette; rimuovere i blob non più referenziati solo dopo il commit.
+   - Ripristinare le liste in modo additivo e mantenere al massimo una lista Auto-Star attiva. Il recupero cloud può riparare blob locali solo con byte remoti validati che corrispondono esattamente al nome SHA-256 atteso.
+
 ---
 
 ## 6. Qualità del Codice e Convenzioni
 
 - **Zero Force-Unwrap**: Vietato l'uso di `!` o `fatalError` nel codice di produzione. Gestire sempre gli errori tramite `do-catch`, `guard let` o valori di fallback sicuri.
 - **Swift Concurrency**: Usare `async/await`, `actor` e `@MainActor` rispettando i vincoli di isolamento.
-- **Nessuna regressione nei test**: Ogni modifica apportata a `ConCopyCore` o alla logica di incollaggio deve mantenere tutti i 58 test esistenti funzionanti al 100%.
+- **Nessuna regressione nei test**: Ogni modifica apportata a `ConCopyCore` o alla logica di incollaggio deve mantenere funzionante l'intera suite esistente e includere le regressioni dei difetti corretti.
 
 ---
 
@@ -143,6 +161,6 @@ swift build
 # Verifica compilazione ottimizzata per release (zero warning ammessi)
 swift build -c release
 
-# Esecuzione completa dei test di unità e integrazione (58 test attesi)
+# Esecuzione completa dei test di unità e integrazione
 swift test
 ```

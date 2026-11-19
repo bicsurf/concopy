@@ -176,7 +176,7 @@ public actor CloudDriveSyncWorker {
         return false
     }
 
-    public func performSync(isAuthorized: @Sendable () -> Bool = { true }) async -> (
+    public func performSync(force: Bool = false, isAuthorized: @Sendable () -> Bool = { true }) async -> (
         hasLocalChanges: Bool, status: CloudSyncStatus
     ) {
         guard isAuthorized(), !Task.isCancelled else { return (false, .idle) }
@@ -191,7 +191,7 @@ public actor CloudDriveSyncWorker {
                 return (false, .syncing)
             }
             let currentFingerprint = try fingerprint()
-            if currentFingerprint == lastFingerprint { return (false, .idle) }
+            if !force && currentFingerprint == lastFingerprint { return (false, .idle) }
             var coordinationError: NSError?
             var result: Result<Bool, Error> = .success(false)
             var obsoleteBlobs: [String] = []
@@ -219,11 +219,12 @@ public actor CloudDriveSyncWorker {
                     var changed = false
                     // Keep the writer locked across snapshot + merge + apply; local edits cannot be overwritten by a stale snapshot.
                     try databaseManager.dbWriter.write { db in
-                        let local = try self.snapshot(db)
+                        let (local, repaired) = try self.snapshot(db, repairingFrom: remote, isAuthorized: isAuthorized)
                         let merged = try Self.merge(local, remote)
                         try Task.checkCancellation()
                         guard isAuthorized() else { throw CancellationError() }
-                        changed = try self.apply(merged, in: db, obsoleteBlobs: &obsoleteBlobs, rollbackBlobs: &rollbackBlobs)
+                        let applied = try self.apply(merged, in: db, obsoleteBlobs: &obsoleteBlobs, rollbackBlobs: &rollbackBlobs)
+                        changed = repaired || applied
                         let encoder = JSONEncoder()
                         encoder.dateEncodingStrategy = .iso8601
                         encoder.outputFormatting = [.sortedKeys]
@@ -252,6 +253,55 @@ public actor CloudDriveSyncWorker {
         } catch {
             try? databaseManager.removeUnreferencedBlobs(rollbackBlobs)
             return (false, .error)
+        }
+    }
+
+    /// Repair only exact content-addressed bytes. Never replace a local edit with a remote record
+    /// merely because its ID matches, and never publish an incomplete snapshot as a recovery shortcut.
+    private func repairLocalBlobs(from remote: CloudSyncState, in db: Database,
+        isAuthorized: @Sendable () -> Bool) throws -> Bool
+    {
+        var damaged: [ClipPayloadRecord] = []
+        let payloads = try ClipPayloadRecord.filter(Column("blobFilename") != nil).fetchAll(db)
+        for payload in payloads {
+            if let bytes = try? databaseManager.loadPayloadData(for: payload), bytes.count == payload.byteSize { continue }
+            damaged.append(payload)
+        }
+        guard !damaged.isEmpty else { return false }
+        let needed = Set(damaged.compactMap(\.blobFilename))
+        var verified: [String: Data] = [:]
+        for saved in remote.payloads.values {
+            for item in saved where item.byteSize > 4096 {
+                if let hash = item.sha256, !needed.contains(hash + ".blob") { continue }
+                try autoreleasepool {
+                    for bytes in try ArchiveManager.validatedRepresentations([item]).values {
+                        let filename = CapturedClip.hash(bytes) + ".blob"
+                        if needed.contains(filename) { verified[filename] = bytes }
+                    }
+                }
+            }
+        }
+        // Verify the whole recovery set before changing any files.
+        for payload in damaged {
+            guard let filename = payload.blobFilename, let bytes = verified[filename], bytes.count == payload.byteSize else {
+                throw BlobStorageError.corruptedBlob
+            }
+        }
+        for bytes in verified.values {
+            try Task.checkCancellation()
+            guard isAuthorized() else { throw CancellationError() }
+            _ = try databaseManager.blobStorage.storeBlob(data: bytes)
+        }
+        return true
+    }
+
+    private func snapshot(_ db: Database, repairingFrom remote: CloudSyncState,
+        isAuthorized: @Sendable () -> Bool) throws -> (CloudSyncState, Bool)
+    {
+        do { return (try snapshot(db), false) }
+        catch {
+            guard try repairLocalBlobs(from: remote, in: db, isAuthorized: isAuthorized) else { throw error }
+            return (try snapshot(db), true)
         }
     }
 
