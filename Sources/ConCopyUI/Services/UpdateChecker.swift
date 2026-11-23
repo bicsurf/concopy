@@ -33,7 +33,7 @@ public final class UpdateChecker: ObservableObject {
         appSettings: AppSettingsManager? = nil,
         session: URLSession = .shared,
         endpoint: URL? = URL(string: "https://api.github.com/repos/bicsurf/concopy/releases/latest"),
-        automaticCheckInterval: TimeInterval = 12 * 3600,
+        automaticCheckInterval: TimeInterval = 24 * 3600,
         currentVersionProvider: @escaping () -> String = {
             Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
         }
@@ -52,9 +52,11 @@ public final class UpdateChecker: ObservableObject {
             self?.automaticTask = nil
             guard enabled, let self else { return }
             self.automaticTask = Task { @MainActor [weak self] in
+                var isFirstCheck = true
                 while !Task.isCancelled {
                     guard let self else { return }
-                    await self.checkAutomaticallyIfNeeded()
+                    await self.checkAutomaticallyIfNeeded(force: isFirstCheck)
+                    isFirstCheck = false
                     let elapsed =
                         self.appSettings.lastUpdateCheckDate.map { Date().timeIntervalSince($0) }
                         ?? self.automaticCheckInterval
@@ -74,10 +76,10 @@ public final class UpdateChecker: ObservableObject {
         settingsObserver = nil
     }
 
-    public func checkAutomaticallyIfNeeded() async {
-        guard appSettings.isAutoCheckUpdatesEnabled else { return }
+    public func checkAutomaticallyIfNeeded(force: Bool = false) async {
+        guard appSettings.isAutoCheckUpdatesEnabled, !isChecking else { return }
 
-        if let lastCheck = appSettings.lastUpdateCheckDate,
+        if !force, let lastCheck = appSettings.lastUpdateCheckDate,
             Date().timeIntervalSince(lastCheck) < automaticCheckInterval
         {
             return
@@ -93,6 +95,7 @@ public final class UpdateChecker: ObservableObject {
 
     @discardableResult
     public func checkForUpdates(isUserInitiated: Bool = false) async -> CheckResult {
+        guard !isChecking else { return .failed("An update check is already in progress.") }
         isChecking = true
         defer { isChecking = false }
 
@@ -110,6 +113,7 @@ public final class UpdateChecker: ObservableObject {
             }
 
             if httpResponse.statusCode == 404 {
+                appSettings.lastUpdateCheckDate = Date()
                 // No release published yet on repo
                 self.availableUpdate = nil
                 self.statusMessage = "No published releases found."
@@ -177,15 +181,13 @@ public final class UpdateChecker: ObservableObject {
             alert.informativeText =
                 "\(update.title)\n\n\(update.releaseNotes.isEmpty ? "No release notes provided." : update.releaseNotes)"
             alert.alertStyle = .informational
-            alert.addButton(withTitle: update.dmgDownloadURL != nil ? "Download DMG" : "Open Release")
+            alert.addButton(withTitle: "Download Update")
             alert.addButton(withTitle: "Skip this version")
             alert.addButton(withTitle: "Later")
 
             let response = alert.runModal()
             if response == .alertFirstButtonReturn {
-                if let url = update.dmgDownloadURL ?? URL(string: update.releasePageURL.absoluteString) {
-                    NSWorkspace.shared.open(url)
-                }
+                UpdateDownloadController.shared.start(update)
             } else if response == .alertSecondButtonReturn {
                 skipUpdate(version: update.version)
             }

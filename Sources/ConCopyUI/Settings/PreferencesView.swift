@@ -174,14 +174,14 @@ public struct PreferencesView: View {
                 Toggle(isOn: $settingsManager.isAutoCheckUpdatesEnabled) {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Check for updates automatically")
-                        Text("Periodically check for new versions of ConCopy.")
+                        Text("Check for new versions at launch and every day.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                 }
 
                 .accessibilityLabel("Check for updates automatically")
-                .accessibilityHint("Periodically check for new versions of ConCopy.")
+                .accessibilityHint("Check for new versions at launch and every day.")
 
                 HStack {
                     Button(action: {
