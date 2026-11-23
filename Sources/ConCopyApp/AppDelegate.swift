@@ -67,6 +67,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         self.statusItemController = statusController
 
+        UpdateDownloadController.shared.onReadyToInstall = { NSApp.terminate(nil) }
+
         // Auto-check for updates if enabled
         UpdateChecker.shared.startAutomaticChecks()
 

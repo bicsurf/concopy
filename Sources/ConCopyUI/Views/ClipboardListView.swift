@@ -42,9 +42,7 @@ public struct ClipboardListView: View {
                     Spacer()
 
                     Button("Download") {
-                        if let url = update.dmgDownloadURL ?? URL(string: update.releasePageURL.absoluteString) {
-                            NSWorkspace.shared.open(url)
-                        }
+                        UpdateDownloadController.shared.start(update)
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.mini)
