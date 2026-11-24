@@ -136,6 +136,154 @@ final class ViewModelSelectionAndFavoriteTests: XCTestCase {
         XCTAssertEqual(viewModel.selectionAnchorId, viewModel.clips[1].id)
     }
 
+    func testArrowSelectionWrapsAndShiftStopsAtBoundaries() async throws {
+        viewModel.moveSelectionUp()
+        viewModel.moveSelectionDown()
+        XCTAssertTrue(viewModel.clips.isEmpty)
+
+        for i in 1...3 {
+            _ = try databaseManager.ingestCapturedClip(
+                CapturedClip(plainText: "Wrap item \(i)", primaryType: .text)
+            )
+        }
+        viewModel.loadClips()
+        await viewModel.waitForPendingLoads()
+        XCTAssertEqual(viewModel.clips.count, 3)
+        let first = try XCTUnwrap(viewModel.clips.first)
+        let last = try XCTUnwrap(viewModel.clips.last)
+        viewModel.selectSingle(clipId: first.id)
+
+        viewModel.moveSelectionUp()
+        XCTAssertEqual(viewModel.selectedClipId, last.id)
+        XCTAssertEqual(viewModel.selectionAnchorId, last.id)
+        XCTAssertTrue(viewModel.selectedClipIds.isEmpty)
+
+        viewModel.moveSelectionDown()
+        XCTAssertEqual(viewModel.selectedClipId, first.id)
+        XCTAssertEqual(viewModel.selectionAnchorId, first.id)
+
+        viewModel.moveSelectionUp(expandSelection: true)
+        XCTAssertEqual(viewModel.selectedClipId, first.id)
+        XCTAssertEqual(viewModel.selectedClipIds, [first.id])
+
+        viewModel.selectSingle(clipId: last.id)
+        viewModel.moveSelectionDown(expandSelection: true)
+        XCTAssertEqual(viewModel.selectedClipId, last.id)
+        XCTAssertEqual(viewModel.selectedClipIds, [last.id])
+
+        viewModel.clips = [first]
+        viewModel.selectSingle(clipId: first.id)
+        viewModel.moveSelectionUp()
+        viewModel.moveSelectionDown()
+        XCTAssertEqual(viewModel.selectedClipId, first.id)
+    }
+
+    func testArrowWrapReachesActualLastClipBeyondFirstPage() async throws {
+        for i in 1...225 {
+            _ = try databaseManager.ingestCapturedClip(
+                CapturedClip(plainText: "Paged item \(i)", primaryType: .text)
+            )
+        }
+        viewModel.loadClips()
+        await viewModel.waitForPendingLoads()
+        let orderedClips = try databaseManager.searchClips(limit: 300)
+        let first = try XCTUnwrap(orderedClips.first)
+        let last = try XCTUnwrap(orderedClips.last)
+        XCTAssertEqual(viewModel.clips.count, 100)
+        XCTAssertTrue(viewModel.hasMoreClips)
+        viewModel.selectSingle(clipId: first.id)
+
+        viewModel.moveSelectionUp()
+        await viewModel.waitForPendingLoads()
+
+        XCTAssertEqual(viewModel.clips.count, 225)
+        XCTAssertFalse(viewModel.hasMoreClips)
+        XCTAssertEqual(viewModel.selectedClipId, last.id)
+        XCTAssertEqual(viewModel.selectionAnchorId, last.id)
+        XCTAssertTrue(viewModel.selectedClipIds.isEmpty)
+
+        viewModel.moveSelectionDown()
+        XCTAssertEqual(viewModel.selectedClipId, first.id)
+    }
+
+    func testRapidArrowMovesContinueAcrossPagesBeforeWrapping() async throws {
+        for i in 1...225 {
+            _ = try databaseManager.ingestCapturedClip(
+                CapturedClip(plainText: "Rapid item \(i)", primaryType: .text)
+            )
+        }
+        viewModel.loadClips()
+        await viewModel.waitForPendingLoads()
+        let orderedClips = try databaseManager.searchClips(limit: 300)
+        viewModel.selectSingle(clipId: orderedClips[99].id)
+
+        viewModel.moveSelectionDown()
+        viewModel.moveSelectionDown()
+        viewModel.moveSelectionUp()
+        await viewModel.waitForPendingLoads()
+
+        XCTAssertEqual(viewModel.selectedClipId, orderedClips[100].id)
+        XCTAssertEqual(viewModel.clips.count, 200)
+        XCTAssertTrue(viewModel.hasMoreClips)
+
+        viewModel.selectSingle(clipId: orderedClips[199].id)
+        for _ in 0..<26 {
+            viewModel.moveSelectionDown()
+        }
+        await viewModel.waitForPendingLoads()
+
+        XCTAssertEqual(viewModel.clips.count, 225)
+        XCTAssertFalse(viewModel.hasMoreClips)
+        XCTAssertEqual(viewModel.selectedClipId, orderedClips[0].id)
+        XCTAssertTrue(viewModel.selectedClipIds.isEmpty)
+    }
+
+    func testShiftArrowSelectionExtendsAcrossPageBoundary() async throws {
+        for i in 1...225 {
+            _ = try databaseManager.ingestCapturedClip(
+                CapturedClip(plainText: "Range item \(i)", primaryType: .text)
+            )
+        }
+        viewModel.loadClips()
+        await viewModel.waitForPendingLoads()
+        let orderedClips = try databaseManager.searchClips(limit: 300)
+        viewModel.selectSingle(clipId: orderedClips[99].id)
+
+        viewModel.moveSelectionDown(expandSelection: true)
+        viewModel.moveSelectionDown(expandSelection: true)
+        viewModel.moveSelectionUp(expandSelection: true)
+        await viewModel.waitForPendingLoads()
+
+        XCTAssertEqual(viewModel.selectedClipId, orderedClips[100].id)
+        XCTAssertEqual(viewModel.selectionAnchorId, orderedClips[99].id)
+        XCTAssertEqual(viewModel.selectedClipIds, Set(orderedClips[99...100].map(\.id)))
+
+        viewModel.moveSelectionUp()
+        await viewModel.waitForPendingLoads()
+        XCTAssertEqual(viewModel.selectedClipId, orderedClips[99].id)
+        XCTAssertTrue(viewModel.selectedClipIds.isEmpty)
+    }
+
+    func testPendingArrowWrapIsCancelledByQueryChange() async throws {
+        for i in 1...225 {
+            _ = try databaseManager.ingestCapturedClip(
+                CapturedClip(plainText: "Search item \(i)", primaryType: .text)
+            )
+        }
+        viewModel.loadClips()
+        await viewModel.waitForPendingLoads()
+        viewModel.selectSingle(clipId: try XCTUnwrap(viewModel.clips.first).id)
+
+        viewModel.moveSelectionUp()
+        viewModel.searchQuery = "Search item 224"
+        await viewModel.waitForPendingLoads()
+
+        XCTAssertEqual(viewModel.clips.count, 1)
+        XCTAssertEqual(viewModel.selectedIndex, 0)
+        XCTAssertEqual(viewModel.clips.first?.plainText, "Search item 224")
+        XCTAssertTrue(viewModel.selectedClipIds.isEmpty)
+    }
+
     func testShiftArrowKeysExtensionAndContraction() async throws {
         for i in 1...5 {
             _ = try databaseManager.ingestCapturedClip(
@@ -502,11 +650,11 @@ final class ViewModelSelectionAndFavoriteTests: XCTestCase {
         viewModel.moveSelection(by: 1, extendSelection: false)
         XCTAssertEqual(viewModel.selectedSnippetIndex, 2)
 
-        viewModel.moveSelection(by: 1, extendSelection: false)  // bounded to max
-        XCTAssertEqual(viewModel.selectedSnippetIndex, 2)
+        viewModel.moveSelection(by: 1, extendSelection: false)  // Wrap to first
+        XCTAssertEqual(viewModel.selectedSnippetIndex, 0)
 
         viewModel.moveSelection(by: -1, extendSelection: false)
-        XCTAssertEqual(viewModel.selectedSnippetIndex, 1)
+        XCTAssertEqual(viewModel.selectedSnippetIndex, 2)
 
         // 4. Update snippet
         let snippetToEdit = viewModel.snippets.first { $0.shortcut == ";mail" }!
