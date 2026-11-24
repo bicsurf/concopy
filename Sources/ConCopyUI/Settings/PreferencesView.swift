@@ -150,6 +150,11 @@ public struct PreferencesView: View {
                 Text("When hidden, reopen ConCopy with the panel shortcut, then re-enable this in Settings.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+
+                Toggle("Mask sensitive data (Privacy Shield)", isOn: $settingsManager.maskSensitiveData)
+                Text("Automatically masks API keys, passwords, bearer tokens, and credit card numbers. Hover or click lock to reveal via Touch ID.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 VStack(alignment: .leading, spacing: 6) {
                     Picker("When clicking a clip", selection: $settingsManager.isDirectPasteEnabled) {
                         Text("Copy to clipboard").tag(false)

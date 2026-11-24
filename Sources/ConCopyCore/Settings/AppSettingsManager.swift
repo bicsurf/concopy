@@ -18,6 +18,7 @@ public final class AppSettingsManager: ObservableObject {
     public static let lastUpdateCheckDateKey = "ConCopy.Settings.lastUpdateCheckDate"
     public static let skippedUpdateVersionKey = "ConCopy.Settings.skippedUpdateVersion"
     public static let showMenuBarIconKey = "ConCopy.Settings.showMenuBarIcon"
+    public static let maskSensitiveDataKey = "ConCopy.Settings.maskSensitiveData"
 
     public static let defaultExcludedAppBundleIds: [String] = [
         "com.agilebits.onepassword",
@@ -105,6 +106,12 @@ public final class AppSettingsManager: ObservableObject {
         }
     }
 
+    @Published public var maskSensitiveData: Bool {
+        didSet {
+            defaults.set(maskSensitiveData, forKey: Self.maskSensitiveDataKey)
+        }
+    }
+
     public init(userDefaults: UserDefaults = .standard) {
         self.defaults = userDefaults
 
@@ -165,6 +172,12 @@ public final class AppSettingsManager: ObservableObject {
             self.showMenuBarIcon = userDefaults.bool(forKey: Self.showMenuBarIconKey)
         } else {
             self.showMenuBarIcon = true
+        }
+
+        if userDefaults.object(forKey: Self.maskSensitiveDataKey) != nil {
+            self.maskSensitiveData = userDefaults.bool(forKey: Self.maskSensitiveDataKey)
+        } else {
+            self.maskSensitiveData = true
         }
     }
 

@@ -123,6 +123,7 @@ public struct ClipboardListView: View {
                                     fileIconImage: clip.primaryType == .file ? viewModel.fileIcon(for: clip) : nil,
                                     appIconImage: viewModel.appIcon(for: clip),
                                     linkMetadata: clip.primaryType == .url ? viewModel.linkMetadata(for: clip) : nil,
+                                    shouldMaskSensitive: settings.maskSensitiveData && SensitiveDataDetector.isSensitive(clip.plainText),
                                     onToggleCheck: {
                                         viewModel.toggleSelection(clipId: clip.id)
                                     },
@@ -823,11 +824,13 @@ struct ClipRowView: View, Equatable {
     var fileIconImage: NSImage? = nil
     var appIconImage: NSImage? = nil
     var linkMetadata: WebLinkMetadata? = nil
+    var shouldMaskSensitive: Bool = false
     let onToggleCheck: () -> Void
     var onToggleFavorite: (() -> Void)? = nil
     var onRowClick: (() -> Void)? = nil
 
     @State private var isHovered = false
+    @State private var isRevealedLocally: Bool = false
     @Environment(\.colorSchemeContrast) private var contrast
 
     static func == (lhs: ClipRowView, rhs: ClipRowView) -> Bool {
@@ -835,7 +838,7 @@ struct ClipRowView: View, Equatable {
             && lhs.isChecked == rhs.isChecked && lhs.isPasting == rhs.isPasting && lhs.isCopied == rhs.isCopied
             && lhs.actionTitle == rhs.actionTitle && lhs.shortcutLabel == rhs.shortcutLabel
             && lhs.quickPasteModifier == rhs.quickPasteModifier && lhs.thumbnailImage === rhs.thumbnailImage
-            && lhs.fileIconImage === rhs.fileIconImage && lhs.linkMetadata == rhs.linkMetadata
+            && lhs.fileIconImage === rhs.fileIconImage && lhs.linkMetadata == rhs.linkMetadata && lhs.shouldMaskSensitive == rhs.shouldMaskSensitive
     }
 
     private var accessibilityTitle: String {
