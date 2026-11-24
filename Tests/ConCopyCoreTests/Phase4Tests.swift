@@ -37,6 +37,41 @@ final class Phase4Tests: XCTestCase {
             TextTransformer.apply(.singleLine, to: "line 1\nline 2\nline 3"),
             "line 1 line 2 line 3"
         )
+
+        // JSON format
+        let rawJSON = "{\"b\":2,\"a\":1}"
+        let formattedJSON = TextTransformer.apply(.jsonFormat, to: rawJSON)
+        XCTAssertTrue(formattedJSON.contains("\n"))
+        XCTAssertTrue(formattedJSON.contains("\"a\" : 1"))
+        XCTAssertEqual(TextTransformer.apply(.jsonFormat, to: "invalid json"), "invalid json")
+
+        // JSON minify
+        let prettyJSON = "{\n  \"b\" : 2,\n  \"a\" : 1\n}"
+        let minifiedJSON = TextTransformer.apply(.jsonMinify, to: prettyJSON)
+        XCTAssertFalse(minifiedJSON.contains("\n"))
+        XCTAssertEqual(minifiedJSON, "{\"a\":1,\"b\":2}")
+        XCTAssertEqual(TextTransformer.apply(.jsonMinify, to: "invalid json"), "invalid json")
+
+        // URL encode / decode
+        let rawURL = "hello world"
+        let encodedURL = TextTransformer.apply(.urlEncode, to: rawURL)
+        XCTAssertEqual(encodedURL, "hello%20world")
+        XCTAssertEqual(TextTransformer.apply(.urlDecode, to: encodedURL), rawURL)
+
+        // Base64 encode / decode
+        let plainText = "Hello ConCopy!"
+        let base64 = TextTransformer.apply(.base64Encode, to: plainText)
+        XCTAssertEqual(base64, "SGVsbG8gQ29uQ29weSE=")
+        XCTAssertEqual(TextTransformer.apply(.base64Decode, to: base64), plainText)
+        XCTAssertEqual(TextTransformer.apply(.base64Decode, to: "invalid base64!@#"), "invalid base64!@#")
+
+        // Case conversions
+        XCTAssertEqual(TextTransformer.apply(.snakeCase, to: "helloWorld"), "hello_world")
+        XCTAssertEqual(TextTransformer.apply(.snakeCase, to: "Hello World-Test"), "hello_world_test")
+        XCTAssertEqual(TextTransformer.apply(.camelCase, to: "hello_world_test"), "helloWorldTest")
+        XCTAssertEqual(TextTransformer.apply(.camelCase, to: "Hello-World"), "helloWorld")
+        XCTAssertEqual(TextTransformer.apply(.kebabCase, to: "helloWorldTest"), "hello-world-test")
+        XCTAssertEqual(TextTransformer.apply(.kebabCase, to: "hello_world"), "hello-world")
     }
 
     func testFileExportAndPasteAsFile() async throws {
@@ -111,6 +146,49 @@ final class Phase4Tests: XCTestCase {
         XCTAssertEqual(updated1?.pasteCount, 1)
         XCTAssertEqual(updated2?.pasteCount, 1)
         XCTAssertEqual(updated3?.pasteCount, 1)
+    }
+
+    @MainActor
+    func testBatchPasteMultipleImagesWritesFileObjects() async throws {
+        let imageData = try createSampleImageData()
+        let clip1 = try databaseManager.ingestCapturedClip(
+            CapturedClip(
+                plainText: "Image1.png",
+                primaryType: .image,
+                representations: ["public.png": imageData]
+            )
+        )
+        let clip2 = try databaseManager.ingestCapturedClip(
+            CapturedClip(
+                plainText: "Image2.png",
+                primaryType: .image,
+                representations: ["public.png": imageData]
+            )
+        )
+
+        let mockPoster = MockCGEventPoster()
+        let exporter = FilePasteExporter(exportDirectoryURL: tempDir)
+        let injector = PasteInjector(eventPoster: mockPoster, fileExporter: exporter)
+        let pasteboard = NSPasteboard.withUniqueName()
+
+        try await injector.pasteBatch(
+            clips: [clip1, clip2],
+            mode: .concatenated(separator: .newline),
+            transformation: .none,
+            databaseManager: databaseManager,
+            pasteboard: pasteboard
+        )
+
+        XCTAssertEqual(mockPoster.postCommandVCalledCount, 1)
+        XCTAssertNotNil(pasteboard.data(forType: PasteInjector.internalPasteMarker))
+
+        let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL]
+        XCTAssertNotNil(urls)
+        XCTAssertEqual(urls?.count, 2)
+        for url in urls ?? [] {
+            XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+            XCTAssertEqual(url.pathExtension, "png")
+        }
     }
 
     @MainActor
@@ -194,6 +272,80 @@ final class Phase4Tests: XCTestCase {
         let updatedLists = try databaseManager.fetchLists()
         XCTAssertEqual(updatedLists.count, 3)
         XCTAssertTrue(updatedLists.contains(where: { $0.id == list3.id && $0.name == "List 3" }))
+    }
+
+    func testColorParserAndFormats() {
+        // Hex colors
+        let hex3 = ColorParser.parse("#F00")
+        XCTAssertNotNil(hex3)
+        XCTAssertEqual(hex3?.hexString, "#FF0000")
+        XCTAssertEqual(hex3?.rgbString, "rgb(255, 0, 0)")
+        XCTAssertEqual(hex3?.hslString, "hsl(0, 100%, 50%)")
+
+        let hex6 = ColorParser.parse("#00ff00")
+        XCTAssertNotNil(hex6)
+        XCTAssertEqual(hex6?.hexString, "#00FF00")
+        XCTAssertEqual(hex6?.rgbString, "rgb(0, 255, 0)")
+
+        let hex8 = ColorParser.parse("#0000ff80")
+        XCTAssertNotNil(hex8)
+        XCTAssertEqual(hex8?.alpha ?? 1.0, 0.50, accuracy: 0.02)
+
+        // RGB colors
+        let rgb = ColorParser.parse("rgb(255, 128, 0)")
+        XCTAssertNotNil(rgb)
+        XCTAssertEqual(rgb?.hexString, "#FF8000")
+
+        let rgba = ColorParser.parse("rgba(0, 128, 255, 0.5)")
+        XCTAssertNotNil(rgba)
+        XCTAssertEqual(rgba?.alpha ?? 1.0, 0.5, accuracy: 0.01)
+
+        // HSL colors
+        let hsl = ColorParser.parse("hsl(120, 100%, 50%)")
+        XCTAssertNotNil(hsl)
+        XCTAssertEqual(hsl?.hexString, "#00FF00")
+
+        // Invalid colors
+        XCTAssertNil(ColorParser.parse("not a color"))
+        XCTAssertNil(ColorParser.parse("#XYZ"))
+        XCTAssertNil(ColorParser.parse(""))
+    }
+
+    func testDatabaseOCRUpdateAndSearch() throws {
+        let imageClip = CapturedClip(
+            plainText: "Screenshot.png",
+            primaryType: .image,
+            representations: [:]
+        )
+        let saved = try databaseManager.ingestCapturedClip(imageClip)
+        XCTAssertEqual(saved.primaryType, .image)
+        XCTAssertEqual(saved.plainText, "Screenshot.png")
+
+        try databaseManager.updateOCRText(clipId: saved.id, ocrText: "Recognized Secret Text 12345")
+
+        let searchResults = try databaseManager.searchClips(query: "Secret Text")
+        XCTAssertEqual(searchResults.count, 1)
+        XCTAssertEqual(searchResults.first?.id, saved.id)
+        XCTAssertTrue(searchResults.first?.plainText?.contains("Secret Text") == true)
+    }
+
+    func testSnippetVariableResolver() {
+        let template = "Hello {name}, your code for {service} is {uuid} on {date} at {time} with clipboard: '{clipboard}'."
+        let customVars = SnippetVariableResolver.extractCustomVariables(from: template)
+        XCTAssertEqual(customVars, ["name", "service"])
+
+        let resolved = SnippetVariableResolver.resolve(
+            template: template,
+            clipboardContent: "ACTIVE_TOKEN",
+            customVariables: ["name": "Alice", "service": "GitHub"]
+        )
+
+        XCTAssertTrue(resolved.contains("Hello Alice"))
+        XCTAssertTrue(resolved.contains("your code for GitHub"))
+        XCTAssertTrue(resolved.contains("clipboard: 'ACTIVE_TOKEN'"))
+        XCTAssertFalse(resolved.contains("{uuid}"))
+        XCTAssertFalse(resolved.contains("{date}"))
+        XCTAssertFalse(resolved.contains("{time}"))
     }
 
     private func createSampleImageData() throws -> Data {

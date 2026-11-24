@@ -5,8 +5,12 @@ import Foundation
 public final class AppIconProvider {
     public static let shared = AppIconProvider()
 
-    // ponytail: in-memory NSCache only; upgrade to persistent disk cache if bundle icon lookups ever cause main thread hitching.
-    private let cache = NSCache<NSString, NSImage>()
+    // ponytail: in-memory NSCache only with count limit; upgrade to persistent disk cache if bundle icon lookups ever cause main thread hitching.
+    private let cache: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = 64
+        return cache
+    }()
     private var missingBundleIds = Set<String>()
 
     public init() {}

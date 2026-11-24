@@ -30,9 +30,9 @@ public enum FilePasteExporterError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .invalidImageData:
-            return "Dati immagine non validi o formato non supportato."
+            return "Invalid image data or unsupported format."
         case .imageConversionFailed:
-            return "Impossibile convertire l'immagine nel formato specificato."
+            return "Unable to convert image to specified format."
         }
     }
 }

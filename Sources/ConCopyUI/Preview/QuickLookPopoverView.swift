@@ -15,6 +15,7 @@ public struct QuickLookPopoverView: View {
     @State private var imageResolution: String = ""
     @State private var imageSizeKB: String = ""
     @State private var zoomScale: CGFloat = 1.0
+    @State private var isCopiedText = false
     @State private var eventMonitor: Any? = nil
 
     public init(
@@ -169,6 +170,39 @@ public struct QuickLookPopoverView: View {
                 }
             }
 
+            if let recognized = clip.plainText?.trimmingCharacters(in: .whitespacesAndNewlines), !recognized.isEmpty {
+                Divider()
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Label("Recognized Text", systemImage: "text.viewfinder")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button(isCopiedText ? "Copied! ✓" : "Copy Text") {
+                            let pb = NSPasteboard.general
+                            pb.clearContents()
+                            pb.setString("1", forType: PasteInjector.internalPasteMarker)
+                            pb.setString(recognized, forType: .string)
+                            isCopiedText = true
+                            Task { @MainActor in
+                                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                                isCopiedText = false
+                            }
+                        }
+                        .font(.system(size: 11))
+                        .buttonStyle(.borderless)
+                    }
+                    Text(recognized)
+                        .font(.system(size: 11, design: .monospaced))
+                        .textSelection(.enabled)
+                        .lineLimit(3)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
+            }
+
             Divider()
 
             HStack {
@@ -283,13 +317,16 @@ public struct QuickLookPopoverView: View {
                 let payloads = try databaseManager.fetchPayloads(forClipId: clip.id)
                 if let payload = payloads.first(where: { $0.utiType == "public.png" || $0.utiType == "public.tiff" }) {
                     let data = try databaseManager.loadPayloadData(for: payload)
-                    let kb = Double(data.count) / 1024.0
-                    let sizeStr = String(format: "%.1f KB", kb)
-                    let resStr: String
-                    if let rep = NSBitmapImageRep(data: data) {
-                        resStr = "\(rep.pixelsWide) × \(rep.pixelsHigh)"
-                    } else {
-                        resStr = ""
+                    let (sizeStr, resStr): (String, String) = autoreleasepool {
+                        let kb = Double(data.count) / 1024.0
+                        let formattedSize = String(format: "%.1f KB", kb)
+                        let formattedRes: String
+                        if let rep = NSBitmapImageRep(data: data) {
+                            formattedRes = "\(rep.pixelsWide) × \(rep.pixelsHigh)"
+                        } else {
+                            formattedRes = ""
+                        }
+                        return (formattedSize, formattedRes)
                     }
 
                     await MainActor.run {

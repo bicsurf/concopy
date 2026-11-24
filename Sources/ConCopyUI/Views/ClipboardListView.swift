@@ -122,6 +122,8 @@ public struct ClipboardListView: View {
                                         ? viewModel.imageThumbnail(for: clip) : nil,
                                     fileIconImage: clip.primaryType == .file ? viewModel.fileIcon(for: clip) : nil,
                                     appIconImage: viewModel.appIcon(for: clip),
+                                    linkMetadata: clip.primaryType == .url ? viewModel.linkMetadata(for: clip) : nil,
+                                    shouldMaskSensitive: settings.maskSensitiveData && SensitiveDataDetector.isSensitive(clip.plainText),
                                     onToggleCheck: {
                                         viewModel.toggleSelection(clipId: clip.id)
                                     },
@@ -290,6 +292,20 @@ public struct ClipboardListView: View {
                 }
             )
         }
+        // Snippet Variables Fill Sheet
+        .sheet(item: $viewModel.promptSnippet) { snippet in
+            SnippetVariablesPromptSheetView(
+                snippet: snippet,
+                variableNames: viewModel.promptSnippetVariables,
+                onFill: { values in
+                    viewModel.pasteSnippetWithVariables(snippet, values: values)
+                },
+                onCancel: {
+                    viewModel.promptSnippet = nil
+                    viewModel.promptSnippetVariables = []
+                }
+            )
+        }
     }
 
     private var scopeName: String {
@@ -352,6 +368,54 @@ public struct ClipboardListView: View {
                 .disabled(viewModel.isSnippetsOnly)
                 .accessibilityLabel("Sort clips")
                 .help("Sort: \(viewModel.currentSortMode.displayName)")
+
+                if !viewModel.pasteQueue.isEmpty {
+                    Menu {
+                        Section("Paste Mode") {
+                            Button {
+                                viewModel.pasteQueueOrder = .fifo
+                            } label: {
+                                if viewModel.pasteQueueOrder == .fifo {
+                                    Label("Queue (FIFO - First in First out)", systemImage: "checkmark")
+                                } else {
+                                    Text("Queue (FIFO - First in First out)")
+                                }
+                            }
+                            Button {
+                                viewModel.pasteQueueOrder = .lifo
+                            } label: {
+                                if viewModel.pasteQueueOrder == .lifo {
+                                    Label("Stack (LIFO - Last in First out)", systemImage: "checkmark")
+                                } else {
+                                    Text("Stack (LIFO - Last in First out)")
+                                }
+                            }
+                        }
+                        Divider()
+                        Button("Paste Next Item (⌃⌘V)") {
+                            viewModel.pasteNextFromQueue()
+                        }
+                        Button("Clear Queue (\(viewModel.pasteQueue.count))", role: .destructive) {
+                            viewModel.clearPasteQueue()
+                        }
+                    } label: {
+                        HStack(spacing: 3) {
+                            Image(systemName: "rectangle.stack.fill")
+                                .font(.system(size: 11, weight: .semibold))
+                            Text("\(viewModel.pasteQueue.count)")
+                                .font(.system(size: 10, weight: .bold))
+                        }
+                        .foregroundStyle(ConCopyTheme.Accents.primary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(ConCopyTheme.Accents.primary.opacity(0.15), in: Capsule())
+                    }
+                    .menuIndicator(.hidden)
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .help("Paste \(viewModel.pasteQueueOrder == .fifo ? "Queue" : "Stack"): \(viewModel.pasteQueue.count) item(s). Shortcut: ⌃⌘V")
+                }
+
                 PanelIconButton(title: "Settings", systemImage: "gearshape") {
                     if let action = viewModel.onOpenSettings {
                         action()
@@ -472,6 +536,19 @@ public struct ClipboardListView: View {
                     }
                 }
             }
+            if !viewModel.isSnippetsOnly {
+                HStack(spacing: 5) {
+                    ForEach(ClipTypeFilter.allCases) { filter in
+                        TypeFilterPill(
+                            filter: filter,
+                            isSelected: viewModel.selectedTypeFilter == filter
+                        ) {
+                            viewModel.selectTypeFilter(filter)
+                        }
+                    }
+                    Spacer()
+                }
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
@@ -487,6 +564,14 @@ public struct ClipboardListView: View {
             ) {
                 viewModel.searchQuery = ""
                 isFieldFocused = true
+            }
+        } else if viewModel.selectedTypeFilter != .all {
+            ClipboardEmptyState(
+                title: "No \(viewModel.selectedTypeFilter.displayName.lowercased()) items",
+                message: "No clips matching '\(viewModel.selectedTypeFilter.displayName)' found in \(scopeName).",
+                systemImage: viewModel.selectedTypeFilter.icon, actionTitle: "Show all types"
+            ) {
+                viewModel.selectTypeFilter(.all)
             }
         } else if viewModel.isFavoritesOnly {
             ClipboardEmptyState(
@@ -572,6 +657,14 @@ public struct ClipboardListView: View {
                 }
             }
             HStack(spacing: 8) {
+                Button {
+                    viewModel.addSelectedToPasteQueue()
+                } label: {
+                    Label("Add to Queue", systemImage: "rectangle.stack.badge.plus")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.regular)
+
                 if viewModel.selectedClipIds.count > 1 {
                     Picker("Join with", selection: $viewModel.batchSeparator) {
                         ForEach(BatchPasteSeparator.allCases, id: \.self) { separator in
@@ -684,6 +777,52 @@ public struct ClipboardListView: View {
             } label: {
                 Label("Save as Snippet...", systemImage: "curlybraces")
             }
+
+            Button {
+                viewModel.addToPasteQueue(clip: clip)
+            } label: {
+                Label("Add to Paste Queue", systemImage: "rectangle.stack.badge.plus")
+            }
+
+            if let color = ColorParser.parse(clip.plainText ?? "") {
+                Menu("Copy Color As") {
+                    Button("HEX (\(color.hexString))") {
+                        viewModel.copyPlainText(color.hexString)
+                    }
+                    Button("RGB (\(color.rgbString))") {
+                        viewModel.copyPlainText(color.rgbString)
+                    }
+                    Button("HSL (\(color.hslString))") {
+                        viewModel.copyPlainText(color.hslString)
+                    }
+                }
+            }
+
+            Menu("Paste Transformed") {
+                ForEach(TextTransformation.allCases.filter { $0 != .none }, id: \.self) { transformation in
+                    Button(transformation.displayName) {
+                        viewModel.paste(clip: clip, transformation: transformation)
+                    }
+                }
+            }
+
+            Menu("Copy Transformed") {
+                ForEach(TextTransformation.allCases.filter { $0 != .none }, id: \.self) { transformation in
+                    Button(transformation.displayName) {
+                        viewModel.copyClipToPasteboard(clip: clip, transformation: transformation)
+                    }
+                }
+            }
+        }
+
+        if clip.primaryType == .image,
+           let text = clip.plainText?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !text.isEmpty {
+            Button {
+                viewModel.copyPlainText(text)
+            } label: {
+                Label("Copy Text from Image", systemImage: "text.viewfinder")
+            }
         }
 
         Menu("Paste as File") {
@@ -762,6 +901,38 @@ struct VisualEffectBackground: NSViewRepresentable {
     }
 }
 
+struct TypeFilterPill: View {
+    let filter: ClipTypeFilter
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: filter.icon)
+                    .font(.system(size: 9))
+                Text(filter.displayName)
+                    .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
+            }
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .foregroundStyle(isSelected ? ConCopyTheme.Accents.primary : Color.secondary)
+            .background(
+                isSelected ? ConCopyTheme.Rows.selectedBackground : ConCopyTheme.Surfaces.pillBackground,
+                in: Capsule()
+            )
+            .overlay(
+                Capsule()
+                    .stroke(isSelected ? ConCopyTheme.Rows.selectedBorder : ConCopyTheme.Surfaces.pillBorder, lineWidth: 0.5)
+            )
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(filter.displayName)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
 struct ListTabButton: View {
     let title: String
     let icon: String
@@ -821,11 +992,14 @@ struct ClipRowView: View, Equatable {
     var thumbnailImage: NSImage? = nil
     var fileIconImage: NSImage? = nil
     var appIconImage: NSImage? = nil
+    var linkMetadata: WebLinkMetadata? = nil
+    var shouldMaskSensitive: Bool = false
     let onToggleCheck: () -> Void
     var onToggleFavorite: (() -> Void)? = nil
     var onRowClick: (() -> Void)? = nil
 
     @State private var isHovered = false
+    @State private var isRevealedLocally: Bool = false
     @Environment(\.colorSchemeContrast) private var contrast
 
     static func == (lhs: ClipRowView, rhs: ClipRowView) -> Bool {
@@ -833,11 +1007,22 @@ struct ClipRowView: View, Equatable {
             && lhs.isChecked == rhs.isChecked && lhs.isPasting == rhs.isPasting && lhs.isCopied == rhs.isCopied
             && lhs.actionTitle == rhs.actionTitle && lhs.shortcutLabel == rhs.shortcutLabel
             && lhs.quickPasteModifier == rhs.quickPasteModifier && lhs.thumbnailImage === rhs.thumbnailImage
-            && lhs.fileIconImage === rhs.fileIconImage
+            && lhs.fileIconImage === rhs.fileIconImage && lhs.appIconImage === rhs.appIconImage
+            && lhs.linkMetadata == rhs.linkMetadata && lhs.shouldMaskSensitive == rhs.shouldMaskSensitive
     }
 
     private var accessibilityTitle: String {
         return String((clip.plainText ?? clip.primaryType.rawValue).prefix(160))
+    }
+
+    private var displayPreviewText: String {
+        guard let text = clip.plainText?.trimmingCharacters(in: .whitespacesAndNewlines) else {
+            return "No preview available"
+        }
+        if shouldMaskSensitive && !isRevealedLocally {
+            return SensitiveDataDetector.maskSensitiveText(text)
+        }
+        return text
     }
 
     var body: some View {
@@ -903,6 +1088,15 @@ struct ClipRowView: View, Equatable {
                             .scaledToFit()
                             .frame(width: 24, height: 24)
                             .shadow(color: Color.black.opacity(0.15), radius: 1, x: 0, y: 0.5)
+                    } else if let color = ColorParser.parse(clip.plainText ?? "") {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(color.swiftUIColor)
+                                .frame(width: 24, height: 24)
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .stroke(Color.primary.opacity(0.2), lineWidth: 1)
+                                .frame(width: 24, height: 24)
+                        }
                     } else {
                         ZStack {
                             RoundedRectangle(cornerRadius: 6, style: .continuous)
@@ -914,14 +1108,33 @@ struct ClipRowView: View, Equatable {
                         }
                     }
 
-                    Text(
-                        clip.plainText?.trimmingCharacters(in: .whitespacesAndNewlines)
-                            ?? "No preview available"
-                    )
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.primary)
-                    .lineLimit(2)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    if let meta = linkMetadata, let title = meta.title, !title.isEmpty {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(title)
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(.primary)
+                                .lineLimit(1)
+                            Text(displayPreviewText)
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        HStack(spacing: 6) {
+                            if shouldMaskSensitive && !isRevealedLocally {
+                                Image(systemName: "lock.shield.fill")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(ConCopyTheme.Accents.primary)
+                                    .help("Sensitive content masked (Privacy Shield). Hover/click or QuickLook to reveal.")
+                            }
+                            Text(displayPreviewText)
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(.primary)
+                                .lineLimit(2)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                     if isPasting {
                         ProgressView().controlSize(.mini)
                     } else if isCopied {
@@ -1473,7 +1686,7 @@ struct SnippetEditorSheetView: View {
             }
 
             VStack(alignment: .leading, spacing: 4) {
-                Text("Text Content")
+                Text("Text Content (supports {date}, {time}, {clipboard}, {uuid}, or {name})")
                     .font(.caption)
                     .foregroundColor(.secondary)
                 TextEditor(text: $content)
@@ -1500,6 +1713,66 @@ struct SnippetEditorSheetView: View {
                 shortcut = s.shortcut
                 content = s.content
                 title = s.title ?? ""
+            }
+        }
+    }
+}
+
+// MARK: - Snippet Variables Prompt Sheet
+struct SnippetVariablesPromptSheetView: View {
+    let snippet: SnippetRecord
+    let variableNames: [String]
+    let onFill: ([String: String]) -> Void
+    let onCancel: () -> Void
+
+    @State private var values: [String: String] = [:]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Label("Fill Snippet Variables", systemImage: "text.cursor")
+                    .font(.headline)
+                Spacer()
+            }
+
+            Text("Enter values for variables defined in '\(snippet.title ?? snippet.shortcut)':")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            ScrollView {
+                VStack(spacing: 10) {
+                    ForEach(variableNames, id: \.self) { variable in
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("{\(variable)}")
+                                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                                .foregroundStyle(ConCopyTheme.Accents.primary)
+                            TextField("Value for \(variable)...", text: Binding(
+                                get: { values[variable] ?? "" },
+                                set: { values[variable] = $0 }
+                            ))
+                            .textFieldStyle(.roundedBorder)
+                        }
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+            .frame(maxHeight: 200)
+
+            HStack {
+                Button("Cancel", action: onCancel)
+                Spacer()
+                Button("Paste Snippet") {
+                    onFill(values)
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(18)
+        .frame(minWidth: 320, idealWidth: 360)
+        .onAppear {
+            for v in variableNames {
+                values[v] = ""
             }
         }
     }

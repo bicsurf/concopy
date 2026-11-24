@@ -109,9 +109,9 @@ public final class StatusItemController: NSObject {
             quitItem.target = self
             menu.addItem(quitItem)
 
-            statusItem?.menu = menu
-            statusItem?.button?.performClick(nil)
-            statusItem?.menu = nil
+            if let button = statusItem?.button {
+                menu.popUp(positioning: nil, at: NSPoint(x: 0, y: 0), in: button)
+            }
         } else {
             onToggle()
         }

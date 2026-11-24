@@ -189,6 +189,22 @@ final class StorageTests: XCTestCase {
         let bundleFilter = try databaseManager.searchClips(sourceAppBundleId: "com.apple.Safari")
         XCTAssertEqual(bundleFilter.count, 1)
         XCTAssertEqual(bundleFilter.first?.sourceAppBundleId, "com.apple.Safari")
+
+        // Test primaryTypes filter
+        let imageClip = try databaseManager.ingestCapturedClip(
+            CapturedClip(
+                plainText: "Image clip",
+                primaryType: .image,
+                representations: ["public.png": Data([0x89, 0x50, 0x4E, 0x47])]
+            )
+        )
+        let textClips = try databaseManager.searchClips(primaryTypes: [.text, .richText, .html])
+        XCTAssertTrue(textClips.contains(where: { $0.id == clipA.id }))
+        XCTAssertFalse(textClips.contains(where: { $0.id == imageClip.id }))
+
+        let imageClips = try databaseManager.searchClips(primaryTypes: [.image])
+        XCTAssertEqual(imageClips.count, 1)
+        XCTAssertEqual(imageClips.first?.id, imageClip.id)
     }
 
     func testPrimaryTypeDetection() {
