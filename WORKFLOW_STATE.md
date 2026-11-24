@@ -1,6 +1,9 @@
 # Stato di lavoro — ConCopy
 
-Nota 24 novembre 2026 — nuova feature "mostra/nascondi icona barra dei menu" (`showMenuBarIcon`, default attivo), su branch `feat/hide-menu-bar-icon` (commit `0cbb13c`). L'app è LSUIElement-only: a icona nascosta l'unico ingresso resta la scorciatoia globale del pannello. Verifiche: `swift build` ok, `swift build -c release` ok zero warning, `swift test` 213 test / 1 saltato / 0 fallimenti.
+Nota 24 novembre 2026 — completato Sprint 1 su branch `feat/sprint1-filters-and-dev-transformations` (senza push):
+1. **Quick Filters per Tipo di Contenuto**: introdotto `ClipTypeFilter` (All, Text, Images, Links, Files), supporto a filtri per tipi multipli `primaryTypes` in `DatabaseManager` (compatibile sia con query vuote che con ricerca letterale ed FTS5), pill selector compatto `TypeFilterPill` in `ClipboardListView` sotto la barra scope e gestione dello stato in `ClipboardViewModel`.
+2. **Trasformazioni Testo per Dev**: esteso `TextTransformer` con `jsonFormat`, `jsonMinify`, `urlEncode`, `urlDecode`, `base64Encode`, `base64Decode`, `snakeCase`, `camelCase`, `kebabCase`. Aggiunti sottomenu "Paste Transformed" e "Copy Transformed" nel menu contestuale delle righe.
+3. **Verifiche e Test**: aggiunti test unitari per tutte le trasformazioni in `Phase4Tests`, test di filtro per tipi in `StorageTests` e test di selezione filtro in `ClipboardViewModelTests`. Verifiche: `swift build` ok, `swift build -c release` ok zero warning, `swift test` 214 test / 1 saltato / 0 fallimenti.
 
 Aggiornato il **24 novembre 2026**. Questo file riassume lo stato verificato del working tree per chi riprende lo sviluppo. I vincoli architetturali restano definiti in [AGENTS.md](AGENTS.md); la cronologia delle versioni è in [CHANGELOG.md](CHANGELOG.md).
 

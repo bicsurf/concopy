@@ -46,6 +46,7 @@ public final class ClipboardViewModel: ObservableObject {
     }
     @Published public var isPlainTextModeEnabled: Bool = false
     @Published public var activeTransformation: TextTransformation = .none
+    @Published public var selectedTypeFilter: ClipTypeFilter = .all
     @Published public var currentSortMode: ClipSortMode = .updatedAtDesc
     @Published public var selectedIndex: Int = 0
     @Published public var selectedClipIds: Set<UUID> = []
@@ -236,6 +237,7 @@ public final class ClipboardViewModel: ObservableObject {
         let query = searchQuery
         let listID = selectedListId
         let favorites = isFavoritesOnly
+        let typeFilter = selectedTypeFilter
         let mode = currentSortMode
         let limit = visibleLimit
         isLoadingClips = true
@@ -244,7 +246,13 @@ public final class ClipboardViewModel: ObservableObject {
                 if !query.isEmpty { try await Task.sleep(nanoseconds: 40_000_000) }
                 let result = try await Task.detached(priority: .userInitiated) {
                     try db.searchClips(
-                        query: query, listId: listID, favoritesOnly: favorites, sortMode: mode, limit: limit + 1)
+                        query: query,
+                        listId: listID,
+                        primaryTypes: typeFilter.matchingPrimaryTypes,
+                        favoritesOnly: favorites,
+                        sortMode: mode,
+                        limit: limit + 1
+                    )
                 }.value
                 guard !Task.isCancelled, let self, self.loadVersion == version else { return }
                 let fetched = Array(result.prefix(limit))
@@ -318,6 +326,15 @@ public final class ClipboardViewModel: ObservableObject {
         selectedListId = nil
         isFavoritesOnly = false
         isSnippetsOnly = false
+        selectedTypeFilter = .all
+        loadClips()
+    }
+
+    public func selectTypeFilter(_ filter: ClipTypeFilter) {
+        guard selectedTypeFilter != filter else { return }
+        selectedTypeFilter = filter
+        visibleLimit = 100
+        clearSelection()
         loadClips()
     }
 
@@ -658,15 +675,15 @@ public final class ClipboardViewModel: ObservableObject {
         }
     }
 
-    public func paste(clip: ClipRecord, optionHeld: Bool = false) {
+    public func paste(clip: ClipRecord, optionHeld: Bool = false, transformation: TextTransformation? = nil) {
         guard canActOnClips else { return }
         guard pastingClipId == nil else { return }
         if let index = clips.firstIndex(where: { $0.id == clip.id }) {
             selectedIndex = index
         }
         self.pastingClipId = clip.id
-        let forcePlainText = optionHeld || isPlainTextModeEnabled
-        let transformation = activeTransformation
+        let effectiveTransformation = transformation ?? activeTransformation
+        let forcePlainText = optionHeld || isPlainTextModeEnabled || effectiveTransformation != .none
         let isTrusted = pasteInjector.eventPoster.isProcessTrusted()
         let target = pasteTargetProcessIdentifier?()
 
@@ -679,7 +696,7 @@ public final class ClipboardViewModel: ObservableObject {
                         databaseManager: self.databaseManager,
                         pasteboard: self.pasteboard,
                         forcePlainText: forcePlainText,
-                        transformation: transformation
+                        transformation: effectiveTransformation
                     )
                     self.onClosePanel?()
                     self.pastingClipId = nil
@@ -703,7 +720,7 @@ public final class ClipboardViewModel: ObservableObject {
                     databaseManager: self.databaseManager,
                     pasteboard: self.pasteboard,
                     forcePlainText: forcePlainText,
-                    transformation: transformation,
+                    transformation: effectiveTransformation,
                     targetProcessIdentifier: target,
                     beforeEventHook: { [weak self] in
                         if isTrusted {
@@ -843,8 +860,10 @@ public final class ClipboardViewModel: ObservableObject {
         }
     }
 
-    public func copyClipToPasteboard(clip: ClipRecord) {
+    public func copyClipToPasteboard(clip: ClipRecord, transformation: TextTransformation? = nil) {
         guard canActOnClips else { return }
+        let effectiveTransformation = transformation ?? activeTransformation
+        let forcePlainText = isPlainTextModeEnabled || effectiveTransformation != .none
         performUIAction { [self] in
 
             do {
@@ -852,8 +871,8 @@ public final class ClipboardViewModel: ObservableObject {
                     clip: clip,
                     databaseManager: databaseManager,
                     pasteboard: pasteboard,
-                    forcePlainText: isPlainTextModeEnabled,
-                    transformation: activeTransformation
+                    forcePlainText: forcePlainText,
+                    transformation: effectiveTransformation
                 )
                 showToast("Copied to clipboard!")
                 onClosePanel?()

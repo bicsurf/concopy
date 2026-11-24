@@ -335,12 +335,21 @@ public final class DatabaseManager: Sendable {
         listId: UUID? = nil,
         sourceAppBundleId: String? = nil,
         primaryType: ClipPrimaryType? = nil,
+        primaryTypes: [ClipPrimaryType]? = nil,
         favoritesOnly: Bool = false,
         sortMode: ClipSortMode = .updatedAtDesc,
         limit: Int = 100
     ) throws -> [ClipRecord] {
         try autoreleasepool {
             let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+            let effectivePrimaryTypes: [ClipPrimaryType]? = {
+                if let primaryTypes, !primaryTypes.isEmpty {
+                    return primaryTypes
+                } else if let primaryType {
+                    return [primaryType]
+                }
+                return nil
+            }()
 
             return try dbWriter.read { db in
                 var effectiveSortMode = sortMode
@@ -371,8 +380,8 @@ public final class DatabaseManager: Sendable {
                     if let sourceAppBundleId {
                         request = request.filter(Column("sourceAppBundleId") == sourceAppBundleId)
                     }
-                    if let primaryType {
-                        request = request.filter(Column("primaryType") == primaryType.rawValue)
+                    if let effectivePrimaryTypes {
+                        request = request.filter(effectivePrimaryTypes.map(\.rawValue).contains(Column("primaryType")))
                     }
                     if favoritesOnly {
                         request = request.filter(Column("isFavorite") == true)
@@ -414,9 +423,10 @@ public final class DatabaseManager: Sendable {
                         fallbackSql += " AND sourceAppBundleId = ?"
                         fallbackArgs.append(sourceAppBundleId)
                     }
-                    if let primaryType {
-                        fallbackSql += " AND primaryType = ?"
-                        fallbackArgs.append(primaryType.rawValue)
+                    if let effectivePrimaryTypes {
+                        let placeholders = Array(repeating: "?", count: effectivePrimaryTypes.count).joined(separator: ", ")
+                        fallbackSql += " AND primaryType IN (\(placeholders))"
+                        fallbackArgs.append(contentsOf: effectivePrimaryTypes.map(\.rawValue))
                     }
                     if favoritesOnly {
                         fallbackSql += " AND isFavorite = 1"
@@ -461,9 +471,10 @@ public final class DatabaseManager: Sendable {
                     sql += " AND clips.sourceAppBundleId = ?"
                     arguments.append(sourceAppBundleId)
                 }
-                if let primaryType {
-                    sql += " AND clips.primaryType = ?"
-                    arguments.append(primaryType.rawValue)
+                if let effectivePrimaryTypes {
+                    let placeholders = Array(repeating: "?", count: effectivePrimaryTypes.count).joined(separator: ", ")
+                    sql += " AND clips.primaryType IN (\(placeholders))"
+                    arguments.append(contentsOf: effectivePrimaryTypes.map(\.rawValue))
                 }
                 if favoritesOnly {
                     sql += " AND clips.isFavorite = 1"

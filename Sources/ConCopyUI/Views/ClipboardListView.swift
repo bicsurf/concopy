@@ -472,6 +472,19 @@ public struct ClipboardListView: View {
                     }
                 }
             }
+            if !viewModel.isSnippetsOnly {
+                HStack(spacing: 5) {
+                    ForEach(ClipTypeFilter.allCases) { filter in
+                        TypeFilterPill(
+                            filter: filter,
+                            isSelected: viewModel.selectedTypeFilter == filter
+                        ) {
+                            viewModel.selectTypeFilter(filter)
+                        }
+                    }
+                    Spacer()
+                }
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
@@ -487,6 +500,14 @@ public struct ClipboardListView: View {
             ) {
                 viewModel.searchQuery = ""
                 isFieldFocused = true
+            }
+        } else if viewModel.selectedTypeFilter != .all {
+            ClipboardEmptyState(
+                title: "No \(viewModel.selectedTypeFilter.displayName.lowercased()) items",
+                message: "No clips matching '\(viewModel.selectedTypeFilter.displayName)' found in \(scopeName).",
+                systemImage: viewModel.selectedTypeFilter.icon, actionTitle: "Show all types"
+            ) {
+                viewModel.selectTypeFilter(.all)
             }
         } else if viewModel.isFavoritesOnly {
             ClipboardEmptyState(
@@ -684,6 +705,22 @@ public struct ClipboardListView: View {
             } label: {
                 Label("Save as Snippet...", systemImage: "curlybraces")
             }
+
+            Menu("Paste Transformed") {
+                ForEach(TextTransformation.allCases.filter { $0 != .none }, id: \.self) { transformation in
+                    Button(transformation.displayName) {
+                        viewModel.paste(clip: clip, transformation: transformation)
+                    }
+                }
+            }
+
+            Menu("Copy Transformed") {
+                ForEach(TextTransformation.allCases.filter { $0 != .none }, id: \.self) { transformation in
+                    Button(transformation.displayName) {
+                        viewModel.copyClipToPasteboard(clip: clip, transformation: transformation)
+                    }
+                }
+            }
         }
 
         Menu("Paste as File") {
@@ -741,6 +778,38 @@ struct VisualEffectBackground: NSViewRepresentable {
         if nsView.material != material { nsView.material = material }
         if nsView.blendingMode != blendingMode { nsView.blendingMode = blendingMode }
         if nsView.state != state { nsView.state = state }
+    }
+}
+
+struct TypeFilterPill: View {
+    let filter: ClipTypeFilter
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: filter.icon)
+                    .font(.system(size: 9))
+                Text(filter.displayName)
+                    .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
+            }
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .foregroundStyle(isSelected ? ConCopyTheme.Accents.primary : Color.secondary)
+            .background(
+                isSelected ? ConCopyTheme.Rows.selectedBackground : ConCopyTheme.Surfaces.pillBackground,
+                in: Capsule()
+            )
+            .overlay(
+                Capsule()
+                    .stroke(isSelected ? ConCopyTheme.Rows.selectedBorder : ConCopyTheme.Surfaces.pillBorder, lineWidth: 0.5)
+            )
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(filter.displayName)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
 

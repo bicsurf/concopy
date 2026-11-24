@@ -37,6 +37,41 @@ final class Phase4Tests: XCTestCase {
             TextTransformer.apply(.singleLine, to: "line 1\nline 2\nline 3"),
             "line 1 line 2 line 3"
         )
+
+        // JSON format
+        let rawJSON = "{\"b\":2,\"a\":1}"
+        let formattedJSON = TextTransformer.apply(.jsonFormat, to: rawJSON)
+        XCTAssertTrue(formattedJSON.contains("\n"))
+        XCTAssertTrue(formattedJSON.contains("\"a\" : 1"))
+        XCTAssertEqual(TextTransformer.apply(.jsonFormat, to: "invalid json"), "invalid json")
+
+        // JSON minify
+        let prettyJSON = "{\n  \"b\" : 2,\n  \"a\" : 1\n}"
+        let minifiedJSON = TextTransformer.apply(.jsonMinify, to: prettyJSON)
+        XCTAssertFalse(minifiedJSON.contains("\n"))
+        XCTAssertEqual(minifiedJSON, "{\"a\":1,\"b\":2}")
+        XCTAssertEqual(TextTransformer.apply(.jsonMinify, to: "invalid json"), "invalid json")
+
+        // URL encode / decode
+        let rawURL = "hello world"
+        let encodedURL = TextTransformer.apply(.urlEncode, to: rawURL)
+        XCTAssertEqual(encodedURL, "hello%20world")
+        XCTAssertEqual(TextTransformer.apply(.urlDecode, to: encodedURL), rawURL)
+
+        // Base64 encode / decode
+        let plainText = "Hello ConCopy!"
+        let base64 = TextTransformer.apply(.base64Encode, to: plainText)
+        XCTAssertEqual(base64, "SGVsbG8gQ29uQ29weSE=")
+        XCTAssertEqual(TextTransformer.apply(.base64Decode, to: base64), plainText)
+        XCTAssertEqual(TextTransformer.apply(.base64Decode, to: "invalid base64!@#"), "invalid base64!@#")
+
+        // Case conversions
+        XCTAssertEqual(TextTransformer.apply(.snakeCase, to: "helloWorld"), "hello_world")
+        XCTAssertEqual(TextTransformer.apply(.snakeCase, to: "Hello World-Test"), "hello_world_test")
+        XCTAssertEqual(TextTransformer.apply(.camelCase, to: "hello_world_test"), "helloWorldTest")
+        XCTAssertEqual(TextTransformer.apply(.camelCase, to: "Hello-World"), "helloWorld")
+        XCTAssertEqual(TextTransformer.apply(.kebabCase, to: "helloWorldTest"), "hello-world-test")
+        XCTAssertEqual(TextTransformer.apply(.kebabCase, to: "hello_world"), "hello-world")
     }
 
     func testFileExportAndPasteAsFile() async throws {

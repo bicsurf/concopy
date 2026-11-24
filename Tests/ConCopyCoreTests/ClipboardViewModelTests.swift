@@ -280,6 +280,49 @@ final class ClipboardViewModelTests: XCTestCase {
         XCTAssertFalse(vm.selectedClipIds.contains(clip1.id))
     }
 
+    func testTypeFilterFilteringAndSelection() async throws {
+        let settings = AppSettingsManager(userDefaults: UserDefaults(suiteName: "Test_\(UUID().uuidString)")!)
+        let vm = ClipboardViewModel(databaseManager: databaseManager, pasteInjector: PasteInjector(), appSettings: settings)
+
+        let textClip = try databaseManager.ingestCapturedClip(CapturedClip(plainText: "Hello text", primaryType: .text))
+        let urlClip = try databaseManager.ingestCapturedClip(CapturedClip(plainText: "https://apple.com", primaryType: .url))
+        let imageClip = try databaseManager.ingestCapturedClip(
+            CapturedClip(
+                plainText: "Image",
+                primaryType: .image,
+                representations: ["public.png": Data([0x89, 0x50, 0x4E, 0x47])]
+            )
+        )
+
+        vm.loadClips()
+        await vm.waitForPendingLoads()
+        XCTAssertEqual(vm.clips.count, 3)
+
+        // Filter: Images
+        vm.selectTypeFilter(.images)
+        await vm.waitForPendingLoads()
+        XCTAssertEqual(vm.clips.count, 1)
+        XCTAssertEqual(vm.clips.first?.id, imageClip.id)
+
+        // Filter: Links
+        vm.selectTypeFilter(.links)
+        await vm.waitForPendingLoads()
+        XCTAssertEqual(vm.clips.count, 1)
+        XCTAssertEqual(vm.clips.first?.id, urlClip.id)
+
+        // Filter: Text
+        vm.selectTypeFilter(.text)
+        await vm.waitForPendingLoads()
+        XCTAssertEqual(vm.clips.count, 1)
+        XCTAssertEqual(vm.clips.first?.id, textClip.id)
+
+        // Reset to all
+        vm.selectAllClips()
+        await vm.waitForPendingLoads()
+        XCTAssertEqual(vm.selectedTypeFilter, .all)
+        XCTAssertEqual(vm.clips.count, 3)
+    }
+
     private func makeCopyOnlyViewModel() throws -> ClipboardViewModel {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: "Test_\(UUID().uuidString)"))
         let settings = AppSettingsManager(userDefaults: defaults)
