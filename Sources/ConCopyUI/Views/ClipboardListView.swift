@@ -290,6 +290,20 @@ public struct ClipboardListView: View {
                 }
             )
         }
+        // Snippet Variables Fill Sheet
+        .sheet(item: $viewModel.promptSnippet) { snippet in
+            SnippetVariablesPromptSheetView(
+                snippet: snippet,
+                variableNames: viewModel.promptSnippetVariables,
+                onFill: { values in
+                    viewModel.pasteSnippetWithVariables(snippet, values: values)
+                },
+                onCancel: {
+                    viewModel.promptSnippet = nil
+                    viewModel.promptSnippetVariables = []
+                }
+            )
+        }
     }
 
     private var scopeName: String {
@@ -1619,7 +1633,7 @@ struct SnippetEditorSheetView: View {
             }
 
             VStack(alignment: .leading, spacing: 4) {
-                Text("Text Content")
+                Text("Text Content (supports {date}, {time}, {clipboard}, {uuid}, or {name})")
                     .font(.caption)
                     .foregroundColor(.secondary)
                 TextEditor(text: $content)
@@ -1646,6 +1660,66 @@ struct SnippetEditorSheetView: View {
                 shortcut = s.shortcut
                 content = s.content
                 title = s.title ?? ""
+            }
+        }
+    }
+}
+
+// MARK: - Snippet Variables Prompt Sheet
+struct SnippetVariablesPromptSheetView: View {
+    let snippet: SnippetRecord
+    let variableNames: [String]
+    let onFill: ([String: String]) -> Void
+    let onCancel: () -> Void
+
+    @State private var values: [String: String] = [:]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Label("Fill Snippet Variables", systemImage: "text.cursor")
+                    .font(.headline)
+                Spacer()
+            }
+
+            Text("Enter values for variables defined in '\(snippet.title ?? snippet.shortcut)':")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            ScrollView {
+                VStack(spacing: 10) {
+                    ForEach(variableNames, id: \.self) { variable in
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("{\(variable)}")
+                                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                                .foregroundStyle(ConCopyTheme.Accents.primary)
+                            TextField("Value for \(variable)...", text: Binding(
+                                get: { values[variable] ?? "" },
+                                set: { values[variable] = $0 }
+                            ))
+                            .textFieldStyle(.roundedBorder)
+                        }
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+            .frame(maxHeight: 200)
+
+            HStack {
+                Button("Cancel", action: onCancel)
+                Spacer()
+                Button("Paste Snippet") {
+                    onFill(values)
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(18)
+        .frame(minWidth: 320, idealWidth: 360)
+        .onAppear {
+            for v in variableNames {
+                values[v] = ""
             }
         }
     }

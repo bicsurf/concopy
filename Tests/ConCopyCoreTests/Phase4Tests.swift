@@ -286,6 +286,25 @@ final class Phase4Tests: XCTestCase {
         XCTAssertTrue(searchResults.first?.plainText?.contains("Secret Text") == true)
     }
 
+    func testSnippetVariableResolver() {
+        let template = "Hello {name}, your code for {service} is {uuid} on {date} at {time} with clipboard: '{clipboard}'."
+        let customVars = SnippetVariableResolver.extractCustomVariables(from: template)
+        XCTAssertEqual(customVars, ["name", "service"])
+
+        let resolved = SnippetVariableResolver.resolve(
+            template: template,
+            clipboardContent: "ACTIVE_TOKEN",
+            customVariables: ["name": "Alice", "service": "GitHub"]
+        )
+
+        XCTAssertTrue(resolved.contains("Hello Alice"))
+        XCTAssertTrue(resolved.contains("your code for GitHub"))
+        XCTAssertTrue(resolved.contains("clipboard: 'ACTIVE_TOKEN'"))
+        XCTAssertFalse(resolved.contains("{uuid}"))
+        XCTAssertFalse(resolved.contains("{date}"))
+        XCTAssertFalse(resolved.contains("{time}"))
+    }
+
     private func createSampleImageData() throws -> Data {
         let rep = try XCTUnwrap(
             NSBitmapImageRep(

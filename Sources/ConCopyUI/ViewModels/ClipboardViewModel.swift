@@ -95,6 +95,10 @@ public final class ClipboardViewModel: ObservableObject {
     @Published public var isSnippetEditorPresented: Bool = false
     @Published public var editingSnippet: SnippetRecord? = nil
 
+    // Variable prompting sheet for dynamic snippets
+    @Published public var promptSnippet: SnippetRecord? = nil
+    @Published public var promptSnippetVariables: [String] = []
+
     // MARK: - Paste Stack / Queue State
     @Published public var pasteQueue: [ClipRecord] = []
     @Published public var pasteQueueOrder: PasteQueueOrder = .fifo
@@ -1224,11 +1228,37 @@ public final class ClipboardViewModel: ObservableObject {
     }
 
     public func pasteSnippet(_ snippet: SnippetRecord) {
+        let customVars = SnippetVariableResolver.extractCustomVariables(from: snippet.content)
+        if !customVars.isEmpty {
+            promptSnippetVariables = customVars
+            promptSnippet = snippet
+            return
+        }
+
+        let resolved = SnippetVariableResolver.resolve(
+            template: snippet.content,
+            clipboardContent: pasteboard.string(forType: .string)
+        )
+        pasteResolvedSnippetText(resolved)
+    }
+
+    public func pasteSnippetWithVariables(_ snippet: SnippetRecord, values: [String: String]) {
+        let resolved = SnippetVariableResolver.resolve(
+            template: snippet.content,
+            clipboardContent: pasteboard.string(forType: .string),
+            customVariables: values
+        )
+        promptSnippet = nil
+        promptSnippetVariables = []
+        pasteResolvedSnippetText(resolved)
+    }
+
+    private func pasteResolvedSnippetText(_ text: String) {
         let target = pasteTargetProcessIdentifier?()
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                try await pasteInjector.pasteText(snippet.content, pasteboard: pasteboard,
+                try await pasteInjector.pasteText(text, pasteboard: pasteboard,
                     targetProcessIdentifier: target) { [weak self] willSend in
                     guard let self else { return }
                     if willSend { onClosePanel?() }

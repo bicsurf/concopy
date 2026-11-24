@@ -1,11 +1,14 @@
 # Stato di lavoro — ConCopy
 
-Nota 24 novembre 2026 — completato Sprint 3 su branch `feat/sprint3-paste-stack-queue` (senza push):
-1. **Paste Stack / Queue sequenziale**: introdotto modello `PasteQueueTypes` (`PasteQueueOrder` .fifo / .lifo, `PasteQueueItem`) in `ConCopyCore`.
-2. **Coordinamento e Azioni**: aggiunti `pasteQueue`, `addToPasteQueue(clip:)`, `addSelectedToPasteQueue()`, `pasteNextFromQueue()`, `clearPasteQueue()` in `ClipboardViewModel`.
-3. **Scorciatoia Globale**: registrata scorciatoia globale `pasteNextFromQueue` (default `Control + Command + V`) con KeyboardShortcuts per incollare l'elemento successivo senza riaprire il pannello HUD.
-4. **Interfaccia Utente**: badge contatore dinamico con pill e menu rapido nell'header HUD (`Queue/Stack mode toggle`, `Paste Next`, `Clear`), pulsante batch "Add to Queue" nella barra multi-selezione e voce "Add to Paste Queue" nel menu contestuale riga.
-5. **Verifiche e Test**: aggiunto test unitario `testPasteQueueFIFOAndStackLIFO` in `ClipboardViewModelTests`. Verifiche: `swift build` ok, `swift build -c release` ok zero warning, `swift test` 217 test / 1 saltato / 0 fallimenti.
+Nota 24 novembre 2026 — completato Sprint 4 su branch `feat/sprint4-dynamic-snippets` (senza push):
+1. **Risolutore di Variabili Snippet**: creato `SnippetVariableResolver` in `ConCopyCore` per estrazione e sostituzione sicura di:
+   - Placeholder automatici: `{date}` (YYYY-MM-DD), `{time}` (HH:mm:ss), `{datetime}`, `{uuid}` (UUID v4 minuscolo), `{clipboard}` (contenuto attuale degli appunti).
+   - Variabili dinamiche personalizzate: sintassi `{nome_variabile}`.
+2. **UI & Foglio Modale di Compilazione**:
+   - `ClipboardViewModel.pasteSnippet` controlla la presenza di variabili custom: se presenti apre il foglio `SnippetVariablesPromptSheetView` per la digitazione dei valori; altrimenti risolve i placeholder automatici e incolla istantaneamente.
+   - Creata `SnippetVariablesPromptSheetView` con autofocus, design pulito dei campi e pulsante "Paste Snippet".
+   - Aggiornata la guida di testo in `SnippetEditorSheetView` per spiegare l'uso dei placeholder `{date}`, `{time}`, `{clipboard}`, `{uuid}`, `{nome}`.
+3. **Verifiche e Test**: aggiunto test unitario `testSnippetVariableResolver` in `Phase4Tests`. Verifiche: `swift build` ok, `swift build -c release` ok zero warning, `swift test` 218 test / 1 saltato / 0 fallimenti.
 
 Aggiornato il **24 novembre 2026**. Questo file riassume lo stato verificato del working tree per chi riprende lo sviluppo. I vincoli architetturali restano definiti in [AGENTS.md](AGENTS.md); la cronologia delle versioni è in [CHANGELOG.md](CHANGELOG.md).
 
