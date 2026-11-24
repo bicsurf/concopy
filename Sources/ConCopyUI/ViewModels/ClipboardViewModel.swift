@@ -46,6 +46,7 @@ public final class ClipboardViewModel: ObservableObject {
     }
     @Published public var isPlainTextModeEnabled: Bool = false
     @Published public var activeTransformation: TextTransformation = .none
+    @Published public var selectedTypeFilter: ClipTypeFilter = .all
     @Published public var currentSortMode: ClipSortMode = .updatedAtDesc
     @Published public var selectedIndex: Int = 0
     @Published public var selectedClipIds: Set<UUID> = []
@@ -93,6 +94,15 @@ public final class ClipboardViewModel: ObservableObject {
     @Published public var isSnippetsOnly: Bool = false
     @Published public var isSnippetEditorPresented: Bool = false
     @Published public var editingSnippet: SnippetRecord? = nil
+
+    // Variable prompting sheet for dynamic snippets
+    @Published public var promptSnippet: SnippetRecord? = nil
+    @Published public var promptSnippetVariables: [String] = []
+
+    // MARK: - Paste Stack / Queue State
+    @Published public var pasteQueue: [ClipRecord] = []
+    @Published public var pasteQueueOrder: PasteQueueOrder = .fifo
+    @Published public var isPasteQueueActive: Bool = false
 
     private var thumbnailCache = NSCache<NSUUID, NSImage>()
     private var webMetadataCache: [UUID: WebLinkMetadata] = [:]
@@ -238,6 +248,7 @@ public final class ClipboardViewModel: ObservableObject {
         let query = searchQuery
         let listID = selectedListId
         let favorites = isFavoritesOnly
+        let typeFilter = selectedTypeFilter
         let mode = currentSortMode
         let limit = visibleLimit
         isLoadingClips = true
@@ -246,7 +257,13 @@ public final class ClipboardViewModel: ObservableObject {
                 if !query.isEmpty { try await Task.sleep(nanoseconds: 40_000_000) }
                 let result = try await Task.detached(priority: .userInitiated) {
                     try db.searchClips(
-                        query: query, listId: listID, favoritesOnly: favorites, sortMode: mode, limit: limit + 1)
+                        query: query,
+                        listId: listID,
+                        primaryTypes: typeFilter.matchingPrimaryTypes,
+                        favoritesOnly: favorites,
+                        sortMode: mode,
+                        limit: limit + 1
+                    )
                 }.value
                 guard !Task.isCancelled, let self, self.loadVersion == version else { return }
                 let fetched = Array(result.prefix(limit))
@@ -320,6 +337,15 @@ public final class ClipboardViewModel: ObservableObject {
         selectedListId = nil
         isFavoritesOnly = false
         isSnippetsOnly = false
+        selectedTypeFilter = .all
+        loadClips()
+    }
+
+    public func selectTypeFilter(_ filter: ClipTypeFilter) {
+        guard selectedTypeFilter != filter else { return }
+        selectedTypeFilter = filter
+        visibleLimit = 100
+        clearSelection()
         loadClips()
     }
 
@@ -660,15 +686,15 @@ public final class ClipboardViewModel: ObservableObject {
         }
     }
 
-    public func paste(clip: ClipRecord, optionHeld: Bool = false) {
+    public func paste(clip: ClipRecord, optionHeld: Bool = false, transformation: TextTransformation? = nil) {
         guard canActOnClips else { return }
         guard pastingClipId == nil else { return }
         if let index = clips.firstIndex(where: { $0.id == clip.id }) {
             selectedIndex = index
         }
         self.pastingClipId = clip.id
-        let forcePlainText = optionHeld || isPlainTextModeEnabled
-        let transformation = activeTransformation
+        let effectiveTransformation = transformation ?? activeTransformation
+        let forcePlainText = optionHeld || isPlainTextModeEnabled || effectiveTransformation != .none
         let isTrusted = pasteInjector.eventPoster.isProcessTrusted()
         let target = pasteTargetProcessIdentifier?()
 
@@ -681,7 +707,7 @@ public final class ClipboardViewModel: ObservableObject {
                         databaseManager: self.databaseManager,
                         pasteboard: self.pasteboard,
                         forcePlainText: forcePlainText,
-                        transformation: transformation
+                        transformation: effectiveTransformation
                     )
                     self.onClosePanel?()
                     self.pastingClipId = nil
@@ -705,7 +731,7 @@ public final class ClipboardViewModel: ObservableObject {
                     databaseManager: self.databaseManager,
                     pasteboard: self.pasteboard,
                     forcePlainText: forcePlainText,
-                    transformation: transformation,
+                    transformation: effectiveTransformation,
                     targetProcessIdentifier: target,
                     beforeEventHook: { [weak self] in
                         if isTrusted {
@@ -800,6 +826,102 @@ public final class ClipboardViewModel: ObservableObject {
         }
     }
 
+    // MARK: - Paste Queue / Stack Operations
+
+    public func addToPasteQueue(clip: ClipRecord) {
+        if !pasteQueue.contains(where: { $0.id == clip.id }) {
+            pasteQueue.append(clip)
+            isPasteQueueActive = true
+            showToast("Added to Paste \(pasteQueueOrder == .fifo ? "Queue" : "Stack") (\(pasteQueue.count))")
+        }
+    }
+
+    public func addSelectedToPasteQueue() {
+        let items: [ClipRecord]
+        if !selectedClipIds.isEmpty {
+            items = clips.filter { selectedClipIds.contains($0.id) }
+        } else if selectedIndex >= 0 && selectedIndex < clips.count {
+            items = [clips[selectedIndex]]
+        } else {
+            return
+        }
+
+        for item in items {
+            if !pasteQueue.contains(where: { $0.id == item.id }) {
+                pasteQueue.append(item)
+            }
+        }
+        if !pasteQueue.isEmpty {
+            isPasteQueueActive = true
+            showToast("\(items.count) item(s) added to Paste \(pasteQueueOrder == .fifo ? "Queue" : "Stack") (\(pasteQueue.count))")
+            selectedClipIds.removeAll()
+        }
+    }
+
+    public func clearPasteQueue() {
+        pasteQueue.removeAll()
+        isPasteQueueActive = false
+        showToast("Paste Queue cleared")
+    }
+
+    public func pasteNextFromQueue() {
+        guard !pasteQueue.isEmpty else {
+            showToast("Paste Queue is empty")
+            return
+        }
+
+        let nextClip: ClipRecord
+        if pasteQueueOrder == .fifo {
+            nextClip = pasteQueue.removeFirst()
+        } else {
+            nextClip = pasteQueue.removeLast()
+        }
+
+        if pasteQueue.isEmpty {
+            isPasteQueueActive = false
+        }
+
+        let isTrusted = pasteInjector.eventPoster.isProcessTrusted()
+        let target = pasteTargetProcessIdentifier?()
+
+        if !appSettings.isDirectPasteEnabled || !isTrusted {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                do {
+                    try await self.pasteInjector.copyToPasteboard(
+                        clip: nextClip,
+                        databaseManager: self.databaseManager,
+                        pasteboard: self.pasteboard
+                    )
+                    self.showToast("Copied next item! \(self.pasteQueue.count) remaining. Press ⌘V to paste.")
+                } catch {
+                    self.reportPasteFailure(error)
+                }
+            }
+            return
+        }
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                try await self.pasteInjector.paste(
+                    clip: nextClip,
+                    databaseManager: self.databaseManager,
+                    pasteboard: self.pasteboard,
+                    forcePlainText: false,
+                    transformation: .none,
+                    targetProcessIdentifier: target,
+                    beforeEventHook: { [weak self] in
+                        self?.onClosePanel?()
+                    }
+                )
+                self.showToast("Pasted! \(self.pasteQueue.count) remaining in \(self.pasteQueueOrder == .fifo ? "Queue" : "Stack")")
+            } catch {
+                self.reportPasteFailure(error)
+            }
+        }
+    }
+
     public func copySelectedToPasteboard() {
         guard isSnippetsOnly || canActOnClips else { return }
         performUIAction { [self] in
@@ -845,8 +967,10 @@ public final class ClipboardViewModel: ObservableObject {
         }
     }
 
-    public func copyClipToPasteboard(clip: ClipRecord) {
+    public func copyClipToPasteboard(clip: ClipRecord, transformation: TextTransformation? = nil) {
         guard canActOnClips else { return }
+        let effectiveTransformation = transformation ?? activeTransformation
+        let forcePlainText = isPlainTextModeEnabled || effectiveTransformation != .none
         performUIAction { [self] in
 
             do {
@@ -854,8 +978,8 @@ public final class ClipboardViewModel: ObservableObject {
                     clip: clip,
                     databaseManager: databaseManager,
                     pasteboard: pasteboard,
-                    forcePlainText: isPlainTextModeEnabled,
-                    transformation: activeTransformation
+                    forcePlainText: forcePlainText,
+                    transformation: effectiveTransformation
                 )
                 showToast("Copied to clipboard!")
                 onClosePanel?()
@@ -865,6 +989,14 @@ public final class ClipboardViewModel: ObservableObject {
             }
 
         }
+    }
+
+    public func copyPlainText(_ text: String) {
+        pasteboard.clearContents()
+        pasteboard.setString("1", forType: NSPasteboard.PasteboardType("com.local.ConCopy.internalPaste"))
+        pasteboard.setString(text, forType: .string)
+        showToast("Copied to clipboard!")
+        onClosePanel?()
     }
 
     public func pasteAsFile(clip: ClipRecord, imageFormat: ImageExportFormat = .png) {
@@ -1098,11 +1230,37 @@ public final class ClipboardViewModel: ObservableObject {
     }
 
     public func pasteSnippet(_ snippet: SnippetRecord) {
+        let customVars = SnippetVariableResolver.extractCustomVariables(from: snippet.content)
+        if !customVars.isEmpty {
+            promptSnippetVariables = customVars
+            promptSnippet = snippet
+            return
+        }
+
+        let resolved = SnippetVariableResolver.resolve(
+            template: snippet.content,
+            clipboardContent: pasteboard.string(forType: .string)
+        )
+        pasteResolvedSnippetText(resolved)
+    }
+
+    public func pasteSnippetWithVariables(_ snippet: SnippetRecord, values: [String: String]) {
+        let resolved = SnippetVariableResolver.resolve(
+            template: snippet.content,
+            clipboardContent: pasteboard.string(forType: .string),
+            customVariables: values
+        )
+        promptSnippet = nil
+        promptSnippetVariables = []
+        pasteResolvedSnippetText(resolved)
+    }
+
+    private func pasteResolvedSnippetText(_ text: String) {
         let target = pasteTargetProcessIdentifier?()
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                try await pasteInjector.pasteText(snippet.content, pasteboard: pasteboard,
+                try await pasteInjector.pasteText(text, pasteboard: pasteboard,
                     targetProcessIdentifier: target) { [weak self] willSend in
                     guard let self else { return }
                     if willSend { onClosePanel?() }

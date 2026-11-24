@@ -33,6 +33,10 @@ extension KeyboardShortcuts.Name {
         "openPreferences",
         default: .init(.comma, modifiers: [.command])
     )
+    public static let pasteNextFromQueue = Self(
+        "pasteNextFromQueue",
+        default: .init(.v, modifiers: [.command, .control])
+    )
 }
 
 public enum ShortcutScope: String, Sendable {
@@ -48,6 +52,7 @@ public enum ConCopyShortcutKey: String, CaseIterable, Identifiable, Sendable {
     case toggleFavorite = "toggleFavorite"
     case focusSearch = "focusSearch"
     case openPreferences = "openPreferences"
+    case pasteNextFromQueue = "pasteNextFromQueue"
 
     public var id: String { rawValue }
 
@@ -67,6 +72,8 @@ public enum ConCopyShortcutKey: String, CaseIterable, Identifiable, Sendable {
             return "Focus Search Field"
         case .openPreferences:
             return "Open Settings"
+        case .pasteNextFromQueue:
+            return "Paste Next from Queue / Stack"
         }
     }
 
@@ -86,12 +93,14 @@ public enum ConCopyShortcutKey: String, CaseIterable, Identifiable, Sendable {
             return "magnifyingglass"
         case .openPreferences:
             return "gearshape"
+        case .pasteNextFromQueue:
+            return "rectangle.stack.badge.play"
         }
     }
 
     public var scope: ShortcutScope {
         switch self {
-        case .toggleConCopyPanel:
+        case .toggleConCopyPanel, .pasteNextFromQueue:
             return .global
         default:
             return .inPanel
@@ -107,6 +116,7 @@ public enum ConCopyShortcutKey: String, CaseIterable, Identifiable, Sendable {
         case .toggleFavorite: return .toggleFavorite
         case .focusSearch: return .focusSearch
         case .openPreferences: return .openPreferences
+        case .pasteNextFromQueue: return .pasteNextFromQueue
         }
     }
 

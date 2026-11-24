@@ -169,6 +169,34 @@ public struct QuickLookPopoverView: View {
                 }
             }
 
+            if let recognized = clip.plainText?.trimmingCharacters(in: .whitespacesAndNewlines), !recognized.isEmpty {
+                Divider()
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Label("Recognized Text", systemImage: "text.viewfinder")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Copy Text") {
+                            let pb = NSPasteboard.general
+                            pb.clearContents()
+                            pb.setString("1", forType: NSPasteboard.PasteboardType("com.local.ConCopy.internalPaste"))
+                            pb.setString(recognized, forType: .string)
+                        }
+                        .font(.system(size: 11))
+                        .buttonStyle(.borderless)
+                    }
+                    Text(recognized)
+                        .font(.system(size: 11, design: .monospaced))
+                        .textSelection(.enabled)
+                        .lineLimit(3)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
+            }
+
             Divider()
 
             HStack {

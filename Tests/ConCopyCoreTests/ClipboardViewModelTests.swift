@@ -280,6 +280,92 @@ final class ClipboardViewModelTests: XCTestCase {
         XCTAssertFalse(vm.selectedClipIds.contains(clip1.id))
     }
 
+    func testTypeFilterFilteringAndSelection() async throws {
+        let settings = AppSettingsManager(userDefaults: UserDefaults(suiteName: "Test_\(UUID().uuidString)")!)
+        let vm = ClipboardViewModel(databaseManager: databaseManager, pasteInjector: PasteInjector(), appSettings: settings)
+
+        let textClip = try databaseManager.ingestCapturedClip(CapturedClip(plainText: "Hello text", primaryType: .text))
+        let urlClip = try databaseManager.ingestCapturedClip(CapturedClip(plainText: "https://apple.com", primaryType: .url))
+        let imageClip = try databaseManager.ingestCapturedClip(
+            CapturedClip(
+                plainText: "Image",
+                primaryType: .image,
+                representations: ["public.png": Data([0x89, 0x50, 0x4E, 0x47])]
+            )
+        )
+
+        vm.loadClips()
+        await vm.waitForPendingLoads()
+        XCTAssertEqual(vm.clips.count, 3)
+
+        // Filter: Images
+        vm.selectTypeFilter(.images)
+        await vm.waitForPendingLoads()
+        XCTAssertEqual(vm.clips.count, 1)
+        XCTAssertEqual(vm.clips.first?.id, imageClip.id)
+
+        // Filter: Links
+        vm.selectTypeFilter(.links)
+        await vm.waitForPendingLoads()
+        XCTAssertEqual(vm.clips.count, 1)
+        XCTAssertEqual(vm.clips.first?.id, urlClip.id)
+
+        // Filter: Text
+        vm.selectTypeFilter(.text)
+        await vm.waitForPendingLoads()
+        XCTAssertEqual(vm.clips.count, 1)
+        XCTAssertEqual(vm.clips.first?.id, textClip.id)
+
+        // Reset to all
+        vm.selectAllClips()
+        await vm.waitForPendingLoads()
+        XCTAssertEqual(vm.selectedTypeFilter, .all)
+        XCTAssertEqual(vm.clips.count, 3)
+    }
+
+    func testPasteQueueFIFOAndStackLIFO() async throws {
+        let settings = AppSettingsManager(userDefaults: UserDefaults(suiteName: "Test_\(UUID().uuidString)")!)
+        let mockPoster = MockCGEventPoster()
+        let injector = PasteInjector(eventPoster: mockPoster)
+        let vm = ClipboardViewModel(databaseManager: databaseManager, pasteInjector: injector, appSettings: settings)
+
+        let clip1 = try databaseManager.ingestCapturedClip(CapturedClip(plainText: "Item 1", primaryType: .text))
+        let clip2 = try databaseManager.ingestCapturedClip(CapturedClip(plainText: "Item 2", primaryType: .text))
+        let clip3 = try databaseManager.ingestCapturedClip(CapturedClip(plainText: "Item 3", primaryType: .text))
+
+        // FIFO Queue Mode
+        vm.pasteQueueOrder = .fifo
+        vm.addToPasteQueue(clip: clip1)
+        vm.addToPasteQueue(clip: clip2)
+        vm.addToPasteQueue(clip: clip3)
+
+        XCTAssertEqual(vm.pasteQueue.count, 3)
+        XCTAssertTrue(vm.isPasteQueueActive)
+
+        // Paste first item (FIFO -> Item 1)
+        vm.pasteNextFromQueue()
+        try await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertEqual(NSPasteboard.general.string(forType: .string), "Item 1")
+        XCTAssertEqual(vm.pasteQueue.count, 2)
+
+        // Clear queue
+        vm.clearPasteQueue()
+        XCTAssertEqual(vm.pasteQueue.count, 0)
+        XCTAssertFalse(vm.isPasteQueueActive)
+
+        // LIFO Stack Mode
+        vm.pasteQueueOrder = .lifo
+        vm.addToPasteQueue(clip: clip1)
+        vm.addToPasteQueue(clip: clip2)
+        vm.addToPasteQueue(clip: clip3)
+
+        // Paste next item (LIFO -> Item 3)
+        vm.pasteNextFromQueue()
+        try await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertEqual(NSPasteboard.general.string(forType: .string), "Item 3")
+        XCTAssertEqual(vm.pasteQueue.count, 2)
+    }
+
     private func makeCopyOnlyViewModel() throws -> ClipboardViewModel {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: "Test_\(UUID().uuidString)"))
         let settings = AppSettingsManager(userDefaults: defaults)

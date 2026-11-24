@@ -209,6 +209,42 @@ public struct PasteInjector: Sendable {
                 clip: clip, databaseManager: databaseManager, pasteboard: pasteboard, forcePlainText: false,
                 transformation: transformation, countUsage: countUsage)
         }
+
+        // If all clips in batch are images, paste them as real file objects instead of concatenated OCR text
+        let allImages = clips.allSatisfy { $0.primaryType == .image }
+        if allImages && transformation == .none {
+            let originalChangeCount = pasteboard.changeCount
+            let exporter = fileExporter
+            let urls = try await Task.detached(priority: .userInitiated) { () -> [URL] in
+                var resultURLs: [URL] = []
+                for clip in clips {
+                    if let payload = try databaseManager.fetchPayloads(for: clip.id).first(where: {
+                        $0.utiType == "public.png" || $0.utiType == "public.tiff"
+                    }) {
+                        let data = try databaseManager.loadPayloadData(for: payload)
+                        let fileURL = try exporter.exportImageAsFile(
+                            imageData: data,
+                            format: .png,
+                            preferredName: clip.customName
+                        )
+                        resultURLs.append(fileURL)
+                    }
+                }
+                return resultURLs
+            }.value
+
+            try Task.checkCancellation()
+            guard pasteboard.changeCount == originalChangeCount else { throw CocoaError(.userCancelled) }
+            guard !urls.isEmpty else { throw CocoaError(.fileReadUnknown) }
+
+            pasteboard.clearContents()
+            pasteboard.setString("1", forType: Self.internalPasteMarker)
+            pasteboard.writeObjects(urls.map { $0 as NSURL })
+            pasteboard.setString("1", forType: Self.internalPasteMarker)
+            if countUsage { return await recordUsageIfPossible(clips, databaseManager) }
+            return true
+        }
+
         let originalChangeCount = pasteboard.changeCount
         let joinedText = await Task.detached(priority: .userInitiated) {
             let separator: String
