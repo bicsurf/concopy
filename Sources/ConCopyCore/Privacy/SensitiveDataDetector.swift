@@ -2,9 +2,12 @@ import Foundation
 
 public enum SensitiveDataDetector: Sendable {
     // Regular expressions for detecting sensitive tokens and credentials
-    private static let apiKeyPattern = #"(?i)\b(?:sk-[a-zA-Z0-9_\-]{20,}|gh[pousr]_[a-zA-Z0-9]{20,}|bearer\s+[a-zA-Z0-9\-._~+/]+=*|xox[baprs]-[0-9a-zA-Z]{10,}|glpat-[a-zA-Z0-9\-=_]{20,}|aws[a-zA-Z0-9_]{16,})\b"#
-    private static let creditCardPattern = #"\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13}|3(?:0[0-5]|[68][0-9])[0-9]{11}|6(?:011|5[0-9]{2})[0-9]{12}|(?:2131|1800|35\d{3})\d{11})\b"#
+    // AWS access keys (AKIA...), GitHub tokens (ghp_, gho_, etc.), OpenAI keys (sk-...), Slack tokens (xoxb-...), GitLab (glpat-...)
+    private static let apiKeyPattern = #"(?i)\b(?:sk-[a-zA-Z0-9_\-]{20,}|gh[pousr]_[a-zA-Z0-9]{20,}|bearer\s+[a-zA-Z0-9\-._~+/]+=*|xox[baprs]-[0-9a-zA-Z]{10,}|glpat-[a-zA-Z0-9\-=_]{20,}|(?:AKIA|ABIA|ACCA|ASIA)[0-9A-Z]{16}|aws[a-zA-Z0-9_]{16,})\b"#
+    // Credit card: continuous digits or separated by space / hyphen (e.g. 4532 1123 4567 8910 or 4532112345678910)
+    private static let creditCardPattern = #"\b(?:4[0-9]{3}[ -]?[0-9]{4}[ -]?[0-9]{4}[ -]?[0-9]{4}|5[1-5][0-9]{2}[ -]?[0-9]{4}[ -]?[0-9]{4}[ -]?[0-9]{4}|3[47][0-9]{2}[ -]?[0-9]{6}[ -]?[0-9]{5}|6(?:011|5[0-9]{2})[ -]?[0-9]{4}[ -]?[0-9]{4}[ -]?[0-9]{4})\b"#
     private static let genericSecretPattern = #"(?i)\b(?:password|secret|apikey|api_key|token|access_token|private_key)\s*[:=]\s*([^\s]{8,})"#
+    private static let privateKeyHeaderPattern = #"-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----"#
 
     public static func isSensitive(_ text: String?) -> Bool {
         guard let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -17,6 +20,9 @@ public enum SensitiveDataDetector: Sendable {
             return true
         }
         if text.range(of: genericSecretPattern, options: .regularExpression) != nil {
+            return true
+        }
+        if text.range(of: privateKeyHeaderPattern, options: .regularExpression) != nil {
             return true
         }
         return false
@@ -33,9 +39,10 @@ public enum SensitiveDataDetector: Sendable {
             let matches = cardRegex.matches(in: result, options: [], range: NSRange(location: 0, length: nsStr.length))
             for match in matches.reversed() {
                 let card = nsStr.substring(with: match.range)
-                if card.count >= 8 {
-                    let prefix = String(card.prefix(4))
-                    let suffix = String(card.suffix(4))
+                let cleanDigits = card.filter { $0.isNumber }
+                if cleanDigits.count >= 8 {
+                    let prefix = String(cleanDigits.prefix(4))
+                    let suffix = String(cleanDigits.suffix(4))
                     let masked = "\(prefix) •••• •••• \(suffix)"
                     result = (result as NSString).replacingCharacters(in: match.range, with: masked)
                 }
@@ -65,6 +72,16 @@ public enum SensitiveDataDetector: Sendable {
                     let masked = "••••••••"
                     result = (result as NSString).replacingCharacters(in: secretRange, with: masked)
                 }
+            }
+        }
+
+        // 4. Mask private keys
+        if let keyRegex = try? NSRegularExpression(pattern: privateKeyHeaderPattern, options: []) {
+            let nsStr = result as NSString
+            let matches = keyRegex.matches(in: result, options: [], range: NSRange(location: 0, length: nsStr.length))
+            for match in matches.reversed() {
+                let masked = "-----BEGIN PRIVATE KEY [HIDDEN]-----"
+                result = (result as NSString).replacingCharacters(in: match.range, with: masked)
             }
         }
 

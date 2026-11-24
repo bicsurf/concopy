@@ -1007,11 +1007,22 @@ struct ClipRowView: View, Equatable {
             && lhs.isChecked == rhs.isChecked && lhs.isPasting == rhs.isPasting && lhs.isCopied == rhs.isCopied
             && lhs.actionTitle == rhs.actionTitle && lhs.shortcutLabel == rhs.shortcutLabel
             && lhs.quickPasteModifier == rhs.quickPasteModifier && lhs.thumbnailImage === rhs.thumbnailImage
-            && lhs.fileIconImage === rhs.fileIconImage && lhs.linkMetadata == rhs.linkMetadata && lhs.shouldMaskSensitive == rhs.shouldMaskSensitive
+            && lhs.fileIconImage === rhs.fileIconImage && lhs.appIconImage === rhs.appIconImage
+            && lhs.linkMetadata == rhs.linkMetadata && lhs.shouldMaskSensitive == rhs.shouldMaskSensitive
     }
 
     private var accessibilityTitle: String {
         return String((clip.plainText ?? clip.primaryType.rawValue).prefix(160))
+    }
+
+    private var displayPreviewText: String {
+        guard let text = clip.plainText?.trimmingCharacters(in: .whitespacesAndNewlines) else {
+            return "No preview available"
+        }
+        if shouldMaskSensitive && !isRevealedLocally {
+            return SensitiveDataDetector.maskSensitiveText(text)
+        }
+        return text
     }
 
     var body: some View {
@@ -1103,20 +1114,25 @@ struct ClipRowView: View, Equatable {
                                 .font(.system(size: 13, weight: .semibold))
                                 .foregroundStyle(.primary)
                                 .lineLimit(1)
-                            Text(clip.plainText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "")
+                            Text(displayPreviewText)
                                 .font(.system(size: 11))
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                     } else {
-                        Text(
-                            clip.plainText?.trimmingCharacters(in: .whitespacesAndNewlines)
-                                ?? "No preview available"
-                        )
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(.primary)
-                        .lineLimit(2)
+                        HStack(spacing: 6) {
+                            if shouldMaskSensitive && !isRevealedLocally {
+                                Image(systemName: "lock.shield.fill")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(ConCopyTheme.Accents.primary)
+                                    .help("Sensitive content masked (Privacy Shield). Hover/click or QuickLook to reveal.")
+                            }
+                            Text(displayPreviewText)
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(.primary)
+                                .lineLimit(2)
+                        }
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     if isPasting {

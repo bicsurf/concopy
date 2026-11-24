@@ -205,6 +205,67 @@ final class AuditUIAndLifecycleTests: XCTestCase {
         )
         XCTAssertFalse(QuickActionRunner.canExecute(.terminal, for: emptyClip))
     }
+
+    func testQuickActionShellScriptLargeOutputDoesNotDeadlock() async {
+        let exp = expectation(description: "Shell command completes")
+        // Generates ~100KB of text, exceeding the standard 64KB OS pipe buffer
+        let script = "head -c 100000 /dev/zero | tr '\\0' 'A'"
+        QuickActionRunner.execute(.runShellScript, text: script, skipConfirmation: true) { result in
+            XCTAssertNotNil(result)
+            exp.fulfill()
+        }
+        await fulfillment(of: [exp], timeout: 5.0)
+    }
+
+    func testClipRowViewEquatableIncludesAppIconImage() {
+        let clip = ClipRecord(contentHash: "h", plainText: "t", primaryType: .text)
+        let icon1 = NSImage(size: NSSize(width: 16, height: 16))
+        let icon2 = NSImage(size: NSSize(width: 16, height: 16))
+        let row1 = ClipRowView(
+            clip: clip, index: 0, isSelected: false, isChecked: false, isPasting: false,
+            shortcutLabel: nil, appIconImage: icon1, onToggleCheck: {}
+        )
+        let row2 = ClipRowView(
+            clip: clip, index: 0, isSelected: false, isChecked: false, isPasting: false,
+            shortcutLabel: nil, appIconImage: icon2, onToggleCheck: {}
+        )
+        let row1Duplicate = ClipRowView(
+            clip: clip, index: 0, isSelected: false, isChecked: false, isPasting: false,
+            shortcutLabel: nil, appIconImage: icon1, onToggleCheck: {}
+        )
+        XCTAssertEqual(row1, row1Duplicate)
+        XCTAssertNotEqual(row1, row2)
+    }
+
+    func testFilePasteExporterErrorEnglishDescriptions() {
+        XCTAssertEqual(
+            FilePasteExporterError.invalidImageData.localizedDescription,
+            "Invalid image data or unsupported format."
+        )
+        XCTAssertEqual(
+            FilePasteExporterError.imageConversionFailed.localizedDescription,
+            "Unable to convert image to specified format."
+        )
+    }
+
+    func testFloatingPanelPositionNearCaretSafelyHandlesNonConformingAX() throws {
+        let panel = FloatingPanel(
+            viewModel: ClipboardViewModel(databaseManager: try database(), appSettings: try settings()))
+        let result = panel.positionNearCaret()
+        XCTAssertFalse(result)
+    }
+
+    func testSensitiveDataDetectorAWSAndSSHKeyDetection() {
+        XCTAssertTrue(SensitiveDataDetector.isSensitive("AKIAIOSFODNN7EXAMPLE"))
+        XCTAssertTrue(SensitiveDataDetector.isSensitive("-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA0..."))
+        XCTAssertTrue(SensitiveDataDetector.isSensitive("4532 1123 4567 8910"))
+        XCTAssertTrue(SensitiveDataDetector.isSensitive("Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"))
+        XCTAssertEqual(
+            SensitiveDataDetector.maskSensitiveText("4532 1123 4567 8910"),
+            "4532 •••• •••• 8910"
+        )
+        XCTAssertFalse(SensitiveDataDetector.isSensitive("Ordinary clipboard message"))
+    }
 }
 
 private final class AuditCounter: @unchecked Sendable {

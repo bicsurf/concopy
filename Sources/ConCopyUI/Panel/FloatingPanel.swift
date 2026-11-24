@@ -405,22 +405,6 @@ public final class FloatingPanel: NSPanel {
         return false
     }
 
-    private func digitIndex(forKeyCode keyCode: UInt16) -> Int? {
-        switch keyCode {
-        case 18, 83: return 0  // 1 or numpad 1
-        case 19, 84: return 1  // 2 or numpad 2
-        case 20, 85: return 2  // 3 or numpad 3
-        case 21, 86: return 3  // 4 or numpad 4
-        case 23, 87: return 4  // 5 or numpad 5
-        case 22, 88: return 5  // 6 or numpad 6
-        case 26, 89: return 6  // 7 or numpad 7
-        case 28, 91: return 7  // 8 or numpad 8
-        case 25, 92: return 8  // 9 or numpad 9
-        case 29, 82: return 9  // 0 or numpad 0
-        default: return nil
-        }
-    }
-
     public func showPanel() {
         if !isVisible {
             togglePanel()
@@ -484,14 +468,18 @@ public final class FloatingPanel: NSPanel {
         let appElement = AXUIElementCreateApplication(frontApp.processIdentifier)
         var focusedElementValue: AnyObject?
         let focusedError = AXUIElementCopyAttributeValue(appElement, kAXFocusedUIElementAttribute as CFString, &focusedElementValue)
-        guard focusedError == .success, let focusedElement = focusedElementValue else {
+        guard focusedError == .success,
+              let focusedElement = focusedElementValue,
+              CFGetTypeID(focusedElement) == AXUIElementGetTypeID() else {
             return false
         }
 
-        let element = focusedElement as! AXUIElement
+        let element: AXUIElement = unsafeDowncast(focusedElement, to: AXUIElement.self)
         var selectedRangeValue: AnyObject?
         let rangeError = AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &selectedRangeValue)
-        guard rangeError == .success, let selectedRange = selectedRangeValue else {
+        guard rangeError == .success,
+              let selectedRange = selectedRangeValue,
+              CFGetTypeID(selectedRange) == AXValueGetTypeID() else {
             return false
         }
 
@@ -502,13 +490,16 @@ public final class FloatingPanel: NSPanel {
             selectedRange,
             &boundsValue
         )
-        guard boundsError == .success, let bounds = boundsValue else {
+        guard boundsError == .success,
+              let bounds = boundsValue,
+              CFGetTypeID(bounds) == AXValueGetTypeID() else {
             return false
         }
 
+        let axBounds: AXValue = unsafeDowncast(bounds, to: AXValue.self)
         var caretRect = CGRect.zero
-        guard AXValueGetType(bounds as! AXValue) == .cgRect else { return false }
-        AXValueGetValue(bounds as! AXValue, .cgRect, &caretRect)
+        guard AXValueGetType(axBounds) == .cgRect else { return false }
+        AXValueGetValue(axBounds, .cgRect, &caretRect)
         guard !caretRect.isEmpty, !caretRect.origin.x.isNaN, !caretRect.origin.y.isNaN else { return false }
 
         // Accessibility coordinates are top-left based (primary screen origin at top-left).

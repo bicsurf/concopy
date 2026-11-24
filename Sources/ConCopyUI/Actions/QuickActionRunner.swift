@@ -45,7 +45,7 @@ public struct QuickActionRunner: Sendable {
     }
 
     @MainActor
-    public static func execute(_ action: QuickActionType, text: String, completion: @escaping (String?) -> Void) {
+    public static func execute(_ action: QuickActionType, text: String, skipConfirmation: Bool = false, completion: @escaping (String?) -> Void) {
         let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty else {
             completion("Empty text")
@@ -85,6 +85,22 @@ public struct QuickActionRunner: Sendable {
             }
 
         case .runShellScript:
+            if !skipConfirmation {
+                let alert = NSAlert()
+                alert.messageText = "Run Shell Command?"
+                let displayCommand = cleaned.count > 120 ? String(cleaned.prefix(120)) + "..." : cleaned
+                alert.informativeText = "ConCopy will execute the following command in /bin/zsh:\n\n\(displayCommand)\n\nAre you sure you want to run this?"
+                alert.alertStyle = .warning
+                alert.addButton(withTitle: "Run")
+                alert.addButton(withTitle: "Cancel")
+
+                let response = alert.runModal()
+                guard response == .alertFirstButtonReturn else {
+                    completion("Command execution canceled")
+                    return
+                }
+            }
+
             Task.detached(priority: .userInitiated) {
                 let process = Process()
                 process.executableURL = URL(fileURLWithPath: "/bin/zsh")
@@ -96,9 +112,27 @@ public struct QuickActionRunner: Sendable {
 
                 do {
                     try process.run()
+
+                    async let readDataTask = Task.detached(priority: .userInitiated) { () -> Data in
+                        pipe.fileHandleForReading.readDataToEndOfFile()
+                    }.value
+
+                    // Enforce a 10-second timeout so long-running or hanging scripts terminate safely
+                    let timeoutNanoseconds: UInt64 = 10_000_000_000
+                    let startTime = DispatchTime.now()
+                    while process.isRunning {
+                        if DispatchTime.now().uptimeNanoseconds - startTime.uptimeNanoseconds > timeoutNanoseconds {
+                            process.terminate()
+                            break
+                        }
+                        try? await Task.sleep(nanoseconds: 50_000_000)
+                    }
+
                     process.waitUntilExit()
-                    let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                    let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    let outputData = await readDataTask
+                    try? pipe.fileHandleForReading.close()
+
+                    let output = String(data: outputData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                     await MainActor.run {
                         if process.terminationStatus == 0 {
                             completion(output.isEmpty ? "Command executed successfully" : output)
@@ -127,6 +161,9 @@ public struct QuickActionRunner: Sendable {
     private static func escapeAppleScript(_ str: String) -> String {
         str.replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
+            .replacingOccurrences(of: "\r", with: "\\r")
+            .replacingOccurrences(of: "\n", with: "\\n")
+            .replacingOccurrences(of: "\t", with: "\\t")
     }
 
     private static func runAppleScript(_ script: String, completion: @escaping (String?) -> Void) {
