@@ -147,4 +147,30 @@ final class PreferencesTests: XCTestCase {
         XCTAssertTrue(reloaded.showMenuBarIcon)
         XCTAssertTrue(testDefaults.bool(forKey: AppSettingsManager.showMenuBarIconKey))
     }
+
+    @MainActor
+    func testSensitiveDataDetectorAndSettings() {
+        let settings = AppSettingsManager(userDefaults: testDefaults)
+        XCTAssertTrue(settings.maskSensitiveData)
+
+        settings.maskSensitiveData = false
+        XCTAssertFalse(testDefaults.bool(forKey: AppSettingsManager.maskSensitiveDataKey))
+
+        let apiKey = "sk-ant-api03-abcdef123456789012345678"
+        XCTAssertTrue(SensitiveDataDetector.isSensitive(apiKey))
+        let maskedKey = SensitiveDataDetector.maskSensitiveText(apiKey)
+        XCTAssertTrue(maskedKey.contains("••••••••••••"))
+        XCTAssertFalse(maskedKey.contains("abcdef123456789012345678"))
+
+        let creditCard = "4532015012345678"
+        XCTAssertTrue(SensitiveDataDetector.isSensitive(creditCard))
+        let maskedCard = SensitiveDataDetector.maskSensitiveText(creditCard)
+        XCTAssertTrue(maskedCard.contains("•••• ••••"))
+        XCTAssertTrue(maskedCard.hasPrefix("4532"))
+        XCTAssertTrue(maskedCard.hasSuffix("5678"))
+
+        let normalText = "https://developer.apple.com/documentation"
+        XCTAssertFalse(SensitiveDataDetector.isSensitive(normalText))
+        XCTAssertEqual(SensitiveDataDetector.maskSensitiveText(normalText), normalText)
+    }
 }

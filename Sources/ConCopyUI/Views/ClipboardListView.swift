@@ -122,6 +122,7 @@ public struct ClipboardListView: View {
                                         ? viewModel.imageThumbnail(for: clip) : nil,
                                     fileIconImage: clip.primaryType == .file ? viewModel.fileIcon(for: clip) : nil,
                                     appIconImage: viewModel.appIcon(for: clip),
+                                    shouldMaskSensitive: settings.maskSensitiveData && SensitiveDataDetector.isSensitive(clip.plainText),
                                     onToggleCheck: {
                                         viewModel.toggleSelection(clipId: clip.id)
                                     },
@@ -803,11 +804,13 @@ struct ClipRowView: View, Equatable {
     var thumbnailImage: NSImage? = nil
     var fileIconImage: NSImage? = nil
     var appIconImage: NSImage? = nil
+    var shouldMaskSensitive: Bool = false
     let onToggleCheck: () -> Void
     var onToggleFavorite: (() -> Void)? = nil
     var onRowClick: (() -> Void)? = nil
 
     @State private var isHovered = false
+    @State private var isRevealedLocally: Bool = false
     @Environment(\.colorSchemeContrast) private var contrast
 
     static func == (lhs: ClipRowView, rhs: ClipRowView) -> Bool {
@@ -815,7 +818,7 @@ struct ClipRowView: View, Equatable {
             && lhs.isChecked == rhs.isChecked && lhs.isPasting == rhs.isPasting && lhs.isCopied == rhs.isCopied
             && lhs.actionTitle == rhs.actionTitle && lhs.shortcutLabel == rhs.shortcutLabel
             && lhs.quickPasteModifier == rhs.quickPasteModifier && lhs.thumbnailImage === rhs.thumbnailImage
-            && lhs.fileIconImage === rhs.fileIconImage
+            && lhs.fileIconImage === rhs.fileIconImage && lhs.shouldMaskSensitive == rhs.shouldMaskSensitive
     }
 
     private var accessibilityTitle: String {
@@ -896,14 +899,39 @@ struct ClipRowView: View, Equatable {
                         }
                     }
 
-                    Text(
-                        clip.plainText?.trimmingCharacters(in: .whitespacesAndNewlines)
-                            ?? "No preview available"
-                    )
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.primary)
-                    .lineLimit(2)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    let rawText = clip.plainText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "No preview available"
+                    let displayText = (shouldMaskSensitive && !isRevealedLocally && !isHovered)
+                        ? SensitiveDataDetector.maskSensitiveText(rawText)
+                        : rawText
+
+                    HStack(spacing: 6) {
+                        Text(displayText)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(.primary)
+                            .lineLimit(2)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        if shouldMaskSensitive {
+                            Button {
+                                if !isRevealedLocally {
+                                    Task {
+                                        let auth = await BiometricAuthenticator.authenticate(reason: "Authenticate with Touch ID to reveal sensitive clipboard content")
+                                        if auth {
+                                            isRevealedLocally = true
+                                        }
+                                    }
+                                } else {
+                                    isRevealedLocally = false
+                                }
+                            } label: {
+                                Image(systemName: isRevealedLocally ? "lock.open.fill" : "lock.fill")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(isRevealedLocally ? ConCopyTheme.Accents.primary : Color.secondary)
+                            }
+                            .buttonStyle(.plain)
+                            .help(isRevealedLocally ? "Sensitive data revealed (click to hide)" : "Protected sensitive data. Click or hover to reveal with Touch ID.")
+                        }
+                    }
                     if isPasting {
                         ProgressView().controlSize(.mini)
                     } else if isCopied {
