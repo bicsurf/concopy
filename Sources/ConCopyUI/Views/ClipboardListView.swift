@@ -706,6 +706,20 @@ public struct ClipboardListView: View {
                 Label("Save as Snippet...", systemImage: "curlybraces")
             }
 
+            if let color = ColorParser.parse(clip.plainText ?? "") {
+                Menu("Copy Color As") {
+                    Button("HEX (\(color.hexString))") {
+                        viewModel.copyPlainText(color.hexString)
+                    }
+                    Button("RGB (\(color.rgbString))") {
+                        viewModel.copyPlainText(color.rgbString)
+                    }
+                    Button("HSL (\(color.hslString))") {
+                        viewModel.copyPlainText(color.hslString)
+                    }
+                }
+            }
+
             Menu("Paste Transformed") {
                 ForEach(TextTransformation.allCases.filter { $0 != .none }, id: \.self) { transformation in
                     Button(transformation.displayName) {
@@ -720,6 +734,16 @@ public struct ClipboardListView: View {
                         viewModel.copyClipToPasteboard(clip: clip, transformation: transformation)
                     }
                 }
+            }
+        }
+
+        if clip.primaryType == .image,
+           let text = clip.plainText?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !text.isEmpty {
+            Button {
+                viewModel.copyPlainText(text)
+            } label: {
+                Label("Copy Text from Image", systemImage: "text.viewfinder")
             }
         }
 
@@ -954,6 +978,15 @@ struct ClipRowView: View, Equatable {
                             .scaledToFit()
                             .frame(width: 24, height: 24)
                             .shadow(color: Color.black.opacity(0.15), radius: 1, x: 0, y: 0.5)
+                    } else if let color = ColorParser.parse(clip.plainText ?? "") {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(color.swiftUIColor)
+                                .frame(width: 24, height: 24)
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .stroke(Color.primary.opacity(0.2), lineWidth: 1)
+                                .frame(width: 24, height: 24)
+                        }
                     } else {
                         ZStack {
                             RoundedRectangle(cornerRadius: 6, style: .continuous)

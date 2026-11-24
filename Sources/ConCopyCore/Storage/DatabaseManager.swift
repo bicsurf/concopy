@@ -519,6 +519,35 @@ public final class DatabaseManager: Sendable {
         }
     }
 
+    public func updateOCRText(clipId: UUID, ocrText: String) throws {
+        let idString = clipId.uuidString.lowercased()
+        let trimmed = ocrText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        try autoreleasepool {
+            try dbWriter.write { db in
+                guard var clip = try ClipRecord.filter(Column("id") == idString).fetchOne(db) else {
+                    return
+                }
+                guard clip.primaryType == .image else { return }
+
+                let updatedText: String
+                if let current = clip.plainText, !current.isEmpty {
+                    if !current.contains(trimmed) {
+                        updatedText = "\(current)\n\(trimmed)"
+                    } else {
+                        updatedText = current
+                    }
+                } else {
+                    updatedText = trimmed
+                }
+
+                clip.plainText = updatedText
+                try clip.update(db)
+            }
+        }
+    }
+
     /// Called only while holding the database writer; filesystem cleanup happens after commit.
     @discardableResult
     internal func replacePayloads(clipId: UUID, representations: [String: Data], db: Database) throws -> [String] {

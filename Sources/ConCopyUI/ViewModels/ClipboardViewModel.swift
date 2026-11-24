@@ -884,6 +884,14 @@ public final class ClipboardViewModel: ObservableObject {
         }
     }
 
+    public func copyPlainText(_ text: String) {
+        pasteboard.clearContents()
+        pasteboard.setString("1", forType: NSPasteboard.PasteboardType("com.local.ConCopy.internalPaste"))
+        pasteboard.setString(text, forType: .string)
+        showToast("Copied to clipboard!")
+        onClosePanel?()
+    }
+
     public func pasteAsFile(clip: ClipRecord, imageFormat: ImageExportFormat = .png) {
         guard canActOnClips else { return }
         let target = pasteTargetProcessIdentifier?()

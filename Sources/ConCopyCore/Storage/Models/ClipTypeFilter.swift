@@ -6,6 +6,7 @@ public enum ClipTypeFilter: String, CaseIterable, Identifiable, Sendable {
     case images
     case links
     case files
+    case colors
 
     public var id: String { rawValue }
 
@@ -16,6 +17,7 @@ public enum ClipTypeFilter: String, CaseIterable, Identifiable, Sendable {
         case .images: return "Images"
         case .links: return "Links"
         case .files: return "Files"
+        case .colors: return "Colors"
         }
     }
 
@@ -26,6 +28,7 @@ public enum ClipTypeFilter: String, CaseIterable, Identifiable, Sendable {
         case .images: return "photo"
         case .links: return "link"
         case .files: return "folder"
+        case .colors: return "paintpalette"
         }
     }
 
@@ -41,6 +44,8 @@ public enum ClipTypeFilter: String, CaseIterable, Identifiable, Sendable {
             return [.url]
         case .files:
             return [.file]
+        case .colors:
+            return [.color]
         }
     }
 }

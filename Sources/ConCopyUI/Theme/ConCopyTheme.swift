@@ -282,3 +282,9 @@ public enum ConCopyTheme {
         }
     }
 }
+
+extension RGBAColor {
+    public var swiftUIColor: Color {
+        Color(.sRGB, red: red, green: green, blue: blue, opacity: alpha)
+    }
+}

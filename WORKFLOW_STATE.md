@@ -1,9 +1,9 @@
 # Stato di lavoro — ConCopy
 
-Nota 24 novembre 2026 — completato Sprint 1 su branch `feat/sprint1-filters-and-dev-transformations` (senza push):
-1. **Quick Filters per Tipo di Contenuto**: introdotto `ClipTypeFilter` (All, Text, Images, Links, Files), supporto a filtri per tipi multipli `primaryTypes` in `DatabaseManager` (compatibile sia con query vuote che con ricerca letterale ed FTS5), pill selector compatto `TypeFilterPill` in `ClipboardListView` sotto la barra scope e gestione dello stato in `ClipboardViewModel`.
-2. **Trasformazioni Testo per Dev**: esteso `TextTransformer` con `jsonFormat`, `jsonMinify`, `urlEncode`, `urlDecode`, `base64Encode`, `base64Decode`, `snakeCase`, `camelCase`, `kebabCase`. Aggiunti sottomenu "Paste Transformed" e "Copy Transformed" nel menu contestuale delle righe.
-3. **Verifiche e Test**: aggiunti test unitari per tutte le trasformazioni in `Phase4Tests`, test di filtro per tipi in `StorageTests` e test di selezione filtro in `ClipboardViewModelTests`. Verifiche: `swift build` ok, `swift build -c release` ok zero warning, `swift test` 214 test / 1 saltato / 0 fallimenti.
+Nota 24 novembre 2026 — completato Sprint 2 su branch `feat/sprint2-ocr-and-color-swatches` (senza push):
+1. **OCR / Ricerca Testo da Immagini**: introdotto `ImageTextRecognizer` in `ConCopyCore` via Apple `Vision` framework (`VNRecognizeTextRequest`). Ingestione asincrona non bloccante in background su immagini e screenshot catturati, aggiornamento e indicizzazione FTS5 via `DatabaseManager.updateOCRText`. Anteprima testo riconosciuto con tasto copia veloce in `QuickLookPopoverView` e azione contestuale "Copy Text from Image" in `ClipboardListView`.
+2. **Color Swatch & Riconoscimento Colori**: introdotto `ColorParser` e `RGBAColor` in `ConCopyCore` per parsing di formati HEX (`#RGB`, `#RGBA`, `#RRGGBB`, `#RRGGBBAA`), RGB/RGBA e HSL/HSLA. Riconoscimento automatico del tipo `.color` in `ClipboardMonitor.determinePrimaryType`. Mini swatch visivo a colori nella riga clip in `ClipboardListView`. Menu contestuale "Copy Color As" (HEX, RGB, HSL). Aggiunto filtro rapido `colors` in `ClipTypeFilter`.
+3. **Verifiche e Test**: aggiunti test unitari `testColorParserAndFormats` e `testDatabaseOCRUpdateAndSearch` in `Phase4Tests`. Verifiche: `swift build` ok, `swift build -c release` ok zero warning, `swift test` 216 test / 1 saltato / 0 fallimenti.
 
 Aggiornato il **24 novembre 2026**. Questo file riassume lo stato verificato del working tree per chi riprende lo sviluppo. I vincoli architetturali restano definiti in [AGENTS.md](AGENTS.md); la cronologia delle versioni è in [CHANGELOG.md](CHANGELOG.md).
 

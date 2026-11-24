@@ -201,6 +201,9 @@ public final class ClipboardMonitor {
             if isValidURL(text) {
                 return .url
             }
+            if ColorParser.parse(text) != nil {
+                return .color
+            }
             if hasRTF {
                 return .richText
             }

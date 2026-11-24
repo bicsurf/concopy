@@ -88,6 +88,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     let saved = try db?.ingestCapturedClip(captured)
                     if let clip = saved {
                         sync?.queueUpload(for: clip)
+                        if clip.primaryType == .image {
+                            self.processImageOCR(clipId: clip.id, representations: captured.representations, databaseManager: db, viewModel: vm)
+                        }
                     }
                     await MainActor.run {
                         vm?.loadClips()
@@ -114,8 +117,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 Task.detached(priority: .utility) {
                     do {
                         let saved = try db?.ingestCapturedClip(clip)
-                        if let clip = saved {
-                            sync?.queueUpload(for: clip)
+                        if let savedClip = saved {
+                            sync?.queueUpload(for: savedClip)
+                            self.processImageOCR(clipId: savedClip.id, representations: clip.representations, databaseManager: db, viewModel: vm)
                         }
                         await MainActor.run {
                             vm?.loadClips()
@@ -193,6 +197,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let checkOptionPrompt = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as NSString
         let options = [checkOptionPrompt: prompt] as CFDictionary
         return AXIsProcessTrustedWithOptions(options)
+    }
+
+    nonisolated private func processImageOCR(clipId: UUID, representations: [String: Data], databaseManager: DatabaseManager?, viewModel: ClipboardViewModel?) {
+        guard let imageData = representations["public.png"] ?? representations["public.tiff"] else {
+            return
+        }
+        let db = databaseManager
+        let vm = viewModel
+        Task.detached(priority: .utility) {
+            autoreleasepool {
+                guard let ocrText = ImageTextRecognizer.recognizeText(from: imageData) else {
+                    return
+                }
+                do {
+                    try db?.updateOCRText(clipId: clipId, ocrText: ocrText)
+                    Task { @MainActor in
+                        vm?.loadClips()
+                    }
+                } catch {
+                    print("[ConCopy] Failed to update OCR text: \(error)")
+                }
+            }
+        }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
