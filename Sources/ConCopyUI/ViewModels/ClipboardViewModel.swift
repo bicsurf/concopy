@@ -19,6 +19,11 @@ public final class ClipboardViewModel: ObservableObject {
     private var appliedLoadVersion: UInt64?
     private var canActOnClips: Bool { appliedLoadVersion == loadVersion && !isLoadingClips }
     private var clipLoadTask: Task<Void, Never>?
+    private struct SelectionMove {
+        let offset: Int
+        let extendSelection: Bool
+    }
+    private var pendingSelectionMoves: [SelectionMove] = []
     private var listLoadTask: Task<Void, Never>?
     private var snippetLoadTask: Task<Void, Never>?
     private var pendingActions: [UUID: Task<Void, Never>] = [:]
@@ -219,6 +224,11 @@ public final class ClipboardViewModel: ObservableObject {
     }
 
     public func loadClips() {
+        pendingSelectionMoves.removeAll()
+        reloadClips()
+    }
+
+    private func reloadClips() {
         clipLoadTask?.cancel()
         loadVersion &+= 1
         let version = loadVersion
@@ -252,7 +262,7 @@ public final class ClipboardViewModel: ObservableObject {
                 }
                 self.lastTopClipId = fetched.first?.id
                 self.lastTopClipUpdatedAt = fetched.first?.updatedAt
-                if isNewTop && !self.isSelectionMode {
+                if isNewTop && !self.isSelectionMode && self.pendingSelectionMoves.isEmpty {
                     self.selectedIndex = 0
                     self.selectionAnchorId = nil
                     self.scrollTargetTopTrigger = UUID()
@@ -262,9 +272,15 @@ public final class ClipboardViewModel: ObservableObject {
                     self.selectedIndex = max(0, min(self.selectedIndex, fetched.count - 1))
                 }
                 self.isLoadingClips = false
+                let moves = self.pendingSelectionMoves
+                self.pendingSelectionMoves.removeAll()
+                for move in moves {
+                    self.moveSelection(by: move.offset, extendSelection: move.extendSelection)
+                }
             } catch {
                 guard !Task.isCancelled, let self, self.loadVersion == version else { return }
                 self.isLoadingClips = false
+                self.pendingSelectionMoves.removeAll()
                 self.showToast("Could not load clipboard history")
             }
         }
@@ -277,6 +293,7 @@ public final class ClipboardViewModel: ObservableObject {
     }
 
     public func selectMostRecentClip() {
+        pendingSelectionMoves.removeAll()
         guard !clips.isEmpty else { return }
         selectedClipId = filteredClips.first?.id
         if !isSelectionMode {
@@ -392,6 +409,7 @@ public final class ClipboardViewModel: ObservableObject {
     }
 
     public func selectSingle(clipId: UUID) {
+        pendingSelectionMoves.removeAll()
         selectedClipIds.removeAll()
         selectedClipId = clipId
         selectionAnchorId = clipId
@@ -402,6 +420,7 @@ public final class ClipboardViewModel: ObservableObject {
     }
 
     public func toggleSelection(clipId: UUID) {
+        pendingSelectionMoves.removeAll()
         if selectedClipIds.contains(clipId) {
             selectedClipIds.remove(clipId)
         } else {
@@ -420,6 +439,7 @@ public final class ClipboardViewModel: ObservableObject {
     }
 
     public func selectRange(toClipId clipId: UUID) {
+        pendingSelectionMoves.removeAll()
         guard !clips.isEmpty else { return }
 
         let anchorId = selectionAnchorId ?? selectedClipId
@@ -449,16 +469,33 @@ public final class ClipboardViewModel: ObservableObject {
         if isSnippetsOnly {
             let count = filteredSnippets.count
             guard count > 0 else { return }
-            let newIndex = max(0, min(count - 1, selectedSnippetIndex + offset))
+            let newIndex = extendSelection
+                ? max(0, min(count - 1, selectedSnippetIndex + offset))
+                : wrappedSelectionIndex(selectedSnippetIndex, offset: offset, count: count)
             selectedSnippetIndex = newIndex
             return
         }
 
-        guard !clips.isEmpty else { return }
+        if !pendingSelectionMoves.isEmpty {
+            pendingSelectionMoves.append(SelectionMove(offset: offset, extendSelection: extendSelection))
+            return
+        }
+
+        guard !clips.isEmpty, canActOnClips else { return }
+
+        let proposedIndex = selectedIndex + offset
+        if hasMoreClips && (proposedIndex >= clips.count || (proposedIndex < 0 && !extendSelection)) {
+            pendingSelectionMoves.append(SelectionMove(offset: offset, extendSelection: extendSelection))
+            // Reaching the beginning backwards requires the actual end of the current query.
+            // Leave room for reloadClips' extra record used to detect another page.
+            visibleLimit = proposedIndex < 0 ? Int.max - 1 : visibleLimit + max(100, offset)
+            reloadClips()
+            return
+        }
 
         if !extendSelection {
             selectedClipIds.removeAll()
-            let newIndex = max(0, min(clips.count - 1, selectedIndex + offset))
+            let newIndex = wrappedSelectionIndex(selectedIndex, offset: offset, count: clips.count)
             selectedIndex = newIndex
             selectionAnchorId = selectedClipId
             return
@@ -488,6 +525,11 @@ public final class ClipboardViewModel: ObservableObject {
         selectedClipIds = newSelection
     }
 
+    private func wrappedSelectionIndex(_ index: Int, offset: Int, count: Int) -> Int {
+        let target = (index % count + offset % count) % count
+        return target < 0 ? target + count : target
+    }
+
     public func moveSelectionUp(expandSelection: Bool = false) {
         moveSelection(by: -1, extendSelection: expandSelection)
     }
@@ -497,6 +539,7 @@ public final class ClipboardViewModel: ObservableObject {
     }
 
     public func clearSelection() {
+        pendingSelectionMoves.removeAll()
         selectedClipIds.removeAll()
         selectionAnchorId = selectedClipId
     }
