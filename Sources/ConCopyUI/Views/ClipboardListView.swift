@@ -122,6 +122,7 @@ public struct ClipboardListView: View {
                                         ? viewModel.imageThumbnail(for: clip) : nil,
                                     fileIconImage: clip.primaryType == .file ? viewModel.fileIcon(for: clip) : nil,
                                     appIconImage: viewModel.appIcon(for: clip),
+                                    linkMetadata: clip.primaryType == .url ? viewModel.linkMetadata(for: clip) : nil,
                                     onToggleCheck: {
                                         viewModel.toggleSelection(clipId: clip.id)
                                     },
@@ -803,6 +804,7 @@ struct ClipRowView: View, Equatable {
     var thumbnailImage: NSImage? = nil
     var fileIconImage: NSImage? = nil
     var appIconImage: NSImage? = nil
+    var linkMetadata: WebLinkMetadata? = nil
     let onToggleCheck: () -> Void
     var onToggleFavorite: (() -> Void)? = nil
     var onRowClick: (() -> Void)? = nil
@@ -815,7 +817,7 @@ struct ClipRowView: View, Equatable {
             && lhs.isChecked == rhs.isChecked && lhs.isPasting == rhs.isPasting && lhs.isCopied == rhs.isCopied
             && lhs.actionTitle == rhs.actionTitle && lhs.shortcutLabel == rhs.shortcutLabel
             && lhs.quickPasteModifier == rhs.quickPasteModifier && lhs.thumbnailImage === rhs.thumbnailImage
-            && lhs.fileIconImage === rhs.fileIconImage
+            && lhs.fileIconImage === rhs.fileIconImage && lhs.linkMetadata == rhs.linkMetadata
     }
 
     private var accessibilityTitle: String {
@@ -896,14 +898,28 @@ struct ClipRowView: View, Equatable {
                         }
                     }
 
-                    Text(
-                        clip.plainText?.trimmingCharacters(in: .whitespacesAndNewlines)
-                            ?? "No preview available"
-                    )
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.primary)
-                    .lineLimit(2)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    if let meta = linkMetadata, let title = meta.title, !title.isEmpty {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(title)
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(.primary)
+                                .lineLimit(1)
+                            Text(clip.plainText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        Text(
+                            clip.plainText?.trimmingCharacters(in: .whitespacesAndNewlines)
+                                ?? "No preview available"
+                        )
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.primary)
+                        .lineLimit(2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                     if isPasting {
                         ProgressView().controlSize(.mini)
                     } else if isCopied {

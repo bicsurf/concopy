@@ -179,4 +179,25 @@ final class Phase5Tests: XCTestCase {
         let loadedData = try newDatabaseManager.loadPayloadData(for: imagePayload)
         XCTAssertEqual(loadedData, largeData)
     }
+
+    func testWebMetadataFetcherHTMLParsing() async {
+        let fetcher = WebMetadataFetcher()
+        let sampleHTML = """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>  GitHub: Let's build from here  </title>
+            <link rel="icon" href="https://github.githubassets.com/favicons/favicon.png">
+        </head>
+        <body><h1>Hello</h1></body>
+        </html>
+        """
+
+        let title = await fetcher.extractTitle(from: sampleHTML)
+        XCTAssertEqual(title, "GitHub: Let's build from here")
+
+        let baseURL = URL(string: "https://github.com/apple/swift")!
+        let favicon = await fetcher.extractFaviconURL(from: sampleHTML, baseURL: baseURL)
+        XCTAssertEqual(favicon?.absoluteString, "https://github.githubassets.com/favicons/favicon.png")
+    }
 }
