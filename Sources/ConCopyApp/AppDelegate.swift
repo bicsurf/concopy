@@ -195,6 +195,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return AXIsProcessTrustedWithOptions(options)
     }
 
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !AppSettingsManager.shared.showMenuBarIcon {
+            AppSettingsManager.shared.showMenuBarIcon = true
+        }
+        panel?.showPanel()
+        return true
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         clipboardMonitor?.stop()
         screenshotWatcher?.stop()
