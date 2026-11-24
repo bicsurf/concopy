@@ -1,6 +1,8 @@
 # Stato di lavoro — ConCopy
 
-Aggiornato il **19 novembre 2026**. Questo file riassume lo stato verificato del working tree per chi riprende lo sviluppo. I vincoli architetturali restano definiti in [AGENTS.md](AGENTS.md); la cronologia delle versioni è in [CHANGELOG.md](CHANGELOG.md).
+Nota 24 novembre 2026 — nuova feature "mostra/nascondi icona barra dei menu" (`showMenuBarIcon`, default attivo), su branch `feat/hide-menu-bar-icon` (commit `0cbb13c`). L'app è LSUIElement-only: a icona nascosta l'unico ingresso resta la scorciatoia globale del pannello. Verifiche: `swift build` ok, `swift build -c release` ok zero warning, `swift test` 213 test / 1 saltato / 0 fallimenti.
+
+Aggiornato il **24 novembre 2026**. Questo file riassume lo stato verificato del working tree per chi riprende lo sviluppo. I vincoli architetturali restano definiti in [AGENTS.md](AGENTS.md); la cronologia delle versioni è in [CHANGELOG.md](CHANGELOG.md).
 
 ## Stato attuale
 
