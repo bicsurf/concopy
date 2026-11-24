@@ -436,13 +436,106 @@ public final class FloatingPanel: NSPanel {
                 self.previousActiveApp = frontApp
             }
             viewModel.prepareForPanelOpen()
-            positionNearMouse()
+            positionAccordingToSettings()
             orderFrontRegardless()
             makeKeyAndOrderFront(nil)
             DispatchQueue.main.async { [weak self] in
                 self?.viewModel.isSearchFocused = true
             }
         }
+    }
+
+    public func positionAccordingToSettings() {
+        let mode = viewModel.appSettings.panelPositionMode
+        switch mode {
+        case .nearMouse:
+            positionNearMouse()
+        case .nearCaret:
+            if !positionNearCaret() {
+                positionNearMouse()
+            }
+        case .centerScreen:
+            positionCenterScreen()
+        }
+    }
+
+    public func positionCenterScreen() {
+        let mouseLocation = NSEvent.mouseLocation
+        let targetScreen =
+            NSScreen.screens.first { NSMouseInRect(mouseLocation, $0.frame, false) }
+            ?? NSScreen.main
+            ?? NSScreen.screens.first
+
+        let screenFrame = targetScreen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let panelSize = frame.size
+
+        let originX = screenFrame.midX - (panelSize.width / 2)
+        let originY = screenFrame.midY - (panelSize.height / 2)
+
+        setFrameOrigin(NSPoint(x: originX, y: originY))
+    }
+
+    public func positionNearCaret() -> Bool {
+        guard let frontApp = previousActiveApp ?? NSWorkspace.shared.frontmostApplication,
+              frontApp.bundleIdentifier != Bundle.main.bundleIdentifier else {
+            return false
+        }
+
+        let appElement = AXUIElementCreateApplication(frontApp.processIdentifier)
+        var focusedElementValue: AnyObject?
+        let focusedError = AXUIElementCopyAttributeValue(appElement, kAXFocusedUIElementAttribute as CFString, &focusedElementValue)
+        guard focusedError == .success, let focusedElement = focusedElementValue else {
+            return false
+        }
+
+        let element = focusedElement as! AXUIElement
+        var selectedRangeValue: AnyObject?
+        let rangeError = AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &selectedRangeValue)
+        guard rangeError == .success, let selectedRange = selectedRangeValue else {
+            return false
+        }
+
+        var boundsValue: AnyObject?
+        let boundsError = AXUIElementCopyParameterizedAttributeValue(
+            element,
+            kAXBoundsForRangeParameterizedAttribute as CFString,
+            selectedRange,
+            &boundsValue
+        )
+        guard boundsError == .success, let bounds = boundsValue else {
+            return false
+        }
+
+        var caretRect = CGRect.zero
+        guard AXValueGetType(bounds as! AXValue) == .cgRect else { return false }
+        AXValueGetValue(bounds as! AXValue, .cgRect, &caretRect)
+        guard !caretRect.isEmpty, !caretRect.origin.x.isNaN, !caretRect.origin.y.isNaN else { return false }
+
+        // Accessibility coordinates are top-left based (primary screen origin at top-left).
+        // Convert to AppKit bottom-left coordinates.
+        let primaryScreenHeight = NSScreen.screens.first?.frame.height ?? 900
+        let appKitCaretY = primaryScreenHeight - caretRect.origin.y - caretRect.height
+
+        let caretPoint = NSPoint(x: caretRect.origin.x, y: appKitCaretY)
+        let targetScreen =
+            NSScreen.screens.first { NSPointInRect(caretPoint, $0.frame) }
+            ?? NSScreen.main
+            ?? NSScreen.screens.first
+
+        let screenFrame = targetScreen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let panelSize = frame.size
+
+        var originX = caretPoint.x - (panelSize.width / 2)
+        var originY = caretPoint.y - panelSize.height - 12
+
+        originX = max(screenFrame.minX + 8, min(originX, screenFrame.maxX - panelSize.width - 8))
+        if originY < screenFrame.minY + 8 {
+            originY = caretPoint.y + caretRect.height + 12
+        }
+        originY = max(screenFrame.minY + 8, min(originY, screenFrame.maxY - panelSize.height - 8))
+
+        setFrameOrigin(NSPoint(x: originX, y: originY))
+        return true
     }
 
     public func positionNearMouse() {
