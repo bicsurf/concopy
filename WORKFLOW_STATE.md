@@ -1,9 +1,11 @@
 # Stato di lavoro — ConCopy
 
-Nota 24 novembre 2026 — completato Sprint 2 su branch `feat/sprint2-ocr-and-color-swatches` (senza push):
-1. **OCR / Ricerca Testo da Immagini**: introdotto `ImageTextRecognizer` in `ConCopyCore` via Apple `Vision` framework (`VNRecognizeTextRequest`). Ingestione asincrona non bloccante in background su immagini e screenshot catturati, aggiornamento e indicizzazione FTS5 via `DatabaseManager.updateOCRText`. Anteprima testo riconosciuto con tasto copia veloce in `QuickLookPopoverView` e azione contestuale "Copy Text from Image" in `ClipboardListView`.
-2. **Color Swatch & Riconoscimento Colori**: introdotto `ColorParser` e `RGBAColor` in `ConCopyCore` per parsing di formati HEX (`#RGB`, `#RGBA`, `#RRGGBB`, `#RRGGBBAA`), RGB/RGBA e HSL/HSLA. Riconoscimento automatico del tipo `.color` in `ClipboardMonitor.determinePrimaryType`. Mini swatch visivo a colori nella riga clip in `ClipboardListView`. Menu contestuale "Copy Color As" (HEX, RGB, HSL). Aggiunto filtro rapido `colors` in `ClipTypeFilter`.
-3. **Verifiche e Test**: aggiunti test unitari `testColorParserAndFormats` e `testDatabaseOCRUpdateAndSearch` in `Phase4Tests`. Verifiche: `swift build` ok, `swift build -c release` ok zero warning, `swift test` 216 test / 1 saltato / 0 fallimenti.
+Nota 24 novembre 2026 — completato Sprint 3 su branch `feat/sprint3-paste-stack-queue` (senza push):
+1. **Paste Stack / Queue sequenziale**: introdotto modello `PasteQueueTypes` (`PasteQueueOrder` .fifo / .lifo, `PasteQueueItem`) in `ConCopyCore`.
+2. **Coordinamento e Azioni**: aggiunti `pasteQueue`, `addToPasteQueue(clip:)`, `addSelectedToPasteQueue()`, `pasteNextFromQueue()`, `clearPasteQueue()` in `ClipboardViewModel`.
+3. **Scorciatoia Globale**: registrata scorciatoia globale `pasteNextFromQueue` (default `Control + Command + V`) con KeyboardShortcuts per incollare l'elemento successivo senza riaprire il pannello HUD.
+4. **Interfaccia Utente**: badge contatore dinamico con pill e menu rapido nell'header HUD (`Queue/Stack mode toggle`, `Paste Next`, `Clear`), pulsante batch "Add to Queue" nella barra multi-selezione e voce "Add to Paste Queue" nel menu contestuale riga.
+5. **Verifiche e Test**: aggiunto test unitario `testPasteQueueFIFOAndStackLIFO` in `ClipboardViewModelTests`. Verifiche: `swift build` ok, `swift build -c release` ok zero warning, `swift test` 217 test / 1 saltato / 0 fallimenti.
 
 Aggiornato il **24 novembre 2026**. Questo file riassume lo stato verificato del working tree per chi riprende lo sviluppo. I vincoli architetturali restano definiti in [AGENTS.md](AGENTS.md); la cronologia delle versioni è in [CHANGELOG.md](CHANGELOG.md).
 

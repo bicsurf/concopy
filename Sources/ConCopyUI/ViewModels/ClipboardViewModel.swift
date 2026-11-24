@@ -95,6 +95,11 @@ public final class ClipboardViewModel: ObservableObject {
     @Published public var isSnippetEditorPresented: Bool = false
     @Published public var editingSnippet: SnippetRecord? = nil
 
+    // MARK: - Paste Stack / Queue State
+    @Published public var pasteQueue: [ClipRecord] = []
+    @Published public var pasteQueueOrder: PasteQueueOrder = .fifo
+    @Published public var isPasteQueueActive: Bool = false
+
     private var thumbnailCache = NSCache<NSUUID, NSImage>()
     private var copyFeedbackTask: Task<Void, Never>?
 
@@ -809,6 +814,102 @@ public final class ClipboardViewModel: ObservableObject {
                 if isTrusted {
                     self.loadClips()
                 }
+            } catch {
+                self.reportPasteFailure(error)
+            }
+        }
+    }
+
+    // MARK: - Paste Queue / Stack Operations
+
+    public func addToPasteQueue(clip: ClipRecord) {
+        if !pasteQueue.contains(where: { $0.id == clip.id }) {
+            pasteQueue.append(clip)
+            isPasteQueueActive = true
+            showToast("Added to Paste \(pasteQueueOrder == .fifo ? "Queue" : "Stack") (\(pasteQueue.count))")
+        }
+    }
+
+    public func addSelectedToPasteQueue() {
+        let items: [ClipRecord]
+        if !selectedClipIds.isEmpty {
+            items = clips.filter { selectedClipIds.contains($0.id) }
+        } else if selectedIndex >= 0 && selectedIndex < clips.count {
+            items = [clips[selectedIndex]]
+        } else {
+            return
+        }
+
+        for item in items {
+            if !pasteQueue.contains(where: { $0.id == item.id }) {
+                pasteQueue.append(item)
+            }
+        }
+        if !pasteQueue.isEmpty {
+            isPasteQueueActive = true
+            showToast("\(items.count) item(s) added to Paste \(pasteQueueOrder == .fifo ? "Queue" : "Stack") (\(pasteQueue.count))")
+            selectedClipIds.removeAll()
+        }
+    }
+
+    public func clearPasteQueue() {
+        pasteQueue.removeAll()
+        isPasteQueueActive = false
+        showToast("Paste Queue cleared")
+    }
+
+    public func pasteNextFromQueue() {
+        guard !pasteQueue.isEmpty else {
+            showToast("Paste Queue is empty")
+            return
+        }
+
+        let nextClip: ClipRecord
+        if pasteQueueOrder == .fifo {
+            nextClip = pasteQueue.removeFirst()
+        } else {
+            nextClip = pasteQueue.removeLast()
+        }
+
+        if pasteQueue.isEmpty {
+            isPasteQueueActive = false
+        }
+
+        let isTrusted = pasteInjector.eventPoster.isProcessTrusted()
+        let target = pasteTargetProcessIdentifier?()
+
+        if !appSettings.isDirectPasteEnabled || !isTrusted {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                do {
+                    try await self.pasteInjector.copyToPasteboard(
+                        clip: nextClip,
+                        databaseManager: self.databaseManager,
+                        pasteboard: self.pasteboard
+                    )
+                    self.showToast("Copied next item! \(self.pasteQueue.count) remaining. Press ⌘V to paste.")
+                } catch {
+                    self.reportPasteFailure(error)
+                }
+            }
+            return
+        }
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                try await self.pasteInjector.paste(
+                    clip: nextClip,
+                    databaseManager: self.databaseManager,
+                    pasteboard: self.pasteboard,
+                    forcePlainText: false,
+                    transformation: .none,
+                    targetProcessIdentifier: target,
+                    beforeEventHook: { [weak self] in
+                        self?.onClosePanel?()
+                    }
+                )
+                self.showToast("Pasted! \(self.pasteQueue.count) remaining in \(self.pasteQueueOrder == .fifo ? "Queue" : "Stack")")
             } catch {
                 self.reportPasteFailure(error)
             }

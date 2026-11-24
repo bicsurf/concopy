@@ -323,6 +323,49 @@ final class ClipboardViewModelTests: XCTestCase {
         XCTAssertEqual(vm.clips.count, 3)
     }
 
+    func testPasteQueueFIFOAndStackLIFO() async throws {
+        let settings = AppSettingsManager(userDefaults: UserDefaults(suiteName: "Test_\(UUID().uuidString)")!)
+        let mockPoster = MockCGEventPoster()
+        let injector = PasteInjector(eventPoster: mockPoster)
+        let vm = ClipboardViewModel(databaseManager: databaseManager, pasteInjector: injector, appSettings: settings)
+
+        let clip1 = try databaseManager.ingestCapturedClip(CapturedClip(plainText: "Item 1", primaryType: .text))
+        let clip2 = try databaseManager.ingestCapturedClip(CapturedClip(plainText: "Item 2", primaryType: .text))
+        let clip3 = try databaseManager.ingestCapturedClip(CapturedClip(plainText: "Item 3", primaryType: .text))
+
+        // FIFO Queue Mode
+        vm.pasteQueueOrder = .fifo
+        vm.addToPasteQueue(clip: clip1)
+        vm.addToPasteQueue(clip: clip2)
+        vm.addToPasteQueue(clip: clip3)
+
+        XCTAssertEqual(vm.pasteQueue.count, 3)
+        XCTAssertTrue(vm.isPasteQueueActive)
+
+        // Paste first item (FIFO -> Item 1)
+        vm.pasteNextFromQueue()
+        try await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertEqual(NSPasteboard.general.string(forType: .string), "Item 1")
+        XCTAssertEqual(vm.pasteQueue.count, 2)
+
+        // Clear queue
+        vm.clearPasteQueue()
+        XCTAssertEqual(vm.pasteQueue.count, 0)
+        XCTAssertFalse(vm.isPasteQueueActive)
+
+        // LIFO Stack Mode
+        vm.pasteQueueOrder = .lifo
+        vm.addToPasteQueue(clip: clip1)
+        vm.addToPasteQueue(clip: clip2)
+        vm.addToPasteQueue(clip: clip3)
+
+        // Paste next item (LIFO -> Item 3)
+        vm.pasteNextFromQueue()
+        try await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertEqual(NSPasteboard.general.string(forType: .string), "Item 3")
+        XCTAssertEqual(vm.pasteQueue.count, 2)
+    }
+
     private func makeCopyOnlyViewModel() throws -> ClipboardViewModel {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: "Test_\(UUID().uuidString)"))
         let settings = AppSettingsManager(userDefaults: defaults)

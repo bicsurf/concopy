@@ -352,6 +352,54 @@ public struct ClipboardListView: View {
                 .disabled(viewModel.isSnippetsOnly)
                 .accessibilityLabel("Sort clips")
                 .help("Sort: \(viewModel.currentSortMode.displayName)")
+
+                if !viewModel.pasteQueue.isEmpty {
+                    Menu {
+                        Section("Paste Mode") {
+                            Button {
+                                viewModel.pasteQueueOrder = .fifo
+                            } label: {
+                                if viewModel.pasteQueueOrder == .fifo {
+                                    Label("Queue (FIFO - First in First out)", systemImage: "checkmark")
+                                } else {
+                                    Text("Queue (FIFO - First in First out)")
+                                }
+                            }
+                            Button {
+                                viewModel.pasteQueueOrder = .lifo
+                            } label: {
+                                if viewModel.pasteQueueOrder == .lifo {
+                                    Label("Stack (LIFO - Last in First out)", systemImage: "checkmark")
+                                } else {
+                                    Text("Stack (LIFO - Last in First out)")
+                                }
+                            }
+                        }
+                        Divider()
+                        Button("Paste Next Item (⌃⌘V)") {
+                            viewModel.pasteNextFromQueue()
+                        }
+                        Button("Clear Queue (\(viewModel.pasteQueue.count))", role: .destructive) {
+                            viewModel.clearPasteQueue()
+                        }
+                    } label: {
+                        HStack(spacing: 3) {
+                            Image(systemName: "rectangle.stack.fill")
+                                .font(.system(size: 11, weight: .semibold))
+                            Text("\(viewModel.pasteQueue.count)")
+                                .font(.system(size: 10, weight: .bold))
+                        }
+                        .foregroundStyle(ConCopyTheme.Accents.primary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(ConCopyTheme.Accents.primary.opacity(0.15), in: Capsule())
+                    }
+                    .menuIndicator(.hidden)
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .help("Paste \(viewModel.pasteQueueOrder == .fifo ? "Queue" : "Stack"): \(viewModel.pasteQueue.count) item(s). Shortcut: ⌃⌘V")
+                }
+
                 PanelIconButton(title: "Settings", systemImage: "gearshape") {
                     if let action = viewModel.onOpenSettings {
                         action()
@@ -593,6 +641,14 @@ public struct ClipboardListView: View {
                 }
             }
             HStack(spacing: 8) {
+                Button {
+                    viewModel.addSelectedToPasteQueue()
+                } label: {
+                    Label("Add to Queue", systemImage: "rectangle.stack.badge.plus")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.regular)
+
                 if viewModel.selectedClipIds.count > 1 {
                     Picker("Join with", selection: $viewModel.batchSeparator) {
                         ForEach(BatchPasteSeparator.allCases, id: \.self) { separator in
@@ -704,6 +760,12 @@ public struct ClipboardListView: View {
                 viewModel.createSnippetFromClip(clip)
             } label: {
                 Label("Save as Snippet...", systemImage: "curlybraces")
+            }
+
+            Button {
+                viewModel.addToPasteQueue(clip: clip)
+            } label: {
+                Label("Add to Paste Queue", systemImage: "rectangle.stack.badge.plus")
             }
 
             if let color = ColorParser.parse(clip.plainText ?? "") {

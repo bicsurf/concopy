@@ -76,6 +76,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             floatingPanel?.togglePanel()
         }
 
+        KeyboardShortcuts.onKeyUp(for: .pasteNextFromQueue) { [weak self] in
+            self?.viewModel?.pasteNextFromQueue()
+        }
+
         let monitor = ClipboardMonitor()
         monitor.onNewCapturedClip = { [weak self] captured in
             guard let self else { return }
