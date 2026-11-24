@@ -126,4 +126,25 @@ final class PreferencesTests: XCTestCase {
         XCTAssertTrue(reloaded.isDirectPasteEnabled)
         XCTAssertTrue(testDefaults.bool(forKey: AppSettingsManager.isDirectPasteEnabledKey))
     }
+
+    @MainActor
+    func testMenuBarIconPreferenceDefaultAndPersistence() {
+        let settings = AppSettingsManager(userDefaults: testDefaults)
+        // Default must be true
+        XCTAssertTrue(settings.showMenuBarIcon)
+
+        // Hide and verify persistence
+        settings.showMenuBarIcon = false
+        XCTAssertFalse(settings.showMenuBarIcon)
+        XCTAssertFalse(testDefaults.bool(forKey: AppSettingsManager.showMenuBarIconKey))
+
+        // Recreate manager with same defaults
+        let reloaded = AppSettingsManager(userDefaults: testDefaults)
+        XCTAssertFalse(reloaded.showMenuBarIcon)
+
+        // Show again
+        reloaded.showMenuBarIcon = true
+        XCTAssertTrue(reloaded.showMenuBarIcon)
+        XCTAssertTrue(testDefaults.bool(forKey: AppSettingsManager.showMenuBarIconKey))
+    }
 }

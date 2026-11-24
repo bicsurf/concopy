@@ -146,6 +146,10 @@ public struct PreferencesView: View {
 
             Section(header: Text("General")) {
                 Toggle("Launch automatically at login", isOn: $settingsManager.launchAtLogin)
+                Toggle("Show menu bar icon", isOn: $settingsManager.showMenuBarIcon)
+                Text("When hidden, reopen ConCopy with the panel shortcut, then re-enable this in Settings.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 VStack(alignment: .leading, spacing: 6) {
                     Picker("When clicking a clip", selection: $settingsManager.isDirectPasteEnabled) {
                         Text("Copy to clipboard").tag(false)

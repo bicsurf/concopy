@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import ConCopyCore
 
 @MainActor
@@ -7,12 +8,19 @@ public final class StatusItemController: NSObject {
     private let onToggle: () -> Void
     private let onClosePanel: (() -> Void)?
     private weak var panel: FloatingPanel?
+    private var showIconObserver: AnyCancellable?
 
     public init(onToggle: @escaping () -> Void, onClosePanel: (() -> Void)? = nil) {
         self.onToggle = onToggle
         self.onClosePanel = onClosePanel
         super.init()
-        setupStatusItem()
+        let settings = AppSettingsManager.shared
+        if settings.showMenuBarIcon {
+            setupStatusItem()
+        }
+        showIconObserver = settings.$showMenuBarIcon.sink { [weak self] visible in
+            self?.updateStatusItem(visible: visible)
+        }
     }
 
     public convenience init(panel: FloatingPanel) {
@@ -44,6 +52,17 @@ public final class StatusItemController: NSObject {
         self.statusItem = item
     }
 
+    private func updateStatusItem(visible: Bool) {
+        if visible {
+            if statusItem == nil {
+                setupStatusItem()
+            }
+        } else {
+            statusItem?.menu = nil
+            statusItem = nil
+        }
+    }
+
     @objc private func statusItemClicked(_ sender: NSStatusBarButton) {
         guard let event = NSApp.currentEvent else {
             onToggle()
@@ -56,6 +75,10 @@ public final class StatusItemController: NSObject {
             let showItem = NSMenuItem(title: "Show ConCopy", action: #selector(showConCopy), keyEquivalent: "")
             showItem.target = self
             menu.addItem(showItem)
+
+            let hideIconItem = NSMenuItem(title: "Hide Menu Bar Icon", action: #selector(hideMenuBarIcon), keyEquivalent: "")
+            hideIconItem.target = self
+            menu.addItem(hideIconItem)
 
             menu.addItem(NSMenuItem.separator())
 
@@ -100,6 +123,10 @@ public final class StatusItemController: NSObject {
         } else {
             onToggle()
         }
+    }
+
+    @objc private func hideMenuBarIcon() {
+        AppSettingsManager.shared.showMenuBarIcon = false
     }
 
     @objc private func toggleMonitoringPause() {

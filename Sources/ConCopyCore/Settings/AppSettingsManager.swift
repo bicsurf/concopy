@@ -17,6 +17,7 @@ public final class AppSettingsManager: ObservableObject {
     public static let isAutoCheckUpdatesEnabledKey = "ConCopy.Settings.isAutoCheckUpdatesEnabled"
     public static let lastUpdateCheckDateKey = "ConCopy.Settings.lastUpdateCheckDate"
     public static let skippedUpdateVersionKey = "ConCopy.Settings.skippedUpdateVersion"
+    public static let showMenuBarIconKey = "ConCopy.Settings.showMenuBarIcon"
 
     public static let defaultExcludedAppBundleIds: [String] = [
         "com.agilebits.onepassword",
@@ -98,6 +99,12 @@ public final class AppSettingsManager: ObservableObject {
         }
     }
 
+    @Published public var showMenuBarIcon: Bool {
+        didSet {
+            defaults.set(showMenuBarIcon, forKey: Self.showMenuBarIconKey)
+        }
+    }
+
     public init(userDefaults: UserDefaults = .standard) {
         self.defaults = userDefaults
 
@@ -153,6 +160,12 @@ public final class AppSettingsManager: ObservableObject {
 
         self.lastUpdateCheckDate = userDefaults.object(forKey: Self.lastUpdateCheckDateKey) as? Date
         self.skippedUpdateVersion = userDefaults.string(forKey: Self.skippedUpdateVersionKey)
+
+        if userDefaults.object(forKey: Self.showMenuBarIconKey) != nil {
+            self.showMenuBarIcon = userDefaults.bool(forKey: Self.showMenuBarIconKey)
+        } else {
+            self.showMenuBarIcon = true
+        }
     }
 
     public var shouldCaptureScreenshots: Bool {
