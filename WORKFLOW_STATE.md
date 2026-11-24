@@ -1,14 +1,9 @@
 # Stato di lavoro — ConCopy
 
-Nota 24 novembre 2026 — completato Sprint 4 su branch `feat/sprint4-dynamic-snippets` (senza push):
-1. **Risolutore di Variabili Snippet**: creato `SnippetVariableResolver` in `ConCopyCore` per estrazione e sostituzione sicura di:
-   - Placeholder automatici: `{date}` (YYYY-MM-DD), `{time}` (HH:mm:ss), `{datetime}`, `{uuid}` (UUID v4 minuscolo), `{clipboard}` (contenuto attuale degli appunti).
-   - Variabili dinamiche personalizzate: sintassi `{nome_variabile}`.
-2. **UI & Foglio Modale di Compilazione**:
-   - `ClipboardViewModel.pasteSnippet` controlla la presenza di variabili custom: se presenti apre il foglio `SnippetVariablesPromptSheetView` per la digitazione dei valori; altrimenti risolve i placeholder automatici e incolla istantaneamente.
-   - Creata `SnippetVariablesPromptSheetView` con autofocus, design pulito dei campi e pulsante "Paste Snippet".
-   - Aggiornata la guida di testo in `SnippetEditorSheetView` per spiegare l'uso dei placeholder `{date}`, `{time}`, `{clipboard}`, `{uuid}`, `{nome}`.
-3. **Verifiche e Test**: aggiunto test unitario `testSnippetVariableResolver` in `Phase4Tests`. Verifiche: `swift build` ok, `swift build -c release` ok zero warning, `swift test` 218 test / 1 saltato / 0 fallimenti.
+Nota 24 novembre 2026 — risolto bug incollaggio batch immagini su branch `fix/batch-paste-multi-images` (senza push):
+1. **Batch Paste Multi-Immagini**: in `PasteInjector.copyBatchToPasteboard`, se tutti gli elementi selezionati sono di tipo `.image`, invece di concatenare il testo OCR (`clip.plainText`), le immagini vengono esportate temporaneamente tramite `FilePasteExporter` e registrate come oggetti `NSURL` (`writeObjects`) sul pasteboard.
+2. **Compatibilità**: permette l'incollo contemporaneo di più immagini nel Finder, chat (Telegram, Slack, Messaggi), Keynote, Word, ecc. come file/immagini nativi. Mantiene la concatenazione di testo se la selezione è mista o contiene testo.
+3. **Verifiche e Test**: aggiunto test unitario `testBatchPasteMultipleImagesWritesFileObjects` in `Phase4Tests`. Verifiche: `swift build` ok, `swift build -c release` ok zero warning, `swift test` 219 test / 1 saltato / 0 fallimenti.
 
 Aggiornato il **24 novembre 2026**. Questo file riassume lo stato verificato del working tree per chi riprende lo sviluppo. I vincoli architetturali restano definiti in [AGENTS.md](AGENTS.md); la cronologia delle versioni è in [CHANGELOG.md](CHANGELOG.md).
 

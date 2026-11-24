@@ -149,6 +149,49 @@ final class Phase4Tests: XCTestCase {
     }
 
     @MainActor
+    func testBatchPasteMultipleImagesWritesFileObjects() async throws {
+        let imageData = try createSampleImageData()
+        let clip1 = try databaseManager.ingestCapturedClip(
+            CapturedClip(
+                plainText: "Image1.png",
+                primaryType: .image,
+                representations: ["public.png": imageData]
+            )
+        )
+        let clip2 = try databaseManager.ingestCapturedClip(
+            CapturedClip(
+                plainText: "Image2.png",
+                primaryType: .image,
+                representations: ["public.png": imageData]
+            )
+        )
+
+        let mockPoster = MockCGEventPoster()
+        let exporter = FilePasteExporter(exportDirectoryURL: tempDir)
+        let injector = PasteInjector(eventPoster: mockPoster, fileExporter: exporter)
+        let pasteboard = NSPasteboard.withUniqueName()
+
+        try await injector.pasteBatch(
+            clips: [clip1, clip2],
+            mode: .concatenated(separator: .newline),
+            transformation: .none,
+            databaseManager: databaseManager,
+            pasteboard: pasteboard
+        )
+
+        XCTAssertEqual(mockPoster.postCommandVCalledCount, 1)
+        XCTAssertNotNil(pasteboard.data(forType: PasteInjector.internalPasteMarker))
+
+        let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL]
+        XCTAssertNotNil(urls)
+        XCTAssertEqual(urls?.count, 2)
+        for url in urls ?? [] {
+            XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+            XCTAssertEqual(url.pathExtension, "png")
+        }
+    }
+
+    @MainActor
     func testBatchPasteSequentialFormFields() async throws {
         let clip1 = try databaseManager.ingestCapturedClip(CapturedClip(plainText: "Name"))
         let clip2 = try databaseManager.ingestCapturedClip(CapturedClip(plainText: "Email"))
