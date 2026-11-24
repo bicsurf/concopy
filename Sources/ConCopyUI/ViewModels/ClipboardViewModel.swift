@@ -95,6 +95,8 @@ public final class ClipboardViewModel: ObservableObject {
     @Published public var editingSnippet: SnippetRecord? = nil
 
     private var thumbnailCache = NSCache<NSUUID, NSImage>()
+    private var webMetadataCache: [UUID: WebLinkMetadata] = [:]
+    @Published public var webMetadataVersion: Int = 0
     private var copyFeedbackTask: Task<Void, Never>?
 
     public let databaseManager: DatabaseManager
@@ -1177,5 +1179,22 @@ public final class ClipboardViewModel: ObservableObject {
 
     public func appIcon(for clip: ClipRecord) -> NSImage? {
         AppIconProvider.shared.icon(for: clip.sourceAppBundleId)
+    }
+
+    public func linkMetadata(for clip: ClipRecord) -> WebLinkMetadata? {
+        guard clip.primaryType == .url, let urlString = clip.plainText else { return nil }
+        if let cached = webMetadataCache[clip.id] { return cached }
+        if thumbnailTasks.insert(clip.id).inserted {
+            Task { [weak self] in
+                let meta = await WebMetadataFetcher.shared.fetchMetadata(for: urlString)
+                guard let self else { return }
+                self.thumbnailTasks.remove(clip.id)
+                if let meta {
+                    self.webMetadataCache[clip.id] = meta
+                    self.webMetadataVersion &+= 1
+                }
+            }
+        }
+        return nil
     }
 }
