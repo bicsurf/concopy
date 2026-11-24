@@ -700,6 +700,24 @@ public struct ClipboardListView: View {
             }
         }
 
+        if let text = clip.plainText, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            Menu("Quick Actions") {
+                ForEach(QuickActionType.allCases, id: \.self) { action in
+                    if QuickActionRunner.canExecute(action, for: clip) {
+                        Button {
+                            QuickActionRunner.execute(action, text: text) { feedback in
+                                if let feedback {
+                                    viewModel.showToast(feedback)
+                                }
+                            }
+                        } label: {
+                            Label(action.title, systemImage: action.systemImage)
+                        }
+                    }
+                }
+            }
+        }
+
         Divider()
 
         Button("Delete", role: .destructive) {

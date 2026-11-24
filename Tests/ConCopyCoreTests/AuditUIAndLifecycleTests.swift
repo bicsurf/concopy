@@ -179,6 +179,32 @@ final class AuditUIAndLifecycleTests: XCTestCase {
         XCTAssertTrue(vm.isSnippetEditorPresented)
         XCTAssertEqual(vm.editingSnippet?.content, "unsaved work")
     }
+
+    func testQuickActionEligibility() {
+        let textClip = ClipRecord(
+            contentHash: "hash1",
+            plainText: "echo hello",
+            primaryType: .text
+        )
+        XCTAssertTrue(QuickActionRunner.canExecute(.terminal, for: textClip))
+        XCTAssertTrue(QuickActionRunner.canExecute(.runShellScript, for: textClip))
+        XCTAssertTrue(QuickActionRunner.canExecute(.openInTextEdit, for: textClip))
+        XCTAssertFalse(QuickActionRunner.canExecute(.openInBrowser, for: textClip))
+
+        let urlClip = ClipRecord(
+            contentHash: "hash2",
+            plainText: "https://apple.com",
+            primaryType: .url
+        )
+        XCTAssertTrue(QuickActionRunner.canExecute(.openInBrowser, for: urlClip))
+
+        let emptyClip = ClipRecord(
+            contentHash: "hash3",
+            plainText: "   ",
+            primaryType: .text
+        )
+        XCTAssertFalse(QuickActionRunner.canExecute(.terminal, for: emptyClip))
+    }
 }
 
 private final class AuditCounter: @unchecked Sendable {
