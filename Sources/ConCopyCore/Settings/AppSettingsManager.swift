@@ -19,6 +19,7 @@ public final class AppSettingsManager: ObservableObject {
     public static let skippedUpdateVersionKey = "ConCopy.Settings.skippedUpdateVersion"
     public static let showMenuBarIconKey = "ConCopy.Settings.showMenuBarIcon"
     public static let maskSensitiveDataKey = "ConCopy.Settings.maskSensitiveData"
+    public static let panelPositionModeKey = "ConCopy.Settings.panelPositionMode"
 
     public static let defaultExcludedAppBundleIds: [String] = [
         "com.agilebits.onepassword",
@@ -112,6 +113,12 @@ public final class AppSettingsManager: ObservableObject {
         }
     }
 
+    @Published public var panelPositionMode: PanelPositionMode {
+        didSet {
+            defaults.set(panelPositionMode.rawValue, forKey: Self.panelPositionModeKey)
+        }
+    }
+
     public init(userDefaults: UserDefaults = .standard) {
         self.defaults = userDefaults
 
@@ -178,6 +185,13 @@ public final class AppSettingsManager: ObservableObject {
             self.maskSensitiveData = userDefaults.bool(forKey: Self.maskSensitiveDataKey)
         } else {
             self.maskSensitiveData = true
+        }
+
+        if let rawMode = userDefaults.string(forKey: Self.panelPositionModeKey),
+            let mode = PanelPositionMode(rawValue: rawMode) {
+            self.panelPositionMode = mode
+        } else {
+            self.panelPositionMode = .nearMouse
         }
     }
 

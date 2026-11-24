@@ -173,4 +173,19 @@ final class PreferencesTests: XCTestCase {
         XCTAssertFalse(SensitiveDataDetector.isSensitive(normalText))
         XCTAssertEqual(SensitiveDataDetector.maskSensitiveText(normalText), normalText)
     }
+
+    @MainActor
+    func testPanelPositionModeDefaultAndPersistence() {
+        let settings = AppSettingsManager(userDefaults: testDefaults)
+        XCTAssertEqual(settings.panelPositionMode, .nearMouse)
+
+        settings.panelPositionMode = .nearCaret
+        XCTAssertEqual(testDefaults.string(forKey: AppSettingsManager.panelPositionModeKey), "nearCaret")
+
+        let reloaded = AppSettingsManager(userDefaults: testDefaults)
+        XCTAssertEqual(reloaded.panelPositionMode, .nearCaret)
+
+        settings.panelPositionMode = .centerScreen
+        XCTAssertEqual(testDefaults.string(forKey: AppSettingsManager.panelPositionModeKey), "centerScreen")
+    }
 }

@@ -170,6 +170,19 @@ public struct PreferencesView: View {
                     .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(.vertical, 4)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Picker("Panel opening position", selection: $settingsManager.panelPositionMode) {
+                        ForEach(PanelPositionMode.allCases, id: \.self) { mode in
+                            Text(mode.title).tag(mode)
+                        }
+                    }
+                    Text(settingsManager.panelPositionMode.description)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.vertical, 4)
             }
 
             Section(header: Text("Updates")) {
