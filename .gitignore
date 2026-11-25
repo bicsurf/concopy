@@ -8,6 +8,10 @@ DerivedData/
 *.xcworkspace
 *.dmg
 
+# Local signing and Xcode configs
+*.xcconfig
+local.xcconfig
+
 # macOS System Files
 .DS_Store
 .AppleDouble

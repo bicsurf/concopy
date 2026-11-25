@@ -8,6 +8,24 @@ Le voci da 1.2.1 a 1.3.1 sono state ricostruite dai tag e dai commit locali. Le 
 
 ### Aggiunto
 
+- **Filtri Rapidi & Trasformazioni Testo Developer**:
+  - Filtri per tipologia di contenuto (testo, codice, link, immagini, colori).
+  - Trasformazioni integrate per sviluppatori: formattazione/minificazione JSON, codifica/decodifica URL e Base64, conversione case (camelCase, snake_case, PascalCase, kebab-case) e conversione Markdown/HTML.
+- **Riconoscimento OCR e Campioni Colore**:
+  - Estrazione del testo da immagini catturate tramite Apple Vision Framework con indicizzazione per la ricerca FTS5.
+  - Riconoscimento automatico di valori colore (HEX, RGB, HSL) e swatch preview interattiva.
+- **Paste Stack & Coda Sequenziale**:
+  - Modalità Paste Stack (LIFO) e Paste Queue (FIFO) per incollare in successione serie di clip negli applicativi target.
+- **Snippet Dinamici con Variabili**:
+  - Supporto per variabili dinamiche (`{date}`, `{time}`, `{clipboard}`) e placeholder interattivi con foglio di compilazione al volo prima dell'incollaggio.
+- **Batch Paste Multi-Immagini Nativo**:
+  - Esportazione ed incollaggio nativo di selezioni multiple di immagini come file/oggetti `NSURL` nel Finder e nelle app di messaggistica.
+- **Privacy Shield & Mascheramento Dati Sensibili**:
+  - Rilevamento automatico e mascheramento opzionale di carte di credito, password e token API con sblocco biometrico locale.
+- **Posizionamento Contestuale del Pannello**:
+  - Modalità di ancoraggio del pannello fluttuante in corrispondenza del cursore (caret), del puntatore del mouse o centrato sullo schermo.
+- **Azioni Rapide & Anteprima Metadati Link**:
+  - Apertura/esecuzione rapida di clip in Terminale, browser o script e anteprima arricchita dei link web (titoli e favicon).
 - 25 test di regressione per i dieci rilievi D01–D10 dell'audit di produzione del 19 novembre: destinazione, concorrenza e annullamento degli incollaggi, Unicode, fallback, transazioni, recupero cloud e coerenza dei badge.
 - Sincronizzazione v2 di payload, liste e snippet, con identità stabili, alias e cancellazioni persistenti; lettura del precedente file v1 per la migrazione.
 - Componenti dei contatori d’uso indipendenti per dispositivo e clock separati per preferiti, nomi, liste e ordine manuale.
