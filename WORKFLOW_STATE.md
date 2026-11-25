@@ -1,41 +1,46 @@
-# Stato di lavoro — ConCopy
+# Work Status — ConCopy
 
-Nota 24 novembre 2026 — risolto bug incollaggio batch immagini su branch `fix/batch-paste-multi-images` (senza push):
-1. **Batch Paste Multi-Immagini**: in `PasteInjector.copyBatchToPasteboard`, se tutti gli elementi selezionati sono di tipo `.image`, invece di concatenare il testo OCR (`clip.plainText`), le immagini vengono esportate temporaneamente tramite `FilePasteExporter` e registrate come oggetti `NSURL` (`writeObjects`) sul pasteboard.
-2. **Compatibilità**: permette l'incollo contemporaneo di più immagini nel Finder, chat (Telegram, Slack, Messaggi), Keynote, Word, ecc. come file/immagini nativi. Mantiene la concatenazione di testo se la selezione è mista o contiene testo.
-3. **Verifiche e Test**: aggiunto test unitario `testBatchPasteMultipleImagesWritesFileObjects` in `Phase4Tests`. Verifiche: `swift build` ok, `swift build -c release` ok zero warning, `swift test` 219 test / 1 saltato / 0 fallimenti.
+Note November 24, 2026 — multi-image batch paste resolved on branch `fix/batch-paste-multi-images`:
+1. **Multi-Image Batch Paste**: In `PasteInjector.copyBatchToPasteboard`, when all selected clips are of type `.image`, instead of concatenating OCR text (`clip.plainText`), images are exported temporarily via `FilePasteExporter` and registered as native `NSURL` file objects (`writeObjects`) onto the system pasteboard.
+2. **Compatibility**: Enables simultaneous multi-image pasting into Finder, chat apps (Telegram, Slack, Messages), Keynote, Pages, Word, etc. Text concatenation is preserved when the selection contains text or mixed types.
+3. **Verification & Tests**: Added unit test `testBatchPasteMultipleImagesWritesFileObjects` in `Phase4Tests`. Verifications: `swift build` ok, `swift build -c release` ok (zero warnings), `swift test` 228 tests / 1 skipped / 0 failures.
 
-Aggiornato il **24 novembre 2026**. Questo file riassume lo stato verificato del working tree per chi riprende lo sviluppo. I vincoli architetturali restano definiti in [AGENTS.md](AGENTS.md); la cronologia delle versioni è in [CHANGELOG.md](CHANGELOG.md).
+Updated on **November 25, 2026**. This file summarizes the verified working tree state for developers continuing development. Architectural constraints remain in [AGENTS.md](AGENTS.md); version history is maintained in [CHANGELOG.md](CHANGELOG.md).
 
-## Stato attuale
+---
 
-| Voce | Stato |
+## Current Status
+
+| Item | Status |
 | --- | --- |
-| Branch rilevato | `main` |
-| Base Git | `8a6d344`; ultimo tag locale `v1.3.2`. |
-| Working tree | Contiene modifiche e nuovi file non ancora committati, inclusi gli interventi D01–D10. Preservarli quando si riprende il lavoro. |
-| Ultimo intervento funzionale | Rimossi titoli automatici e nomi aggiuntivi dalle righe; la cronologia mostra il contenuto copiato. Completate in precedenza le correzioni D01–D10 e le prove di focus/incollaggio in applicazioni reali. |
-| Scorciatoie | La successiva istruzione dell’utente ha spostato i comandi Option su ⌘⌥; mantenuti ⌥Invio e l’alias ⌘A con mapping predefinito. |
-| Pulizia | Rimossi script manuali, report, log e bundle QA temporanei. Gli esiti sono riassunti qui e nel changelog; la suite di regressione è conservata. |
-| Pubblicazione | La 1.3.2 è già rilasciata. La prossima release non è stata preparata. |
+| Active Branch | `chore/repo-prep-license-funding-readme` |
+| Git Base | `719dced`; latest local tag `v1.3.2`. |
+| Working Tree | Clean pre-release documentation & packaging improvements ready for review. |
+| Functional Work | Full Sprint 1–4 capabilities implemented (quick filters, developer text transforms, Vision OCR & color swatches, paste stack & queue, dynamic snippet variables, privacy shield masking, contextual panel positioning, quick actions & rich link previews, multi-image batch paste). |
+| Keyboard Shortcuts | Default mapping uses ⌘⌥ for quick paste and ⌘ for navigation; ⌥Enter retains plain text paste, and ⌘A returns to All Clips. Swap option available in Settings. |
+| Licensing | GPLv3 text in `LICENSE`, `CONTRIBUTING.md` CLA established, references updated. |
+| Cleanup | Temporary test logs, manual QA reports, and artifacts removed. Full regression test suite retained. |
+| Publication | v1.3.2 released; next minor/patch release in preparation. |
 
-Branch, tag e pulizia del working tree sono uno snapshot: verificarli nuovamente con `git status --short` e `git log -1 --oneline --decorate` prima di operare.
+Verify repository state with `git status --short` and `git log -1 --oneline --decorate` before starting work.
 
-## Stack e confini dei moduli
+---
 
-| Area | Implementazione attuale |
+## Module Boundaries & Stack
+
+| Area | Implementation |
 | --- | --- |
-| Runtime verificato | macOS, Swift 6.4.2, arm64; destinazione minima macOS 14. |
+| Verified Runtime | macOS 14+, Swift 6.4.2 arm64 (Swift 5.9 supported). |
 | Manifest | Swift Package Manager, `swift-tools-version: 5.9`. |
-| Dipendenze | GRDB 7.5.0 con Swift 6+; GRDB 6.29.3 nel ramo condizionale Swift 5.9; KeyboardShortcuts in `ConCopyUI`. |
-| `ConCopyCore` | Logica di cattura, SQLite/FTS5, blob, importazione, backup, screenshot, incollaggio e iCloud Drive. Non importare SwiftUI o classi di vista/finestra. |
-| `ConCopyUI` | AppKit/SwiftUI; `ClipboardViewModel` su `@MainActor`, pannello non attivante e anteprime. |
-| `ConCopyApp` | Eseguibile menubar con `LSUIElement`, inizializzazione e coordinamento dei servizi. |
-| Storage | `DatabasePool` su disco, `DatabaseQueue` nei test in memoria; FTS5 external-content `clips_fts`. |
-| Blob | Inline fino a 4096 byte; oltre tale soglia file `<sha256>.blob`, verificati all’apertura e riparati atomicamente se corrotti al successivo salvataggio di dati integri. |
-| Verifiche | XCTest e comandi SPM; gli script di packaging sono separati dalle build native dell’host. |
+| Dependencies | GRDB 7.5.0 with Swift 6+ (GRDB 6.29.3 on Swift 5.9); KeyboardShortcuts in `ConCopyUI`. |
+| `ConCopyCore` | Pasteboard monitoring, SQLite/FTS5, blobs, importers, backup, screenshots, synthetic paste events, and iCloud Drive sync. No SwiftUI or AppKit view imports. |
+| `ConCopyUI` | AppKit/SwiftUI; `@MainActor ClipboardViewModel`, non-activating HUD panel, and previews. |
+| `ConCopyApp` | Menubar app with `LSUIElement`, service orchestration and lifecycle. |
+| Storage | `DatabasePool` on disk, `DatabaseQueue` for in-memory tests; FTS5 external-content table `clips_fts`. |
+| Blobs | Inlined up to 4,096 bytes; files over 4 KiB stored as `<sha256>.blob`, verified on open and repaired atomically on write. |
+| Verification | XCTest and SPM commands. Packaging scripts remain decoupled from native host builds. |
 
-Percorsi di produzione:
+Production storage paths:
 
 ```text
 ~/Library/Application Support/ConCopy/concopy.sqlite
@@ -43,63 +48,69 @@ Percorsi di produzione:
 ~/Library/Mobile Documents/com~apple~CloudDocs/ConCopy/sync-state-v2.json
 ```
 
-## Correzioni degli audit
+---
 
-Gli esiti riassumono i casi verificati nelle rispettive revisioni. Una chiusura storica non certifica l’assenza di difetti successivi nella stessa funzione.
+## Audit Corrections & Preserved Invariants
 
-| Ciclo | Interventi |
+Audit results summarize verified cases from previous review passes. Historic passes do not guarantee absence of new issues.
+
+| Cycle | Scope |
 | --- | --- |
-| Primo audit | 37 interventi applicati; A30 escluso in quel ciclo. |
-| Secondo audit | B01–B20 corretti, con verifica iniziale di B19 e 24 test aggiunti. Alcuni percorsi sono stati ulteriormente corretti nel terzo ciclo. |
-| Terzo audit | C01–C11 corretti, con 17 test aggiunti. |
-| Audit di produzione | D01–D10 corretti, con 25 test aggiunti; coperti destinazione, concorrenza, Unicode, fallback, transazioni, recupero cloud e badge. |
+| Cycle 1 | 37 items addressed; A30 deferred. |
+| Cycle 2 | B01–B20 resolved; 24 regression tests added. |
+| Cycle 3 | C01–C11 resolved; 17 regression tests added. |
+| Production Audit | D01–D10 resolved; 25 regression tests added (concurrency, Unicode, fallback, transactions, cloud recovery, badges). |
 
-### Invarianti da conservare
+### Key Invariants to Preserve
 
-- **C01 / migrazione:** ricalcolare un’identità binaria non crea una nuova modifica utente. Conservare revisioni, cancellazioni e alias preesistenti.
-- **C02 / metadati:** preferito, nome, lista e ordine manuale hanno clock indipendenti dal contenuto. Distinguere i valori predefiniti di una ricattura dalle rimozioni esplicite, anche attraverso un alias offline.
-- **C03 / contatori:** la componente legacy mantiene l’ID originario dell’archivio dopo la deduplicazione; il ripristino ripetuto non deve sommare due volte lo stesso uso.
-- **C04 / snippet:** usare provenienza e identità persistenti per riconoscere una versione già ripristinata. Una shortcut con il suffisso `~restored` non prova da sola che due snippet siano duplicati.
-- **C05–C06 / blob:** verificare il digest, recuperare i file corrotti da dati integri ed eliminare solo quelli privi di riferimenti. La pulizia della migrazione avviene dopo il commit; un rollback deve lasciare disponibili i blob originari.
-- **C07 / batch:** acquisire il PID prima di elaborazione e attesa iniziale; ricontrollare destinazione e permessi prima di ogni evento, incluso Tab.
-- **C08–C09 / incollaggio:** distinguere evento fallito e statistiche non salvate dopo un trasferimento riuscito. Anche gli snippet devono controllare l’esito dell’evento e consentire l’incollaggio manuale.
-- **C10 / importazione:** misurare i limiti SQLite in byte prima di materializzare i payload, comprese le stringhe Unicode.
-- **C11 / screenshot:** un header PNG leggibile non basta. Attendere chunk completi e pixel decodificabili prima della cattura.
-- **Tastiera:** rispettare il mapping ⌘/⌘⌥ configurato; lasciare Option alla digitazione e mantenere ⌥Invio. I badge devono condividere i resolver degli eventi.
-- **D01–D02 / incollaggio:** mantenere la coda condivisa per pasteboard anche durante gli `await`; rivalutare PID congelato, permessi e `changeCount` prima degli eventi.
-- **Contenuto delle righe:** visualizzare testo o URL copiato senza anteporre `customName`, anche per le cronologie esistenti. Il recupero dei titoli web è stato rimosso; il campo storico resta leggibile per compatibilità con backup, importazione e sync.
+- **C01 / Migration**: Recalculating a binary identity does not constitute a user edit. Preserve existing metadata revisions, deletions, and aliases.
+- **C02 / Metadata**: Favorite status, custom name, list membership, and manual order have clocks decoupled from content revisions. Distinguish default values of a re-copied clip from explicit user removals, even across offline aliases.
+- **C03 / Usage Counters**: Legacy counter components preserve the original archive ID after deduplication; repeated imports must not double-count usage.
+- **C04 / Snippets**: Use persistent origin and stable identity to identify previously restored snippets. A shortcut ending in `~restored` does not by itself imply a duplicate.
+- **C05–C06 / Blobs**: Verify SHA-256 digests, repair corrupted files from valid data, and purge only unreferenced blobs after transaction commit. Rollbacks must keep original blobs intact.
+- **C07 / Batch Paste**: Capture target PID before processing and initial delay; re-verify target PID and accessibility permissions before each event, including Tab.
+- **C08–C09 / Paste Dispatch**: Separate event failures from usage statistic persistence errors. Snippet paste failures must be surfaced while keeping clipboard content ready for manual paste.
+- **C10 / Import Limits**: Enforce SQLite limits in bytes before materializing payloads, including multi-byte Unicode strings.
+- **C11 / Screenshots**: Do not capture on raw PNG headers alone; require complete chunks and decodable image pixels.
+- **Keyboard Handling**: Respect configured ⌘/⌘⌥ shortcut swap; allow `Option` for text/accent typing and preserve `⌥Enter`. Badges must share shortcut resolvers.
+- **D01–D02 / Paste Serialization**: Maintain a shared queue per pasteboard across `await` points; re-evaluate frozen target PID, permissions, and `changeCount` before dispatching synthetic events.
+- **Row Content Display**: Display copied plain text or URL directly without synthetic titles. Web title scraping is disabled; legacy custom names remain searchable and preserved for sync/backup.
 
-I test del terzo ciclo si trovano in `Tests/ConCopyCoreTests/ThirdAudit*Tests.swift`; quelli dei cicli precedenti in `Audit*Tests.swift` e `Reaudit*Tests.swift`. Le 25 regressioni D01–D10 sono in `Tests/ConCopyCoreTests/ProductionAuditRegressionTests.swift`.
+Regression tests are located in `Tests/ConCopyCoreTests/` under `Audit*Tests.swift`, `Reaudit*Tests.swift`, `ThirdAudit*Tests.swift`, and `ProductionAuditRegressionTests.swift`.
 
-## Schema e compatibilità
+---
 
-| Migrazione | Scopo |
+## Schema & Compatibility
+
+| Migration | Purpose |
 | --- | --- |
-| v1–v3 | Schema iniziale, ordinamento delle liste e snippet. |
-| v4 | Journal delle modifiche per il sync. |
-| v5 | Componenti indipendenti dei contatori d’uso. |
-| v6 | Migrazione e consolidamento delle identità binarie. |
-| v7 | Clock indipendenti dei metadati delle clip. |
-| v8 | Provenienza degli snippet ripristinati e coda di pulizia dei blob. |
+| v1–v3 | Initial schema, list ordering, and snippets. |
+| v4 | Sync change journal. |
+| v5 | Device-independent usage counter components. |
+| v6 | Binary identity consolidation and migration. |
+| v7 | Independent metadata revision clocks. |
+| v8 | Restored snippet provenance and orphaned blob cleanup queue. |
 
-Il sync scrive il formato **v2** e legge anche il file v1 per la migrazione. I campi `usage`, `metadataRevisions` e `snippetOrigins` sono opzionali in decodifica; tutti i Mac devono usare la versione aggiornata per conservarli durante le riscritture. I backup v1/v2 precedenti rimangono leggibili.
+Sync writes format **v2** and reads legacy v1 state for migrations. Fields `usage`, `metadataRevisions`, and `snippetOrigins` are optional during decoding; all syncing Macs should run updated builds to maintain these fields. Legacy v1/v2 backups remain readable.
 
-I formati legacy non permettono di ricostruire con certezza vecchie rimozioni esplicite dei metadati né i clock reali già sostituiti dal vecchio v6. Non inventare una cronologia retroattiva. La v8 raccoglie anche i blob rimasti orfani dopo un v6 già applicato.
+---
 
-## Contratto degli importatori
+## External Importer Contract
 
-L’importazione da Maccy e Copy ’Em è implementata e collegata alle impostazioni. I dettagli qui sotto sostituiscono il precedente piano di implementazione ormai completato.
+Maccy and Copy ’Em importers are integrated in Settings:
 
-- `ExternalClipboardImporter` è `Sendable` e espone `importClips(into:progress:) throws -> ImportResult`, sincrono. La UI lo esegue fuori dal MainActor con `Task.detached`.
-- `ImportResult` riporta importati, duplicati uniti, liste create ed errori; conserva fino a 100 dettagli. `isSuccess` richiede `errorsCount == 0`.
-- `SourceDatabase` risolve il file, copia database e sidecar WAL/SHM presenti in una directory temporanea e apre la copia senza applicare le migrazioni ConCopy. Una copia live dei sidecar non dimostra da sola la consistenza di ogni snapshot esterno.
-- Riutilizzare `CapturedClip.computeContentHash()`: non replicare l’algoritmo negli importatori. La fusione è conservativa per i metadati locali e non deve alterare inutilmente `updatedAt`.
-- Limiti: **50 MiB per payload**, **500 MiB per importazione**, **50.000 elementi**. Segnalare elementi oltre i limiti; non presentarli come importati correttamente.
-- Mantenere valori SQL parametrizzati, validazione degli identificatori dinamici, errori senza contenuto delle clip e pulizia delle directory temporanee.
-- Le scritture passano dal writer GRDB; i trigger mantengono FTS5 allineato. Non annidare letture o scritture sullo stesso writer dentro una transazione già in corso.
-- L’aggiornamento della UI dopo un’importazione deve ricaricare sia clip sia liste.
+- `ExternalClipboardImporter` is `Sendable` and exposes synchronous `importClips(into:progress:) throws -> ImportResult`. The UI runs this via `Task.detached` off the main thread.
+- `ImportResult` tracks imported items, merged duplicates, created lists, and errors (up to 100 details). `isSuccess` requires `errorsCount == 0`.
+- `SourceDatabase` safely resolves files, copies database and WAL/SHM sidecars to a temporary sandbox, and opens the clone without applying ConCopy migrations.
+- Importers reuse `CapturedClip.computeContentHash()`. Duplicate merging is conservative for local metadata and avoids touching `updatedAt`.
+- Limits: **50 MiB per payload**, **500 MiB total per import**, **50,000 items**.
+- UI refreshes both clips and lists after an import completes.
 
-## Verifiche da eseguire prima di concludere
+---
+
+## Verification Checklist
+
+Run before committing any changes:
 
 ```bash
 swift build
@@ -107,29 +118,22 @@ swift build -c release
 swift test
 ```
 
-Come richiesto da AGENTS.md, la release deve produrre **zero warning**. La suite attuale contiene **204 test**, incluso uno opzionale.
+Release compilation must pass with **zero warnings**. The test suite currently contains **228 tests**, including one optional test.
 
-Ultimo esito verificato, 19 novembre 2026:
+Latest verification run (November 25, 2026):
 
-| Controllo | Esito |
+| Check | Result |
 | --- | --- |
-| `swift build` | Passato, zero warning. |
-| `swift build -c release` | Passato, zero warning. |
-| `swift test` | 204 test, 203 passati, uno saltato, zero fallimenti. |
-| Applicazioni reali | 13 controlli nativi superati in TextEdit e Sublime Text su macOS 27.2.1 arm64; apertura fisica confermata. |
+| `swift build` | Passed, zero warnings. |
+| `swift build -c release` | Passed, zero warnings. |
+| `swift test` | 228 tests, 227 passed, 1 skipped, 0 failures. |
 
-Le prove reali coprono focus immediato sulla ricerca, digitazione di `~`, ricerca letterale, clic con copia o paste, ⌘⌥1, ⌥Invio, conservazione o rimozione del grassetto RTF, cambio app durante il paste e nove incollaggi consecutivi senza duplicazioni. La QA e i documenti dedicati sono stati chiusi e il permesso temporaneo di Accessibilità revocato.
+The optional test `ExternalImportTests.testRealUserExportIfPresent` requires `CONCOPY_TEST_CEP_PATH` set to a valid Copy ’Em `.cep` export file. Skipping this test is expected in environments without local fixtures.
 
-Il test opzionale `ExternalImportTests.testRealUserExportIfPresent` richiede `CONCOPY_TEST_CEP_PATH` con un export reale Copy ’Em esistente. Il suo skip non deve essere contato come test passato.
+---
 
-## Verifiche ancora aperte
+## Pending Verifications
 
-1. **Export reale Copy ’Em:** fornire un fixture tramite `CONCOPY_TEST_CEP_PATH` ed eseguire il test opzionale. Le prove attuali usano fixture sintetiche.
-2. **iCloud su due Mac:** verificare idratazione, lavoro offline, conflitti e convergenza sui dispositivi reali. I test usano worker reali con database e cartelle temporanee.
-3. **Copertura aggiuntiva su app reali:** verificare immagini/file, altre applicazioni e altri sistemi macOS; le prove concluse coprono testo inline e RTF nelle due applicazioni indicate.
-4. **Compatibilità di compilazione:** eseguire la toolchain Swift 5.9 e il packaging universale su `arm64`/`x86_64`. Le ultime verifiche coprono solo Swift 6.4.2 su arm64.
-5. **Packaging della prossima versione:** verificare bundle, risorse, firma e DMG con gli script dedicati prima di un rilascio. Una build SPM nativa riuscita non equivale a questa verifica.
-
-## Ripresa del lavoro
-
-Leggere lo stato Git e le istruzioni locali, scegliere i test pertinenti al componente modificato e preservare le modifiche già presenti. Aggiornare questo file quando cambiano schema, compatibilità, verifiche o attività pendenti; lasciare il dettaglio storico nel changelog. Non considerare una verifica locale come prova di commit, tag o pubblicazione.
+1. **Real Copy ’Em Export Fixture**: Run optional test with `CONCOPY_TEST_CEP_PATH` when real-world sample archives are available. Current suite validates synthetic fixtures.
+2. **Multi-Mac iCloud Sync**: Validate offline changes, concurrent edits, and convergence across physical Macs.
+3. **App Store & Packaging Pipeline**: Validate `.app` bundle, entitlements, code signing, and DMG generation with `./scripts/build-dmg.sh` before release.

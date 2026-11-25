@@ -1,114 +1,114 @@
-# ConCopy - Direttive Architetturali & Regole per Agenti AI
+# ConCopy - Architectural Guidelines & AI Agent Rules
 
-Questo documento definisce le regole di sistema, i vincoli architetturali e i pattern ingegneristici obbligatori per qualsiasi agente AI o sviluppatore che operi sul repository `concopy`.
+This document defines system rules, architectural boundaries, and mandatory engineering patterns for any AI agent or developer working on the `concopy` repository.
 
 ---
 
-## 1. Architettura a 3 Target (Regole di Isolamento)
+## 1. Three-Target Architecture (Isolation Rules)
 
-Il progetto è strutturato rigorosamente in tre target Swift Package Manager (SPM):
+The project is strictly structured into three Swift Package Manager (SPM) targets:
 
 ```
 Sources/
-  ├── ConCopyCore (Libreria statica)
-  ├── ConCopyUI   (Libreria statica)
-  └── ConCopyApp  (Eseguibile standalone macOS)
+  ├── ConCopyCore (Static library)
+  ├── ConCopyUI   (Static library)
+  └── ConCopyApp  (Standalone macOS executable)
 ```
 
 1. **`ConCopyCore`**:
-   - **Nessuna dipendenza da SwiftUI**: Non importare mai `SwiftUI`, `NSView`, `NSWindow`, o viste grafiche in questo target.
-   - Responsabilità: Monitoraggio `NSPasteboard`, sanitizzazione query e storage SQLite con `GRDB.swift` + `FTS5`, deduplicazione crittografica SHA-256, I/O dei blob su disco, iniezione sintetica di eventi `CGEvent`, watcher del filesystem, sincronizzazione non-bloccante su `iCloud Drive` e backup JSON.
-   - **Concorrenza & Threading**: I/O, parsing e calcoli pesanti devono avvenire su thread secondari o `actor` dedicati, mai vincolati a `@MainActor`.
+   - **No SwiftUI dependency**: Never import `SwiftUI`, `NSView`, `NSWindow`, or UI views into this target.
+   - Responsibilities: `NSPasteboard` monitoring, query sanitization and SQLite storage with `GRDB.swift` + `FTS5`, SHA-256 cryptographic deduplication, disk blob I/O, synthetic `CGEvent` injection, filesystem watchers, non-blocking sync via `iCloud Drive`, and JSON archives.
+   - **Concurrency & Threading**: Heavy I/O, parsing, and computations must occur on background threads or dedicated `actor` instances, never bound to `@MainActor`.
 
 2. **`ConCopyUI`**:
-   - Dipende esclusivamente da `ConCopyCore` e `KeyboardShortcuts`.
-   - Responsabilità: Finestra flottante HUD (`FloatingPanel` basato su `NSPanel`), viste SwiftUI per l'elenco delle clip, popover di anteprima QuickLook, pannello preferenze (`PreferencesView`).
-   - Gestione dello stato dell'interfaccia coordinata da `ClipboardViewModel` annotato con `@MainActor`.
+   - Depends exclusively on `ConCopyCore` and `KeyboardShortcuts`.
+   - Responsibilities: Floating HUD panel (`FloatingPanel` based on `NSPanel`), SwiftUI views for the clip list, QuickLook preview popovers, preferences window (`PreferencesView`).
+   - Interface state coordination is managed by `ClipboardViewModel` annotated with `@MainActor`.
 
 3. **`ConCopyApp`**:
-   - Dipende da `ConCopyCore` e `ConCopyUI`.
-   - Configurato come menubar app invisibile nel Dock (`LSUIElement = true`).
-   - Responsabilità: `AppDelegate`, ciclo di vita dell'applicazione, `NSStatusItem`, registrazione della scorciatoia globale, verifica permessi di Accessibilità.
+   - Depends on `ConCopyCore` and `ConCopyUI`.
+   - Configured as an invisible menubar app in the Dock (`LSUIElement = true`).
+   - Responsibilities: `AppDelegate`, application lifecycle, `NSStatusItem`, global shortcut registration, Accessibility permission verification.
 
 ---
 
-## 2. Regole Critiche di Sistema (AppKit & Finestre)
+## 2. Critical System Rules (AppKit & Windows)
 
 ### Zero Focus Stealing
-La finestra principale (`FloatingPanel`) **non deve mai sottrarre il focus** all'applicazione in uso dall'utente:
-- Eredita da `NSPanel`.
+The main window (`FloatingPanel`) **must never steal focus** from the user's active application:
+- Inherits from `NSPanel`.
 - StyleMask: `[.titled, .nonactivatingPanel, .fullSizeContentView, .resizable]`.
-- Proprietà obbligatorie: `isFloatingPanel = true`, `level = .floating`, `becomesKeyOnlyIfNeeded = true`.
-- All'attivazione del pannello: richiamare `orderFrontRegardless()` e `makeKeyAndOrderFront(nil)` senza mai rendere l'applicazione o la finestra una `main window` standard (`canBecomeMain = false`, `canBecomeKey = true`).
+- Mandatory properties: `isFloatingPanel = true`, `level = .floating`, `becomesKeyOnlyIfNeeded = true`.
+- When activating the panel: call `orderFrontRegardless()` and `makeKeyAndOrderFront(nil)` without ever making the application or window a standard main window (`canBecomeMain = false`, `canBecomeKey = true`).
 
-### Chiusura Automatica Istantanea (Auto-Dismiss)
-Il pannello deve chiudersi immediatamente al cambio di contesto:
-- Ascoltare `NSWindow.didResignKeyNotification`.
-- Ascoltare `NSApplication.didResignActiveNotification`.
-- Ascoltare `NSWorkspace.didActivateApplicationNotification` (per intercettare click su altre app esterne come VS Code o Terminale).
-- Se `isVisible && attachedSheet == nil`, eseguire immediatamente `orderOut(nil)`.
-
----
-
-## 3. Gestione Tastiera, Responder Chain & Type-to-Search
-
-1. **Type-to-Search (Digitazione Immediata)**:
-   - All'apertura della finestra, il campo di ricerca `TextField` deve ricevere automaticamente il focus della tastiera via `@FocusState` e listener di `NSWindow.didBecomeKeyNotification`.
-   - Non richiedere la pressione manuale di `Cmd + F` per iniziare a scrivere.
-
-2. **Intercettazione Eventi a Livello di Finestra (`sendEvent`)**:
-   - In `FloatingPanel.sendEvent(_:)`, intercettare i tasti funzione critici **prima** che l'evento venga inoltrato alla responder chain di AppKit/SwiftUI:
-     - `Return / Enter` (keyCodes 36, 76): incolla la clip selezionata.
-     - `↑ / ↓` (keyCodes 126, 125): muovono la selezione nella lista (Shift espande per multi-selezione).
-     - `Cmd + 1 ... 9`, `Cmd + 0`: cambio scheda/lista; `Cmd + Option + 1 ... 9`, `Cmd + Option + 0`: incollaggio rapido. L'impostazione di scambio inverte queste due famiglie; entrambe escludono Shift e Control e usano il fallback hardware keycode.
-     - `Cmd + Option + A`: Tutte le clip; con il mapping predefinito funziona anche `Cmd + A`.
-     - `Option` e `Option + Shift` con tasti di testo: lasciare gli eventi alla responder chain per simboli e accenti, senza intercettarli come scorciatoie numeriche o di navigazione.
-     - `Option + Return / Enter`: mantenere l'incollaggio come testo semplice.
-     - `Cmd + D`: deselezione rapida se selezione multipla attiva, altrimenti toggle preferiti.
-     - `Cmd + M`: apertura modale lista.
-     - `Escape`: chiude fogli modali, deseleziona il batch se attivo, svuota la query se valorizzata, o chiude il pannello (`orderOut(nil)`).
-
-3. **Mappatura Hardware KeyCode**:
-   - A causa del comportamento di AppKit con layout di tastiera internazionali (IT, US, FR, DE, tastierino numerico), non affidarsi unicamente a `charactersIgnoringModifiers`.
-   - Usare sempre la funzione helper `digitIndex(forKeyCode: event.keyCode)` per mappare i codici hardware delle cifre (18..29 e 82..92).
-
-4. **Monitor Locale nei Fogli Modali (`NSEvent.addLocalMonitorForEvents`)**:
-   - I fogli modali (es. `MoveToListSheetView`) isolano la responder chain della finestra principale.
-   - Utilizzare `NSEvent.addLocalMonitorForEvents(matching: .keyDown)` in `.onAppear` e rimuoverlo in `.onDisappear` per intercettare le scorciatoie lista configurate (`Cmd` oppure `Cmd + Option` con `1..9`, `0` e `A`) ed `Esc`.
-
-5. **Ricerca Letterale**:
-   - Le query con punteggiatura o simboli (es. `~/Library`, `c++`, `%`, `_`) devono cercare l'intera stringa come sottostringa letterale di testo o nome personalizzato, mantenendo filtri, ordinamento e limite.
-   - Il confronto letterale deve rispettare l'equivalenza canonica Unicode e ignorare le maiuscole anche fuori da ASCII. La funzione SQL `concopy_literal_contains` deve essere registrata sul reader usato dalla query; passare sempre il testo come parametro, senza interpretare `%`, `_` o backslash come jolly.
-   - Se si introducono query SQL `LIKE`, escapare sempre `%`, `_` e il carattere di escape.
-   - Mantenere la ricerca FTS5 per prefisso sulle query composte da parole e spazi, includendo i segni diacritici combinanti fra i caratteri delle parole.
-
-6. **Coerenza dei Badge**:
-   - Generare badge e routing con `GlobalShortcutsManager.quickPasteShortcut` e i resolver condivisi. Non mostrare badge alfabetici mentre la ricerca è focalizzata o per lettere riservate ai comandi.
-   - Spazio e frecce orizzontali modificati devono raggiungere la responder chain, senza attivare QuickLook.
+### Immediate Auto-Dismiss
+The panel must dismiss immediately upon context change:
+- Listen to `NSWindow.didResignKeyNotification`.
+- Listen to `NSApplication.didResignActiveNotification`.
+- Listen to `NSWorkspace.didActivateApplicationNotification` (to intercept clicks on external apps such as VS Code or Terminal).
+- If `isVisible && attachedSheet == nil`, immediately call `orderOut(nil)`.
 
 ---
 
-## 4. Gestione della Memoria e Prestazioni
+## 3. Keyboard Handling, Responder Chain & Type-to-Search
 
-1. **Cicli di Rilascio `autoreleasepool`**:
-   - Tutte le operazioni che generano picchi transitori di memoria devono essere incapsulate in blocchi `autoreleasepool { ... }`:
-     - Interrogazioni pesanti e iterazioni di record `GRDB`.
-     - Ingestione e decodifica di immagini e screenshot (`NSBitmapImageRep`, `CGImage`).
-     - Serializzazione e deserializzazione Base64 in `ArchiveManager`.
-     - Cicli di polling di `NSPasteboard` in `ClipboardMonitor`.
+1. **Type-to-Search (Immediate Typing)**:
+   - When the window opens, the `TextField` search box must automatically receive keyboard focus via `@FocusState` and `NSWindow.didBecomeKeyNotification` listeners.
+   - Do not require pressing `Cmd + F` manually to begin typing.
 
-2. **Offloading Asincrono (`Task.detached`)**:
-   - Nessuna operazione di I/O o hashing (SHA-256) deve essere eseguita sul thread principale.
-   - Usare `Task.detached(priority: .utility)` per l'elaborazione dei blob, il download dei metadati URL e l'ingestione degli screenshot.
+2. **Window-Level Event Interception (`sendEvent`)**:
+   - In `FloatingPanel.sendEvent(_:)`, intercept critical function keys **before** the event reaches AppKit/SwiftUI responder chain:
+     - `Return / Enter` (keyCodes 36, 76): pastes the selected clip.
+     - `↑ / ↓` (keyCodes 126, 125): move selection in list (Shift expands range for multi-selection).
+     - `Cmd + 1 ... 9`, `Cmd + 0`: switch tab/list; `Cmd + Option + 1 ... 9`, `Cmd + Option + 0`: quick paste. Modifier swap reverses these two families; both exclude Shift and Control and use hardware keycode fallback.
+     - `Cmd + Option + A`: All clips; with default mapping `Cmd + A` also works.
+     - `Option` and `Option + Shift` with text keys: leave events to responder chain for symbols and accents, without intercepting them as numeric or navigation shortcuts.
+     - `Option + Return / Enter`: maintain plain text paste.
+     - `Cmd + D`: rapid deselection if multi-selection active, otherwise toggle favorites.
+     - `Cmd + M`: open move to list sheet.
+     - `Escape`: closes modal sheets, clears batch selection if active, clears query if set, or closes panel (`orderOut(nil)`).
 
-3. **Identità Stabile e Rendering Reattivo**:
-   - Nella lista SwiftUI (`ClipboardListView`), utilizzare l'identificatore persistente `clip.id` nel `ForEach` e in `.id(clip.id)` per mantenere stabili le righe e i riferimenti di `ScrollViewReader`.
-   - Non includere nell'identità indice, timestamp, nome, preferiti o stati transitori di copia e selezione: il loro aggiornamento non deve ricreare la riga e azzerarne lo stato locale.
-   - Passare gli stati e i badge come proprietà reattive di `ClipRowView` e considerarli nel confronto `Equatable`, inclusi indice, selezione, copia e modificatore delle scorciatoie.
-   - Mantenere la conformità `.equatable()` su `ClipRowView` per evitare re-render non necessari durante lo scorrimento.
+3. **Hardware KeyCode Mapping**:
+   - Due to AppKit behavior on international keyboard layouts (IT, US, FR, DE, numeric keypad), do not rely solely on `charactersIgnoringModifiers`.
+   - Always use the helper function `digitIndex(forKeyCode: event.keyCode)` to map hardware digit key codes (18..29 and 82..92).
 
-4. **Sicurezza dei Descrittori di File (File Descriptor Leaks)**:
-   - In `ScreenshotWatcher`, chiudere sempre il descrittore del file nella chiusura di cancellazione del dispatch source:
+4. **Local Event Monitor in Modal Sheets (`NSEvent.addLocalMonitorForEvents`)**:
+   - Modal sheets (e.g. `MoveToListSheetView`) isolate the main window's responder chain.
+   - Use `NSEvent.addLocalMonitorForEvents(matching: .keyDown)` in `.onAppear` and remove it in `.onDisappear` to intercept configured list shortcuts (`Cmd` or `Cmd + Option` with `1..9`, `0`, and `A`) and `Esc`.
+
+5. **Literal Search**:
+   - Queries with punctuation or symbols (e.g., `~/Library`, `c++`, `%`, `_`) must search the full string as a literal substring in text or custom name, preserving filters, ordering, and limits.
+   - Literal comparison must respect Unicode canonical equivalence and case-insensitivity beyond ASCII. The SQL function `concopy_literal_contains` must be registered on readers; always pass query text as parameters, never interpreting `%`, `_`, or backslash as wildcards.
+   - If SQL `LIKE` queries are introduced, always escape `%`, `_`, and escape characters.
+   - Maintain prefix FTS5 search on queries consisting of words and spaces, including combining diacritics within word characters.
+
+6. **Badge Consistency**:
+   - Generate badges and routing via `GlobalShortcutsManager.quickPasteShortcut` and shared resolvers. Do not display alphabetical badges while search is focused or for keys reserved for commands.
+   - Modified Space and horizontal arrow keys must reach the responder chain without triggering QuickLook.
+
+---
+
+## 4. Memory Management & Performance
+
+1. **`autoreleasepool` Release Cycles**:
+   - All operations generating transient memory spikes must be wrapped in `autoreleasepool { ... }` blocks:
+     - Heavy queries and `GRDB` record iterations.
+     - Ingestion and decoding of images and screenshots (`NSBitmapImageRep`, `CGImage`).
+     - Base64 serialization and deserialization in `ArchiveManager`.
+     - `NSPasteboard` polling cycles in `ClipboardMonitor`.
+
+2. **Asynchronous Offloading (`Task.detached`)**:
+   - No disk I/O or hashing (SHA-256) operations may be executed on the main thread.
+   - Use `Task.detached(priority: .utility)` for blob processing, URL metadata fetching, and screenshot ingestion.
+
+3. **Stable Identity & Reactive Rendering**:
+   - In SwiftUI list (`ClipboardListView`), use persistent identifier `clip.id` in `ForEach` and `.id(clip.id)` to keep rows and `ScrollViewReader` references stable.
+   - Do not include index, timestamp, custom name, favorite status, or transient copy/selection states in view identities: updating them must not destroy and recreate rows.
+   - Pass states and badges as reactive properties of `ClipRowView` and consider them in `Equatable` comparison, including index, selection, copy, and shortcut modifiers.
+   - Maintain `.equatable()` compliance on `ClipRowView` to prevent unnecessary re-renders during scrolling.
+
+4. **File Descriptor Leak Prevention**:
+   - In `ScreenshotWatcher`, always close file descriptors in dispatch source cancellation handlers:
      ```swift
      source.setCancelHandler {
          close(fileDescriptor)
@@ -117,50 +117,50 @@ Il pannello deve chiudersi immediatamente al cambio di contesto:
 
 ---
 
-## 5. Privacy e Prevenzione Loopback
+## 5. Privacy & Loopback Prevention
 
-1. **Filtri di Sicurezza Pasteboard**:
-   - Scartare rigorosamente qualsiasi contenuto che presenti uno dei seguenti tipi:
+1. **Pasteboard Security Filters**:
+   - Strictly discard any content containing any of the following pasteboard types:
      - `org.nspasteboard.TransientType`
      - `org.nspasteboard.ConcealedType`
      - `org.nspasteboard.AutoGeneratedType`
      - `com.agilebits.onepassword`
-   - Rispettare sempre la blacklist di applicazioni configurata dall'utente e lo stato di pausa del monitoraggio.
+   - Always respect the user-configured application blacklist and monitoring pause status.
 
-2. **Prevenzione del Loopback (`PasteInjector`)**:
-   - Prima di scrivere negli appunti di sistema per un'operazione di incollaggio sintetico, impostare sempre il tipo marcatore interno:
+2. **Loopback Prevention (`PasteInjector`)**:
+   - Before writing to system pasteboard for synthetic paste operations, always set the internal marker type:
      ```swift
      pasteboard.setString("1", forType: NSPasteboard.PasteboardType("com.local.ConCopy.internalPaste"))
      ```
-   - `ClipboardMonitor` deve verificare la presenza di questo marcatore e ignorare l'evento per evitare la duplicazione infinita della clip incollata.
+   - `ClipboardMonitor` must check for this marker and ignore the event to prevent infinite duplicate ingestion of pasted clips.
 
-3. **Integrità di Incollaggio e Storage**:
-   - Tutti gli injector devono condividere una coda per pasteboard, mantenuta anche durante gli `await`; prima degli eventi rivalutare destinazione congelata, permessi e `changeCount`. Annullare l'operazione se il contesto o gli appunti sono cambiati.
-   - Ogni database indipendente deve possedere la propria cartella blob. Il fallback usa `DatabaseStartup`, una cartella temporanea separata e un avviso persistente; in quella sessione cleanup e sincronizzazione sono sospesi senza cambiare le preferenze salvate.
-   - Selezionare e cancellare i record in una sola transazione, rivalutando preferiti e appartenenza a liste nelle pulizie protette; rimuovere i blob non più referenziati solo dopo il commit.
-   - Ripristinare le liste in modo additivo e mantenere al massimo una lista Auto-Star attiva. Il recupero cloud può riparare blob locali solo con byte remoti validati che corrispondono esattamente al nome SHA-256 atteso.
-
----
-
-## 6. Qualità del Codice e Convenzioni
-
-- **Zero Force-Unwrap**: Vietato l'uso di `!` o `fatalError` nel codice di produzione. Gestire sempre gli errori tramite `do-catch`, `guard let` o valori di fallback sicuri.
-- **Swift Concurrency**: Usare `async/await`, `actor` e `@MainActor` rispettando i vincoli di isolamento.
-- **Nessuna regressione nei test**: Ogni modifica apportata a `ConCopyCore` o alla logica di incollaggio deve mantenere funzionante l'intera suite esistente e includere le regressioni dei difetti corretti.
+3. **Paste & Storage Integrity**:
+   - All injectors must share a single queue per pasteboard, preserved across `await` points; re-evaluate frozen target PID, permissions, and `changeCount` before dispatching events. Abort the operation if context or clipboard has changed.
+   - Each independent database must own its dedicated blob directory. Fallback uses `DatabaseStartup`, an isolated temporary directory, and a persistent warning banner; cleanup and sync are paused during that session without modifying saved settings.
+   - Select and delete records within a single transaction, re-checking favorites and list memberships before deletion; remove unreferenced blobs only after commit.
+   - Restore lists additively and enforce at most one active Auto-Star list. Cloud recovery can repair local blobs only with validated remote bytes exactly matching the expected SHA-256 filename.
 
 ---
 
-## 7. Comandi di Verifica Obbligatori
+## 6. Code Quality & Conventions
 
-Prima di concludere qualsiasi sessione di modifica, eseguire sempre:
+- **Zero Force-Unwraps**: Using `!` or `fatalError` in production code is prohibited. Always handle errors via `do-catch`, `guard let`, or safe fallbacks.
+- **Swift Concurrency**: Use `async/await`, `actor`, and `@MainActor` adhering to isolation boundaries.
+- **Zero Test Regressions**: Every change made to `ConCopyCore` or paste logic must keep the full test suite green and include regression tests for fixed issues.
+
+---
+
+## 7. Mandatory Verification Commands
+
+Before completing any development session, always run:
 
 ```bash
-# Verifica compilazione in modalità debug
+# Verify debug compilation
 swift build
 
-# Verifica compilazione ottimizzata per release (zero warning ammessi)
+# Verify optimized release build (zero warnings permitted)
 swift build -c release
 
-# Esecuzione completa dei test di unità e integrazione
+# Full unit and integration test suite execution
 swift test
 ```
