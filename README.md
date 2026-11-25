@@ -3,13 +3,20 @@
 ![macOS 14+](https://img.shields.io/badge/macOS-14+-000000?logo=apple&logoColor=white)
 ![Swift 5.9+](https://img.shields.io/badge/Swift-5.9+-F05138?logo=swift&logoColor=white)
 ![SPM](https://img.shields.io/badge/Build-Swift_Package_Manager-blue)
-![MIT](https://img.shields.io/badge/License-MIT-green)
+![GPLv3](https://img.shields.io/badge/License-GPLv3-blue.svg)
 
 ConCopy è un gestore di appunti e snippet per macOS. Conserva testi, immagini e riferimenti ai file, permette di cercarli e riutilizzarli e rimane nella barra dei menu, senza un’icona nel Dock.
 
 Apri il pannello con **⌘⇧V**, scrivi per cercare e premi **Invio** per incollare la clip selezionata. Il pannello usa una finestra non attivante per mantenere il contesto dell’applicazione di destinazione.
 
-[Installazione](#installazione) · [Funzioni](#funzioni) · [Scorciatoie](#scorciatoie) · [Sviluppo](#sviluppo) · [Changelog](CHANGELOG.md)
+<p align="center">
+  <img src="assets/AppIcon.png" alt="ConCopy Icon" width="128" height="128" />
+</p>
+
+<!-- Per aggiungere lo screenshot dell'interfaccia: salvare l'immagine in assets/screenshot.png -->
+<!-- ![ConCopy Interface](assets/screenshot.png) -->
+
+[Installazione](#installazione) · [Funzioni](#funzioni) · [Scorciatoie](#scorciatoie) · [Supporto](#supporta-concopy) · [Sviluppo](#sviluppo) · [Changelog](CHANGELOG.md)
 
 ## Installazione
 
@@ -32,9 +39,15 @@ Un clic semplice su una clip chiude il pannello in entrambe le modalità: incoll
 | Area | Cosa puoi fare |
 | --- | --- |
 | Cronologia e ricerca | Salvare testo, RTF, HTML, URL, immagini e riferimenti ai file; cercare con FTS5 e riutilizzare le clip senza duplicati di contenuto. |
-| Selezione multipla | Selezionare intervalli o elementi separati, concatenarli nell’ordine dell’elenco e scegliere il separatore. Il batch sequenziale usa Tab per passare fra i campi. |
+| Filtri rapidi e trasformazioni dev | Filtrare istantaneamente per tipo (testo, codice, link, immagini, colori) e applicare trasformazioni dev (JSON format/minify, URL encode/decode, Base64, case convert, Markdown/HTML). |
+| OCR e campioni colore | Riconoscere testo nelle immagini con Vision OCR ed estrarre anteprime palette/colore (HEX, RGB, HSL) da testi o appunti. |
+| Paste Stack e Coda Sequenziale | Modalità di incollaggio a pila LIFO o coda FIFO per sequenze di incollaggio rapido senza riaprire il pannello ogni volta. |
+| Snippet dinamici | Frammenti di testo con titolo, shortcut e variabili dinamiche (`{date}`, `{time}`, `{clipboard}`, placeholder con prompt interattivo). |
+| Privacy Shield & Mascheramento | Rilevamento automatico e mascheramento di dati sensibili (carte di credito, token/API key, password) con sblocco biometrico locale / password. |
+| Posizionamento contestuale | Posizionamento opzionale del pannello fluttuante in prossimità del cursore di digitazione (caret), del puntatore mouse o al centro schermo. |
+| Azioni rapide & Anteprima link | Esecuzione rapida script/terminale/browser su clip e anteprima ricca metadati web (favicon, titolo pagina). |
+| Selezione multipla | Selezionare intervalli o elementi separati, concatenarli nell’ordine dell’elenco e scegliere il separatore. Incollaggio batch nativo di più file immagine direttamente nel Finder e nelle app. |
 | Preferiti e liste | Contrassegnare le clip come preferite, organizzarle in liste e usare Auto-Star. |
-| Snippet | Salvare frammenti di testo con titolo e shortcut, cercarli nella scheda dedicata e incollarli su richiesta. |
 | Anteprime | Aprire l’anteprima di testi, immagini e file dal pannello. |
 | Screenshot | Aggiungere automaticamente gli screenshot alla cronologia quando l’immagine è completa e decodificabile. |
 | Manutenzione | Mettere in pausa la cattura, escludere applicazioni e configurare la pulizia automatica per età e numero di elementi. Preferiti e clip nelle liste sono protetti dalla pulizia automatica. |
@@ -150,7 +163,7 @@ swift build -c release
 swift test
 ```
 
-La release deve compilare senza warning. L’ultima verifica conta **204 test: 203 passati, uno opzionale saltato, zero fallimenti**. Sono state inoltre superate 13 verifiche native di focus, ricerca e incollaggio in TextEdit e Sublime Text su macOS 27.2.1, con apertura del pannello confermata anche da tastiera fisica.
+La release deve compilare senza warning. L’ultima verifica conta **228 test: 227 passati, uno opzionale saltato, zero fallimenti**. Sono state inoltre superate 13 verifiche native di focus, ricerca e incollaggio in TextEdit e Sublime Text su macOS 27.2.1, con apertura del pannello confermata anche da tastiera fisica.
 
 Il test opzionale usa un export reale Copy ’Em. Per abilitarlo:
 
@@ -190,6 +203,15 @@ Questo comando sceglie la versione del pacchetto locale; non crea tag né pubbli
 - [WORKFLOW_STATE.md](WORKFLOW_STATE.md): stato operativo, decisioni e verifiche ancora da eseguire.
 - [CHANGELOG.md](CHANGELOG.md): modifiche in lavorazione e cronologia delle versioni.
 
-## Licenza
+## Supporta ConCopy
 
-ConCopy è distribuito con licenza [MIT](LICENSE).
+Se ConCopy ti aiuta nel lavoro quotidiano, puoi supportare lo sviluppo del progetto:
+
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ffdd00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/fconoscenti)
+[![PayPal](https://img.shields.io/badge/PayPal-00457C?style=for-the-badge&logo=paypal&logoColor=white)](https://paypal.me/fconoscenti)
+
+## Licenza e Contributi
+
+Il codice sorgente di ConCopy è distribuito sotto licenza **[GNU General Public License v3.0 (GPLv3)](LICENSE)**.
+
+Le build ufficiali e i pacchetti binari possono essere distribuiti anche attraverso canali e marketplace proprietari (incluso l'Apple Mac App Store) sotto termini di licenza commerciali o alternativi a cura del titolare del progetto. Chiunque desideri inviare contributi, modifiche o pull request è invitato a consultare il file **[CONTRIBUTING.md](CONTRIBUTING.md)** (Contributor License Agreement).
