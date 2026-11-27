@@ -79,7 +79,7 @@ jobs:
           shasum -a 256 "$DMG_NAME" "$ZIP_NAME" > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
-      - name: Create GitHub Draft Release
+      - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.vars.outputs.tag }}
@@ -88,11 +88,11 @@ jobs:
           DMG_NAME="ConCopy-${APP_VERSION}.dmg"
           ZIP_NAME="ConCopy-${APP_VERSION}.zip"
 
-          echo "==> Creating GitHub Draft Release for $TAG..."
+          echo "==> Publishing GitHub Release for $TAG..."
           gh release create "$TAG" \
-            --draft \
+            --latest \
             --verify-tag \
-            --title "ConCopy $TAG" \
+            --title "$TAG" \
             --generate-notes \
             "$DMG_NAME" \
             "$ZIP_NAME" \

@@ -4,8 +4,8 @@ import Foundation
 public struct UpdateDownloader: Sendable {
     public init() {}
 
-    public func download(from url: URL, progress: @escaping @Sendable (Int64, Int64) -> Void) async throws -> URL {
-        guard url.scheme?.lowercased() == "https" else { throw DownloadError.invalidResponse }
+    public func download(from url: URL, version: String, progress: @escaping @Sendable (Int64, Int64) -> Void) async throws -> URL {
+        guard url.scheme?.lowercased() == "https", Self.isValidVersion(version) else { throw DownloadError.invalidResponse }
         let delegate = DownloadProgressDelegate(progress: progress)
         let (temporaryURL, response) = try await URLSession.shared.download(from: url, delegate: delegate)
         defer { try? FileManager.default.removeItem(at: temporaryURL) }
@@ -14,10 +14,31 @@ public struct UpdateDownloader: Sendable {
         return try await Task.detached(priority: .utility) {
             try Self.validateDiskImage(at: temporaryURL, expectedLength: response.expectedContentLength)
             let downloads = try FileManager.default.url(for: .downloadsDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
-            let destination = downloads.appendingPathComponent("ConCopy-\(UUID().uuidString).dmg")
-            try FileManager.default.moveItem(at: temporaryURL, to: destination)
-            return destination
+            return try Self.saveDiskImage(at: temporaryURL, version: version, in: downloads)
         }.value
+    }
+
+    private static func isValidVersion(_ version: String) -> Bool {
+        !version.isEmpty && version.utf8.count <= 100 && version.utf8.allSatisfy {
+            (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0)
+                || $0 == 46 || $0 == 45
+        }
+    }
+
+    static func saveDiskImage(at source: URL, version: String, in directory: URL) throws -> URL {
+        guard isValidVersion(version) else { throw DownloadError.invalidResponse }
+        let basename = "ConCopy-\(version)"
+        var suffix = 0
+        while true {
+            let name = suffix == 0 ? basename : "\(basename) (\(suffix))"
+            let destination = directory.appendingPathComponent(name + ".dmg")
+            do {
+                try FileManager.default.moveItem(at: source, to: destination)
+                return destination
+            } catch CocoaError.fileWriteFileExists {
+                suffix += 1
+            }
+        }
     }
 
     public static func validateDiskImage(at url: URL, expectedLength: Int64) throws {

@@ -21,7 +21,7 @@ final class UpdateDownloaderTests: XCTestCase {
     func testDownloadRejectsInsecureURL() async throws {
         let url = try XCTUnwrap(URL(string: "http://example.com/update.dmg"))
         do {
-            _ = try await UpdateDownloader().download(from: url) { _, _ in }
+            _ = try await UpdateDownloader().download(from: url, version: "1.3.9") { _, _ in }
             XCTFail("Expected rejection before downloading")
         } catch UpdateDownloader.DownloadError.invalidResponse {
             // The transport must require HTTPS.

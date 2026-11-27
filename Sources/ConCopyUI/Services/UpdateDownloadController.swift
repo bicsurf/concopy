@@ -28,7 +28,7 @@ public final class UpdateDownloadController: ObservableObject {
         isDownloading = true
         task = Task { [weak self] in
             do {
-                let file = try await UpdateDownloader().download(from: url) { [weak self] bytes, total in
+                let file = try await UpdateDownloader().download(from: url, version: update.version) { [weak self] bytes, total in
                     Task { @MainActor [weak self] in
                         self?.received = bytes
                         self?.expected = total
