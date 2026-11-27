@@ -885,7 +885,7 @@ public final class ClipboardViewModel: ObservableObject {
         let target = pasteTargetProcessIdentifier?()
 
         if !appSettings.isDirectPasteEnabled || !isTrusted {
-            Task { @MainActor [weak self] in
+            performUIAction { [weak self] in
                 guard let self else { return }
                 do {
                     try await self.pasteInjector.copyToPasteboard(
@@ -901,7 +901,7 @@ public final class ClipboardViewModel: ObservableObject {
             return
         }
 
-        Task { @MainActor [weak self] in
+        performUIAction { [weak self] in
             guard let self else { return }
             do {
                 try await self.pasteInjector.paste(

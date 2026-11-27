@@ -74,6 +74,7 @@ final class Phase4Tests: XCTestCase {
         XCTAssertEqual(TextTransformer.apply(.kebabCase, to: "hello_world"), "hello-world")
     }
 
+    @MainActor
     func testFileExportAndPasteAsFile() async throws {
         let exporter = FilePasteExporter(exportDirectoryURL: tempDir)
 

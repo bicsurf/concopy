@@ -39,7 +39,8 @@ final class AuditNetworkTests: XCTestCase {
 
 private final class AuditNetworkProtocol: URLProtocol, @unchecked Sendable {
     private static let lock = NSLock()
-    private static var requests = 0
+    // Every access is serialized by lock, including URLProtocol callbacks.
+    nonisolated(unsafe) private static var requests = 0
     static var requestCount: Int { lock.withLock { requests } }
     static func reset() {
         lock.withLock { requests = 0 }
