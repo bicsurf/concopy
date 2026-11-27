@@ -217,24 +217,38 @@ final class AuditUIAndLifecycleTests: XCTestCase {
         await fulfillment(of: [exp], timeout: 5.0)
     }
 
-    func testClipRowViewEquatableIncludesAppIconImage() {
+    func testClipRowViewEquatableTracksEveryImageIdentity() {
         let clip = ClipRecord(contentHash: "h", plainText: "t", primaryType: .text)
         let icon1 = NSImage(size: NSSize(width: 16, height: 16))
         let icon2 = NSImage(size: NSSize(width: 16, height: 16))
-        let row1 = ClipRowView(
+        let empty = ClipRowView(
             clip: clip, index: 0, isSelected: false, isChecked: false, isPasting: false,
-            shortcutLabel: nil, appIconImage: icon1, onToggleCheck: {}
+            shortcutLabel: nil, onToggleCheck: {}
         )
-        let row2 = ClipRowView(
+        let initialized = ClipRowView(
             clip: clip, index: 0, isSelected: false, isChecked: false, isPasting: false,
-            shortcutLabel: nil, appIconImage: icon2, onToggleCheck: {}
+            shortcutLabel: nil, thumbnailImage: icon1, fileIconImage: icon1,
+            appIconImage: icon1, onToggleCheck: {}
         )
-        let row1Duplicate = ClipRowView(
-            clip: clip, index: 0, isSelected: false, isChecked: false, isPasting: false,
-            shortcutLabel: nil, appIconImage: icon1, onToggleCheck: {}
-        )
-        XCTAssertEqual(row1, row1Duplicate)
-        XCTAssertNotEqual(row1, row2)
+        var assigned = empty
+        let imagePaths: [WritableKeyPath<ClipRowView, NSImage?>] = [
+            \.thumbnailImage, \.fileIconImage, \.appIconImage,
+        ]
+        for path in imagePaths {
+            var row = empty
+            XCTAssertEqual(row, empty)
+            row[keyPath: path] = icon1
+            XCTAssertNotEqual(row, empty)
+            let sameImage = row
+            row[keyPath: path] = icon1
+            XCTAssertEqual(row, sameImage)
+            row[keyPath: path] = icon2
+            XCTAssertNotEqual(row, sameImage)
+            row[keyPath: path] = nil
+            XCTAssertEqual(row, empty)
+            assigned[keyPath: path] = icon1
+        }
+        XCTAssertEqual(initialized, assigned)
     }
 
     func testFilePasteExporterErrorEnglishDescriptions() {

@@ -12,9 +12,19 @@ public struct ClipRowView: View, Equatable {
     public var actionTitle: String = "Copy"
     public let shortcutLabel: String?
     public var quickPasteModifier: String = "⌘"
-    public var thumbnailImage: NSImage? = nil
-    public var fileIconImage: NSImage? = nil
-    public var appIconImage: NSImage? = nil
+    // Snapshot image identity on the UI actor so nonisolated equality only reads Sendable values.
+    public var thumbnailImage: NSImage? = nil {
+        didSet { thumbnailImageIdentity = thumbnailImage.map(ObjectIdentifier.init) }
+    }
+    private var thumbnailImageIdentity: ObjectIdentifier? = nil
+    public var fileIconImage: NSImage? = nil {
+        didSet { fileIconImageIdentity = fileIconImage.map(ObjectIdentifier.init) }
+    }
+    private var fileIconImageIdentity: ObjectIdentifier? = nil
+    public var appIconImage: NSImage? = nil {
+        didSet { appIconImageIdentity = appIconImage.map(ObjectIdentifier.init) }
+    }
+    private var appIconImageIdentity: ObjectIdentifier? = nil
     public var linkMetadata: WebLinkMetadata? = nil
     public var shouldMaskSensitive: Bool = false
     public let onToggleCheck: () -> Void
@@ -54,8 +64,11 @@ public struct ClipRowView: View, Equatable {
         self.shortcutLabel = shortcutLabel
         self.quickPasteModifier = quickPasteModifier
         self.thumbnailImage = thumbnailImage
+        self.thumbnailImageIdentity = thumbnailImage.map(ObjectIdentifier.init)
         self.fileIconImage = fileIconImage
+        self.fileIconImageIdentity = fileIconImage.map(ObjectIdentifier.init)
         self.appIconImage = appIconImage
+        self.appIconImageIdentity = appIconImage.map(ObjectIdentifier.init)
         self.linkMetadata = linkMetadata
         self.shouldMaskSensitive = shouldMaskSensitive
         self.onToggleCheck = onToggleCheck
@@ -67,8 +80,8 @@ public struct ClipRowView: View, Equatable {
         lhs.clip == rhs.clip && lhs.index == rhs.index && lhs.isSelected == rhs.isSelected
             && lhs.isChecked == rhs.isChecked && lhs.isPasting == rhs.isPasting && lhs.isCopied == rhs.isCopied
             && lhs.actionTitle == rhs.actionTitle && lhs.shortcutLabel == rhs.shortcutLabel
-            && lhs.quickPasteModifier == rhs.quickPasteModifier && lhs.thumbnailImage === rhs.thumbnailImage
-            && lhs.fileIconImage === rhs.fileIconImage && lhs.appIconImage === rhs.appIconImage
+            && lhs.quickPasteModifier == rhs.quickPasteModifier && lhs.thumbnailImageIdentity == rhs.thumbnailImageIdentity
+            && lhs.fileIconImageIdentity == rhs.fileIconImageIdentity && lhs.appIconImageIdentity == rhs.appIconImageIdentity
             && lhs.linkMetadata == rhs.linkMetadata && lhs.shouldMaskSensitive == rhs.shouldMaskSensitive
     }
 
