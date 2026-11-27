@@ -17,13 +17,13 @@ Sources/
 
 1. **`ConCopyCore`**:
    - **No SwiftUI dependency**: Never import `SwiftUI`, `NSView`, `NSWindow`, or UI views into this target.
-   - Responsibilities: `NSPasteboard` monitoring, query sanitization and SQLite storage with `GRDB.swift` + `FTS5`, SHA-256 cryptographic deduplication, disk blob I/O, synthetic `CGEvent` injection, filesystem watchers, non-blocking sync via `iCloud Drive`, and JSON archives.
+   - Responsibilities: `NSPasteboard` monitoring, query sanitization and SQLite storage with `GRDB.swift` + `FTS5`, SHA-256 cryptographic deduplication, disk blob I/O, synthetic `CGEvent` injection, filesystem watchers, non-blocking sync via `CloudDriveSyncEngine` and `CloudDriveSyncWorker` (`iCloud Drive`), JSON archives, structured logging via `ConCopyLogger`, and sensitive clip auto-expiration.
    - **Concurrency & Threading**: Heavy I/O, parsing, and computations must occur on background threads or dedicated `actor` instances, never bound to `@MainActor`.
 
 2. **`ConCopyUI`**:
    - Depends exclusively on `ConCopyCore` and `KeyboardShortcuts`.
-   - Responsibilities: Floating HUD panel (`FloatingPanel` based on `NSPanel`), SwiftUI views for the clip list, QuickLook preview popovers, preferences window (`PreferencesView`).
-   - Interface state coordination is managed by `ClipboardViewModel` annotated with `@MainActor`.
+   - Responsibilities: Floating HUD panel (`FloatingPanel` based on `NSPanel`), modular subviews (`ClipRowView`, `ClipBatchBarView`, `ClipContextMenu`, `MoveToListSheetView`, `SnippetsViews`, `NavigationComponents`), QuickLook preview popovers, preferences window (`PreferencesView`).
+   - Interface state coordination is managed by `ClipboardViewModel` annotated with `@MainActor`, delegating specialized logic to `BatchSelectionManager`, `PasteQueueManager`, and `SearchCoordinator`.
 
 3. **`ConCopyApp`**:
    - Depends on `ConCopyCore` and `ConCopyUI`.

@@ -45,7 +45,7 @@ public struct QuickActionRunner: Sendable {
     }
 
     @MainActor
-    public static func execute(_ action: QuickActionType, text: String, skipConfirmation: Bool = false, completion: @escaping (String?) -> Void) {
+    public static func execute(_ action: QuickActionType, text: String, skipConfirmation: Bool = false, completion: @escaping @MainActor @Sendable (String?) -> Void) {
         let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty else {
             completion("Empty text")
@@ -166,7 +166,8 @@ public struct QuickActionRunner: Sendable {
             .replacingOccurrences(of: "\t", with: "\\t")
     }
 
-    private static func runAppleScript(_ script: String, completion: @escaping (String?) -> Void) {
+    @MainActor
+    private static func runAppleScript(_ script: String, completion: @escaping @MainActor @Sendable (String?) -> Void) {
         var errorDict: NSDictionary?
         if let scriptObject = NSAppleScript(source: script) {
             scriptObject.executeAndReturnError(&errorDict)

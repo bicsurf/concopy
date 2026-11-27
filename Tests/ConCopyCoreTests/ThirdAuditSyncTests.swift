@@ -18,7 +18,7 @@ final class ThirdAuditSyncTests: XCTestCase {
             blobDirectoryURL: directory.appendingPathComponent(name + "-blobs"))
     }
     private func worker(_ db: DatabaseManager) -> CloudDriveSyncWorker {
-        CloudDriveSyncWorker(databaseManager: db, customSyncDirectoryURL: directory.appendingPathComponent("cloud"))
+        CloudDriveSyncWorker(databaseManager: db, customSyncDirectoryURL: directory.appendingPathComponent("cloud"), deviceId: db.blobStorage.baseDirectoryURL.lastPathComponent)
     }
     private func sync(_ worker: CloudDriveSyncWorker) async {
         let result = await worker.performSync()
@@ -28,10 +28,12 @@ final class ThirdAuditSyncTests: XCTestCase {
         let blobs = BlobStorageManager(baseDirectoryURL: directory.appendingPathComponent(name + "-blobs"))
         let queue = try DatabaseQueue(path: directory.appendingPathComponent(name + ".sqlite").path)
         try DatabaseManager.migrator(blobStorage: blobs).migrate(queue, upTo: "v4_sync_change_journal")
-        try queue.write { db in
-            try record.insert(db)
-            for (uti, data) in payloads {
-                try ClipPayloadRecord(clipId: record.id, utiType: uti, inlineData: data, byteSize: data.count).insert(db)
+        try ClipRecord.$omitV9ColumnsDuringLegacyInsert.withValue(true) {
+            try queue.write { db in
+                try record.insert(db)
+                for (uti, data) in payloads {
+                    try ClipPayloadRecord(clipId: record.id, utiType: uti, inlineData: data, byteSize: data.count).insert(db)
+                }
             }
         }
     }

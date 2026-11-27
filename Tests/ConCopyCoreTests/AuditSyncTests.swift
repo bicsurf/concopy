@@ -16,7 +16,7 @@ final class AuditSyncTests: XCTestCase {
             blobDirectoryURL: directory.appendingPathComponent(name))
     }
     private func worker(_ db: DatabaseManager) -> CloudDriveSyncWorker {
-        CloudDriveSyncWorker(databaseManager: db, customSyncDirectoryURL: directory.appendingPathComponent("cloud"))
+        CloudDriveSyncWorker(databaseManager: db, customSyncDirectoryURL: directory.appendingPathComponent("cloud"), deviceId: db.blobStorage.baseDirectoryURL.lastPathComponent)
     }
     private func sync(_ worker: CloudDriveSyncWorker) async {
         let result = await worker.performSync()
@@ -25,7 +25,7 @@ final class AuditSyncTests: XCTestCase {
     func testA01DisabledAndStoppedCoordinatorDoesNotWrite() async throws {
         let db = try database("off")
         let clip = try db.ingestCapturedClip(CapturedClip(plainText: "private"))
-        let coordinator = CloudKitSyncCoordinator(
+        let coordinator = CloudDriveSyncCoordinator(
             databaseManager: db, customSyncDirectoryURL: directory.appendingPathComponent("cloud"),
             pollingInterval: 0.05, debounceInterval: 0.01)
         coordinator.queueUpload(for: clip)
@@ -37,8 +37,9 @@ final class AuditSyncTests: XCTestCase {
         coordinator.queueUpload(for: clip)
         await coordinator.performSync()
         try await Task.sleep(nanoseconds: 100_000_000)
-        XCTAssertFalse(
-            FileManager.default.fileExists(atPath: directory.appendingPathComponent("cloud/sync-state-v2.json").path))
+        let files = (try? FileManager.default.contentsOfDirectory(
+            atPath: directory.appendingPathComponent("cloud/devices").path)) ?? []
+        XCTAssertFalse(files.contains { $0.hasSuffix(".json") })
     }
     func testA06A07StableIdentityAndPersistentDeletionAcrossRestart() async throws {
         let a = try database("a")
@@ -134,7 +135,7 @@ final class AuditSyncTests: XCTestCase {
         let a = try database("a")
         let b = try database("b")
         let wa = worker(a)
-        let coordinator = CloudKitSyncCoordinator(
+        let coordinator = CloudDriveSyncCoordinator(
             databaseManager: b, customSyncDirectoryURL: directory.appendingPathComponent("cloud"),
             pollingInterval: 0.05, debounceInterval: 0.02)
         coordinator.startIfPossible()
@@ -193,7 +194,7 @@ extension AuditSyncTests {
         let worker = worker(db)
         await sync(worker)
         XCTAssertEqual(try db.fetchClip(id: clip.id)?.plainText, "legacy")
-        let newFile = await worker.syncFileURL
+        let newFile = await worker.myDeviceFileURL
         let bytes = try Data(contentsOf: newFile)
         let modified = try newFile.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
         await sync(worker)

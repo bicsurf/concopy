@@ -367,7 +367,7 @@ final class ProductionAuditRegressionTests: XCTestCase {
             let bytes = Data(repeating: 7, count: 8192)
             let clip = try db.ingestCapturedClip(CapturedClip(plainText: "image", primaryType: .image, representations: ["public.png": bytes]))
             let worker = CloudDriveSyncWorker(databaseManager: db, customSyncDirectoryURL: root.appendingPathComponent("cloud"))
-            let syncURL = await worker.syncFileURL
+            let syncURL = await worker.myDeviceFileURL
             let initial = await worker.performSync()
             XCTAssertEqual(initial.status, .idle)
             let remote = try Data(contentsOf: syncURL)
@@ -390,7 +390,7 @@ final class ProductionAuditRegressionTests: XCTestCase {
             let clip = try db.ingestCapturedClip(CapturedClip(plainText: "image", primaryType: .image,
                 representations: ["public.png": Data(repeating: 7, count: 8192)]))
             let worker = CloudDriveSyncWorker(databaseManager: db, customSyncDirectoryURL: root.appendingPathComponent("cloud"))
-            let syncURL = await worker.syncFileURL
+            let syncURL = await worker.myDeviceFileURL
             _ = await worker.performSync()
             if hasRemote {
                 let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601

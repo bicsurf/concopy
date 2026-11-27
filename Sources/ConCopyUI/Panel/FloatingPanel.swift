@@ -208,11 +208,27 @@ public final class FloatingPanel: NSPanel {
     }
 
     private func handleSheetKeyDown(_ event: NSEvent) -> Bool {
-        if viewModel.movingClip != nil {
-            if event.keyCode == 53 {
+        if event.keyCode == 53 {
+            if viewModel.movingClip != nil {
                 viewModel.movingClip = nil
                 return true
             }
+            if viewModel.isSnippetEditorPresented {
+                viewModel.isSnippetEditorPresented = false
+                viewModel.editingSnippet = nil
+                return true
+            }
+            if viewModel.promptSnippet != nil {
+                viewModel.promptSnippet = nil
+                viewModel.promptSnippetVariables = []
+                return true
+            }
+            if viewModel.editingClip != nil {
+                viewModel.editingClip = nil
+                return true
+            }
+        }
+        if viewModel.movingClip != nil {
             if GlobalShortcutsManager.shared.matchesAllClips(event: event) {
                 viewModel.assignMovingClipToAll()
                 return true
@@ -468,8 +484,12 @@ public final class FloatingPanel: NSPanel {
         let appElement = AXUIElementCreateApplication(frontApp.processIdentifier)
         var focusedElementValue: AnyObject?
         let focusedError = AXUIElementCopyAttributeValue(appElement, kAXFocusedUIElementAttribute as CFString, &focusedElementValue)
-        guard focusedError == .success,
-              let focusedElement = focusedElementValue,
+        guard focusedError == .success else { return false }
+        return positionNearCaret(focusedElementValue: focusedElementValue)
+    }
+
+    func positionNearCaret(focusedElementValue: AnyObject?) -> Bool {
+        guard let focusedElement = focusedElementValue,
               CFGetTypeID(focusedElement) == AXUIElementGetTypeID() else {
             return false
         }

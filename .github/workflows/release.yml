@@ -1,44 +1,99 @@
-name: Build and Release DMG
+name: Release
 
 on:
   push:
     tags:
-      - 'v*'
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g. v1.3.8)'
+        required: true
+        default: 'v1.3.8'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
-    contents: write
+  contents: write
 
 jobs:
-  release:
-    name: Build Universal Binary & Create DMG
+  build-and-release:
+    name: Build & Publish Release
     runs-on: macos-15
 
     steps:
-      - name: Checkout repository
+      - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Build Universal App & Create DMG
+      - name: Resolve Version Tag
+        id: vars
         env:
-          GITHUB_REF_NAME: ${{ github.ref_name }}
-        run: |
-          chmod +x scripts/*.sh
-          ./scripts/build-dmg.sh
+          RAW_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: bash scripts/resolve-release-tag.sh
 
-      - name: Release and Upload DMG
-        uses: softprops/action-gh-release@v1
-        with:
-          files: ConCopy-*.dmg
-          generate_release_notes: true
+      - name: Check Swift Concurrency
+        run: swift build -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors
+
+      - name: Test Release Scripts
+        run: bash scripts/tests/release-scripts-tests.sh
+
+      - name: Run Test Suite Gate
+        run: swift test
+
+      - name: Build Universal App
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Commit Updated Homebrew Cask
+          APP_VERSION: ${{ steps.vars.outputs.version }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          if ! git diff --cached --quiet; then
-            git commit -m "chore(release): aggiorna Homebrew Cask a v${GITHUB_REF_NAME#v} [skip ci]"
-            git push origin HEAD:main
-          fi
+          chmod +x scripts/build-app.sh
+          ./scripts/build-app.sh
+
+      - name: Package Release Artifacts (.dmg and .zip)
+        env:
+          APP_VERSION: ${{ steps.vars.outputs.version }}
+        run: |
+          DMG_NAME="ConCopy-${APP_VERSION}.dmg"
+          ZIP_NAME="ConCopy-${APP_VERSION}.zip"
+          STAGING_DIR="build/dmg-staging"
+
+          rm -rf "$STAGING_DIR" "$DMG_NAME" "$ZIP_NAME"
+          mkdir -p "$STAGING_DIR"
+
+          echo "==> Staging ConCopy.app..."
+          cp -R "ConCopy.app" "$STAGING_DIR/"
+          ln -s /Applications "$STAGING_DIR/Applications"
+
+          echo "==> Creating DMG ($DMG_NAME)..."
+          hdiutil create -volname "ConCopy" \
+            -srcfolder "$STAGING_DIR" \
+            -ov -format UDZO \
+            "$DMG_NAME"
+
+          echo "==> Creating ZIP ($ZIP_NAME)..."
+          ditto -c -k --sequesterRsrc --keepParent "ConCopy.app" "$ZIP_NAME"
+
+          echo "==> Generating SHA256 checksums..."
+          shasum -a 256 "$DMG_NAME" "$ZIP_NAME" > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create GitHub Draft Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.vars.outputs.tag }}
+          APP_VERSION: ${{ steps.vars.outputs.version }}
+        run: |
+          DMG_NAME="ConCopy-${APP_VERSION}.dmg"
+          ZIP_NAME="ConCopy-${APP_VERSION}.zip"
+
+          echo "==> Creating GitHub Draft Release for $TAG..."
+          gh release create "$TAG" \
+            --draft \
+            --verify-tag \
+            --title "ConCopy $TAG" \
+            --generate-notes \
+            "$DMG_NAME" \
+            "$ZIP_NAME" \
+            SHA256SUMS.txt

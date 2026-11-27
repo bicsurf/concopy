@@ -2,11 +2,13 @@
 set -e
 
 APP_NAME="ConCopy"
-BUNDLE_DIR="$APP_NAME.app"
+OUTPUT_DIR="${OUTPUT_DIR:-.}"
+BUNDLE_DIR="$OUTPUT_DIR/$APP_NAME.app"
 
-RAW_VERSION="${VERSION:-${GITHUB_REF_NAME:-$(git describe --tags --abbrev=0 2>/dev/null || git tag --sort=-v:refname 2>/dev/null | head -n 1 || echo "1.2.0")}}"
-RAW_VERSION="${RAW_VERSION#[vV]}"
-export VERSION="${RAW_VERSION:-1.2.0}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/resolve-version.sh"
+VERSION="$(resolve_app_version)"
+export VERSION
 
 echo "==> Compilazione Universal Binary nativa (arm64 + x86_64)..."
 swift build -c release --arch arm64 --arch x86_64

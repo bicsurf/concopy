@@ -27,15 +27,15 @@ final class ReauditSyncTests: XCTestCase {
             blobDirectoryURL: directory.appendingPathComponent(name + "-blobs"))
     }
     private func worker(_ db: DatabaseManager) -> CloudDriveSyncWorker {
-        CloudDriveSyncWorker(databaseManager: db, customSyncDirectoryURL: directory.appendingPathComponent("cloud"))
+        CloudDriveSyncWorker(databaseManager: db, customSyncDirectoryURL: directory.appendingPathComponent("cloud"), deviceId: db.blobStorage.baseDirectoryURL.lastPathComponent)
     }
     private func sync(_ worker: CloudDriveSyncWorker) async {
         let result = await worker.performSync()
         XCTAssertEqual(result.status, .idle)
     }
-    private func cloudState() throws -> CloudSyncState {
+    private func cloudState(at url: URL) throws -> CloudSyncState {
         let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
-        return try decoder.decode(CloudSyncState.self, from: Data(contentsOf: directory.appendingPathComponent("cloud/sync-state-v2.json")))
+        return try decoder.decode(CloudSyncState.self, from: Data(contentsOf: url))
     }
     func testB01UsageDoesNotUndoRemoteEditAndOfflineCountersConverge() async throws {
         let a = try database("a"), b = try database("b"), wa = worker(a), wb = worker(b)
@@ -76,12 +76,13 @@ final class ReauditSyncTests: XCTestCase {
             gate.wait()
             return try db.ingestCapturedClip(CapturedClip(plainText: "during publication"))
         }
+        let publishedURL = await w.myDeviceFileURL
         let result = await w.performSync(isAuthorized: { gate.authorize() })
         XCTAssertEqual(result.status, .idle)
         let clip = try await mutation.value
-        XCTAssertFalse(try cloudState().clips.contains { $0.id == clip.id })
+        XCTAssertFalse(try cloudState(at: publishedURL).clips.contains { $0.id == clip.id })
         await sync(w)
-        XCTAssertTrue(try cloudState().clips.contains { $0.id == clip.id })
+        XCTAssertTrue(try cloudState(at: publishedURL).clips.contains { $0.id == clip.id })
     }
     func testB03IndependentDuplicatePreservesExplicitMetadata() async throws {
         let a = try database("a"), b = try database("b"), wa = worker(a), wb = worker(b)
@@ -115,7 +116,7 @@ final class ReauditSyncTests: XCTestCase {
         XCTAssertEqual(merged.clips.first?.plainText, "beta")
         XCTAssertEqual(merged.aliases[ids[2].uuidString.lowercased()], ids[0].uuidString.lowercased())
     }
-    func testB06LegacyDownloadCompletesBeforeV2IsCreated() async throws {
+    func testB06LegacyDownloadCompletesBeforeDeviceSnapshotIsCreated() async throws {
         let db = try database("legacy"), cloud = directory.appendingPathComponent("cloud")
         try FileManager.default.createDirectory(at: cloud, withIntermediateDirectories: true)
         let placeholder = cloud.appendingPathComponent(".sync-state-v1.json.icloud")
@@ -123,7 +124,8 @@ final class ReauditSyncTests: XCTestCase {
         let w = CloudDriveSyncWorker(databaseManager: db, customSyncDirectoryURL: cloud, startDownload: { _ in })
         let waiting = await w.performSync()
         XCTAssertEqual(waiting.status, .syncing)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: cloud.appendingPathComponent("sync-state-v2.json").path))
+        let publishedURL = await w.myDeviceFileURL
+        XCTAssertFalse(FileManager.default.fileExists(atPath: publishedURL.path))
         let clip = ClipRecord(contentHash:"legacy",plainText:"legacy",primaryType:.text)
         let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
         try encoder.encode(CloudSyncState(version:1,clips:[clip])).write(to:cloud.appendingPathComponent("sync-state-v1.json"))

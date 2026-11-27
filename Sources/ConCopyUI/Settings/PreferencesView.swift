@@ -155,6 +155,20 @@ public struct PreferencesView: View {
                 Text("Automatically masks API keys, passwords, bearer tokens, and credit card numbers. Hover or click lock to reveal via Touch ID.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Picker("Sensitive clip expiration (Auto-TTL)", selection: $settingsManager.sensitiveClipExpirationMinutes) {
+                        Text("Disabled").tag(0)
+                        Text("5 minutes").tag(5)
+                        Text("15 minutes").tag(15)
+                        Text("30 minutes").tag(30)
+                        Text("60 minutes").tag(60)
+                    }
+                    Text("Automatically purge sensitive clips from history after the selected duration.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 2)
                 VStack(alignment: .leading, spacing: 6) {
                     Picker("When clicking a clip", selection: $settingsManager.isDirectPasteEnabled) {
                         Text("Copy to clipboard").tag(false)
@@ -235,10 +249,15 @@ public struct PreferencesView: View {
 
             Section(header: Text("iCloud Drive Sync")) {
                 Toggle("iCloud Drive Sync", isOn: $settingsManager.iCloudSyncEnabled)
-                    .disabled(!CloudKitSyncCoordinator.isCloudDriveAvailable)
+                    .disabled(!CloudDriveSyncCoordinator.isCloudDriveAvailable)
 
-                if CloudKitSyncCoordinator.isCloudDriveAvailable {
+                if CloudDriveSyncCoordinator.isCloudDriveAvailable {
                     Text("Automatic and private clip synchronization between your Macs via your iCloud Drive folder.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
+                    Toggle("Exclude sensitive data from sync", isOn: $settingsManager.excludeSensitiveFromSync)
+                    Text("When enabled, API keys, credentials, and sensitive tokens are kept strictly on this Mac and never synced to iCloud Drive.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 } else {

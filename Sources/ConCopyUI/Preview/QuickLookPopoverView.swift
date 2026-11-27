@@ -16,6 +16,7 @@ public struct QuickLookPopoverView: View {
     @State private var imageSizeKB: String = ""
     @State private var zoomScale: CGFloat = 1.0
     @State private var isCopiedText = false
+    @State private var imageLoadError: String? = nil
     @State private var eventMonitor: Any? = nil
 
     public init(
@@ -101,6 +102,7 @@ public struct QuickLookPopoverView: View {
         }
         .onChange(of: clip.id) { _, _ in
             imageData = nil
+            imageLoadError = nil
             imageResolution = ""
             imageSizeKB = ""
             zoomScale = 1.0
@@ -164,6 +166,16 @@ public struct QuickLookPopoverView: View {
                         .scaleEffect(zoomScale)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .padding(12)
+                } else if let error = imageLoadError {
+                    VStack(spacing: 8) {
+                        Image(systemName: "photo.badge.exclamationmark")
+                            .font(.system(size: 36))
+                            .foregroundStyle(.secondary)
+                        Text(error)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     ProgressView("Loading image...")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -333,10 +345,14 @@ public struct QuickLookPopoverView: View {
                         self.imageData = data
                         self.imageSizeKB = sizeStr
                         self.imageResolution = resStr
+                        self.imageLoadError = nil
                     }
                 }
             } catch {
-                print("[ConCopy] Failed to load preview image: \(error)")
+                ConCopyLogger.storage.error("Failed to load preview image: \(error.localizedDescription, privacy: .private)")
+                await MainActor.run {
+                    self.imageLoadError = "Image preview unavailable"
+                }
             }
         }
     }
