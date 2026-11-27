@@ -28,6 +28,8 @@ public struct BackupClipItem: Codable, Sendable {
     public let manualSortIndex: Int
     public let createdAt: Date
     public let updatedAt: Date
+    public let isSensitive: Bool
+    public let expiresAt: Date?
     public let payloads: [BackupPayloadItem]
 
     public init(
@@ -43,6 +45,8 @@ public struct BackupClipItem: Codable, Sendable {
         manualSortIndex: Int,
         createdAt: Date,
         updatedAt: Date,
+        isSensitive: Bool = false,
+        expiresAt: Date? = nil,
         payloads: [BackupPayloadItem]
     ) {
         self.id = id
@@ -57,7 +61,28 @@ public struct BackupClipItem: Codable, Sendable {
         self.manualSortIndex = manualSortIndex
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+        self.isSensitive = isSensitive
+        self.expiresAt = expiresAt
         self.payloads = payloads
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        contentHash = try container.decode(String.self, forKey: .contentHash)
+        plainText = try container.decodeIfPresent(String.self, forKey: .plainText)
+        customName = try container.decodeIfPresent(String.self, forKey: .customName)
+        primaryType = try container.decode(ClipPrimaryType.self, forKey: .primaryType)
+        sourceAppBundleId = try container.decodeIfPresent(String.self, forKey: .sourceAppBundleId)
+        isFavorite = try container.decode(Bool.self, forKey: .isFavorite)
+        listId = try container.decodeIfPresent(UUID.self, forKey: .listId)
+        pasteCount = try container.decode(Int.self, forKey: .pasteCount)
+        manualSortIndex = try container.decode(Int.self, forKey: .manualSortIndex)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        updatedAt = try container.decode(Date.self, forKey: .updatedAt)
+        isSensitive = try container.decodeIfPresent(Bool.self, forKey: .isSensitive) ?? false
+        expiresAt = try container.decodeIfPresent(Date.self, forKey: .expiresAt)
+        payloads = try container.decode([BackupPayloadItem].self, forKey: .payloads)
     }
 }
 
@@ -162,6 +187,7 @@ public struct ArchiveManager: Sendable {
                 for item in archive.clips {
                     try autoreleasepool {
                         let representations = try Self.validatedRepresentations(item.payloads)
+                        let isSensitive = item.isSensitive || SensitiveDataDetector.isSensitive(item.plainText)
                         let hash = CapturedClip(plainText: item.plainText, primaryType: item.primaryType,
                             representations: representations).migratedContentHash(fallback: item.contentHash)
                         var match = try ClipRecord.filter(Column("contentHash") == hash).fetchOne(db)
@@ -177,6 +203,11 @@ public struct ArchiveManager: Sendable {
                             found.isFavorite = found.isFavorite || item.isFavorite
                             found.listId = found.listId ?? item.listId
                             found.customName = found.customName ?? item.customName
+                            found.isSensitive = found.isSensitive || isSensitive
+                                || SensitiveDataDetector.isSensitive(found.plainText)
+                            if let incomingExpiration = item.expiresAt {
+                                found.expiresAt = found.expiresAt.map { min($0, incomingExpiration) } ?? incomingExpiration
+                            }
                             try found.update(db)
                             // Repair incomplete historic imports without replacing local representations.
                             let payloads = try ClipPayloadRecord.filter(
@@ -200,6 +231,7 @@ public struct ArchiveManager: Sendable {
                                 > 0
                             var clip = item.record(id: idExists ? UUID() : item.id)
                             clip.contentHash = hash
+                            clip.isSensitive = isSensitive
                             try clip.insert(db)
                             try databaseManager.replacePayloads(
                                 clipId: clip.id, representations: representations, db: db)
@@ -307,7 +339,7 @@ extension BackupClipItem {
             id: id ?? self.id, contentHash: contentHash, plainText: plainText, customName: customName,
             primaryType: primaryType, sourceAppBundleId: sourceAppBundleId, isFavorite: isFavorite,
             listId: listId, pasteCount: pasteCount, manualSortIndex: manualSortIndex,
-            createdAt: createdAt, updatedAt: updatedAt)
+            createdAt: createdAt, updatedAt: updatedAt, isSensitive: isSensitive, expiresAt: expiresAt)
     }
 }
 
@@ -336,6 +368,7 @@ extension DatabaseManager {
                         sourceAppBundleId: clip.sourceAppBundleId,
                         isFavorite: clip.isFavorite, listId: clip.listId, pasteCount: clip.pasteCount,
                         manualSortIndex: clip.manualSortIndex, createdAt: clip.createdAt, updatedAt: clip.updatedAt,
+                        isSensitive: clip.isSensitive, expiresAt: clip.expiresAt,
                         payloads: backupPayloads)
                 }
                 clips.append(item)

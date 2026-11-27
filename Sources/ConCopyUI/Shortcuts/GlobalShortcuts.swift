@@ -3,6 +3,16 @@ import ConCopyCore
 import Foundation
 import KeyboardShortcuts
 
+// NotificationCenter tokens are immutable and may be removed from any thread.
+private final class ShortcutNotificationObserver: @unchecked Sendable {
+    let token: any NSObjectProtocol
+
+    init(_ token: any NSObjectProtocol) { self.token = token }
+
+    deinit { NotificationCenter.default.removeObserver(token) }
+}
+
+@MainActor
 extension KeyboardShortcuts.Name {
     // MARK: - General Configurable Shortcuts
     public static let toggleConCopyPanel = Self(
@@ -107,6 +117,7 @@ public enum ConCopyShortcutKey: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
+    @MainActor
     public var shortcutName: KeyboardShortcuts.Name {
         switch self {
         case .toggleConCopyPanel: return .toggleConCopyPanel
@@ -120,6 +131,7 @@ public enum ConCopyShortcutKey: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
+    @MainActor
     public var defaultShortcut: KeyboardShortcuts.Shortcut? {
         shortcutName.defaultShortcut
     }
@@ -147,7 +159,11 @@ public final class GlobalShortcutsManager: ObservableObject {
     @Published public private(set) var swapNumericModifiers: Bool = false
     @Published public private(set) var changeVersion: Int = 0
 
-    private var notificationObserver: (any NSObjectProtocol)?
+    private var notificationObserver: ShortcutNotificationObserver?
+
+    public var listModifierFlags: NSEvent.ModifierFlags {
+        swapNumericModifiers ? [.command, .option] : [.command]
+    }
 
     public var listModifierSymbol: String {
         swapNumericModifiers ? "⌘⌥" : "⌘"
@@ -181,29 +197,24 @@ public final class GlobalShortcutsManager: ObservableObject {
         Self.disableInPanelHotKeys()
 
         // Observe shortcut changes made via KeyboardShortcuts.Recorder or programmatically
-        notificationObserver = NotificationCenter.default.addObserver(
+        notificationObserver = ShortcutNotificationObserver(NotificationCenter.default.addObserver(
             forName: Notification.Name("KeyboardShortcuts_shortcutByNameDidChange"),
             object: nil,
             queue: .main
         ) { [weak self] notification in
+            let rawName = (notification.userInfo?["name"] as? KeyboardShortcuts.Name)?.rawValue
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                if let name = notification.userInfo?["name"] as? KeyboardShortcuts.Name {
-                    if let key = ConCopyShortcutKey.allCases.first(where: { $0.shortcutName == name }),
+                if let rawName {
+                    if let key = ConCopyShortcutKey.allCases.first(where: { $0.shortcutName.rawValue == rawName }),
                         key.scope == .inPanel
                     {
-                        KeyboardShortcuts.disable(name)
+                        KeyboardShortcuts.disable(key.shortcutName)
                     }
                 }
                 self.changeVersion &+= 1
             }
-        }
-    }
-
-    deinit {
-        if let observer = notificationObserver {
-            NotificationCenter.default.removeObserver(observer)
-        }
+        })
     }
 
     /// Disables Carbon global hotkey registration for in-panel shortcuts so they are routed to window events.
@@ -402,7 +413,8 @@ public final class GlobalShortcutsManager: ObservableObject {
             && !flags.contains(.control) && !flags.contains(.shift)
     }
 
-    private func digitIndex(forKeyCode keyCode: UInt16) -> Int? {
+    /// Maps raw hardware digit keycodes (18..29, 82..92) to digit indices 0..9.
+    public static func digitIndex(forKeyCode keyCode: UInt16) -> Int? {
         switch keyCode {
         case 18, 83: return 0  // 1
         case 19, 84: return 1  // 2
@@ -416,5 +428,9 @@ public final class GlobalShortcutsManager: ObservableObject {
         case 29, 82: return 9  // 0
         default: return nil
         }
+    }
+
+    private func digitIndex(forKeyCode keyCode: UInt16) -> Int? {
+        Self.digitIndex(forKeyCode: keyCode)
     }
 }

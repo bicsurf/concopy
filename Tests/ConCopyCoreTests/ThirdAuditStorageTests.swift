@@ -62,8 +62,8 @@ final class ThirdAuditStorageTests: XCTestCase {
         try await ArchiveManager().importArchive(from: original, databaseManager: b)
         XCTAssertEqual(try Set(b.fetchSnippets().map(\.id)), restoredIDs)
         let cloud = directory.appendingPathComponent("cloud")
-        let wa = CloudDriveSyncWorker(databaseManager: a, customSyncDirectoryURL: cloud)
-        let wb = CloudDriveSyncWorker(databaseManager: b, customSyncDirectoryURL: cloud)
+        let wa = CloudDriveSyncWorker(databaseManager: a, customSyncDirectoryURL: cloud, deviceId: "a")
+        let wb = CloudDriveSyncWorker(databaseManager: b, customSyncDirectoryURL: cloud, deviceId: "b")
         let first = await wa.performSync(); XCTAssertEqual(first.status, .idle)
         try b.saveSnippet(SnippetRecord(shortcut: ";other", content: "unrelated"))
         let second = await wb.performSync(); XCTAssertEqual(second.status, .idle)
@@ -101,13 +101,15 @@ final class ThirdAuditStorageTests: XCTestCase {
         let pngName = try storage.storeBlob(data: png), tiffName = try storage.storeBlob(data: tiff)
         let queue = try DatabaseQueue(path: path.path)
         try DatabaseManager.migrator(blobStorage: storage).migrate(queue, upTo: "v5_independent_usage_counters")
-        try queue.write { sql in
-            for index in 0..<2 {
-                let clip = ClipRecord(contentHash: "legacy-\(index)", primaryType: .image,
-                    updatedAt: Date(timeIntervalSince1970: Double(index + 1)))
-                try clip.insert(sql)
-                try ClipPayloadRecord(clipId: clip.id, utiType: "public.png", blobFilename: pngName, byteSize: png.count).insert(sql)
-                if index == 0 { try ClipPayloadRecord(clipId: clip.id, utiType: "public.tiff", blobFilename: tiffName, byteSize: tiff.count).insert(sql) }
+        try ClipRecord.$omitV9ColumnsDuringLegacyInsert.withValue(true) {
+            try queue.write { sql in
+                for index in 0..<2 {
+                    let clip = ClipRecord(contentHash: "legacy-\(index)", primaryType: .image,
+                        updatedAt: Date(timeIntervalSince1970: Double(index + 1)))
+                    try clip.insert(sql)
+                    try ClipPayloadRecord(clipId: clip.id, utiType: "public.png", blobFilename: pngName, byteSize: png.count).insert(sql)
+                    if index == 0 { try ClipPayloadRecord(clipId: clip.id, utiType: "public.tiff", blobFilename: tiffName, byteSize: tiff.count).insert(sql) }
+                }
             }
         }
         // A later SQL failure rolls the migration back; its old blobs must still exist.

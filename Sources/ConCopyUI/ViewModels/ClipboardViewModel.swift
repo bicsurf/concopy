@@ -14,11 +14,15 @@ public final class ClipboardViewModel: ObservableObject {
     @Published public var cloudSyncStatus: CloudSyncStatus = .idle
     @Published public var isHistoryTemporary = false
     @Published public var snippetSaveError: String?
-    private var visibleLimit = 100
+
+    // Collaborators
+    public let selectionManager: BatchSelectionManager
+    public let queueManager: PasteQueueManager
+    public let searchCoordinator: SearchCoordinator
+
     private var loadVersion: UInt64 = 0
     private var appliedLoadVersion: UInt64?
     private var canActOnClips: Bool { appliedLoadVersion == loadVersion && !isLoadingClips }
-    private var clipLoadTask: Task<Void, Never>?
     private struct SelectionMove {
         let offset: Int
         let extendSelection: Bool
@@ -30,45 +34,79 @@ public final class ClipboardViewModel: ObservableObject {
     private var thumbnailTasks = Set<UUID>()
     @Published private var thumbnailVersion: UInt64 = 0
     @Published public var lists: [ClipListRecord] = []
-    @Published public var selectedListId: UUID? = nil
-    @Published public var isFavoritesOnly: Bool = false
+
+    // Proxy properties delegating to SearchCoordinator
+    public var selectedListId: UUID? {
+        get { searchCoordinator.selectedListId }
+        set { searchCoordinator.selectedListId = newValue }
+    }
+    public var isFavoritesOnly: Bool {
+        get { searchCoordinator.isFavoritesOnly }
+        set { searchCoordinator.isFavoritesOnly = newValue }
+    }
+    public var selectedTypeFilter: ClipTypeFilter {
+        get { searchCoordinator.selectedTypeFilter }
+        set { searchCoordinator.selectedTypeFilter = newValue }
+    }
+    public var currentSortMode: ClipSortMode {
+        get { searchCoordinator.currentSortMode }
+        set { searchCoordinator.currentSortMode = newValue }
+    }
     @Published public var searchQuery: String = "" {
         didSet {
+            searchCoordinator.searchQuery = searchQuery
             if isSnippetsOnly {
                 if selectedSnippetIndex >= filteredSnippets.count {
                     selectedSnippetIndex = max(0, filteredSnippets.count - 1)
                 }
             } else {
-                visibleLimit = 100
+                searchCoordinator.visibleLimit = 100
                 loadClips()
             }
         }
     }
-    @Published public var isPlainTextModeEnabled: Bool = false
-    @Published public var activeTransformation: TextTransformation = .none
-    @Published public var selectedTypeFilter: ClipTypeFilter = .all
-    @Published public var currentSortMode: ClipSortMode = .updatedAtDesc
-    @Published public var selectedIndex: Int = 0
-    @Published public var selectedClipIds: Set<UUID> = []
-    public private(set) var selectionAnchorId: UUID? = nil
 
-    public var selectedClipId: UUID? {
-        get {
-            guard selectedIndex >= 0 && selectedIndex < clips.count else { return nil }
-            return clips[selectedIndex].id
-        }
-        set {
-            if let newId = newValue, let idx = clips.firstIndex(where: { $0.id == newId }) {
-                selectedIndex = idx
+    // Proxy properties delegating to BatchSelectionManager
+    @Published public var selectedClipIds: Set<UUID> = [] {
+        didSet {
+            if selectionManager.selectedClipIds != selectedClipIds {
+                selectionManager.selectedClipIds = selectedClipIds
             }
         }
     }
+    @Published public var selectedIndex: Int = 0 {
+        didSet {
+            selectionManager.selectedIndex = selectedIndex
+        }
+    }
+
+    public var selectionAnchorId: UUID? {
+        selectionManager.selectionAnchorId
+    }
+
+    public var selectedClipId: UUID? {
+        get { selectionManager.selectedClipId(in: clips) }
+        set {
+            selectionManager.setSelectedClipId(newValue, in: clips)
+            syncSelectionFromManager()
+        }
+    }
+
     public var isSelectionMode: Bool {
-        !selectedClipIds.isEmpty
+        selectionManager.isSelectionMode
     }
-    public var filteredClips: [ClipRecord] {
-        clips
+
+    // Proxy properties delegating to PasteQueueManager
+    @Published public var pasteQueue: [ClipRecord] = []
+    @Published public var pasteQueueOrder: PasteQueueOrder = .fifo {
+        didSet { queueManager.pasteQueueOrder = pasteQueueOrder }
     }
+    @Published public var isPasteQueueActive: Bool = false
+
+    @Published public var isPlainTextModeEnabled: Bool = false
+    @Published public var activeTransformation: TextTransformation = .none
+
+    public var filteredClips: [ClipRecord] { clips }
     public var filteredSnippets: [SnippetRecord] {
         let q = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !q.isEmpty else { return snippets }
@@ -77,6 +115,7 @@ public final class ClipboardViewModel: ObservableObject {
                 || (snippet.title?.lowercased().contains(q) == true)
         }
     }
+
     @Published public var scrollTargetTopTrigger: UUID? = nil
     private var lastTopClipId: UUID? = nil
     private var lastTopClipUpdatedAt: Date? = nil
@@ -95,14 +134,8 @@ public final class ClipboardViewModel: ObservableObject {
     @Published public var isSnippetEditorPresented: Bool = false
     @Published public var editingSnippet: SnippetRecord? = nil
 
-    // Variable prompting sheet for dynamic snippets
     @Published public var promptSnippet: SnippetRecord? = nil
     @Published public var promptSnippetVariables: [String] = []
-
-    // MARK: - Paste Stack / Queue State
-    @Published public var pasteQueue: [ClipRecord] = []
-    @Published public var pasteQueueOrder: PasteQueueOrder = .fifo
-    @Published public var isPasteQueueActive: Bool = false
 
     private var thumbnailCache = NSCache<NSUUID, NSImage>()
     private var webMetadataCache: [UUID: WebLinkMetadata] = [:]
@@ -123,12 +156,19 @@ public final class ClipboardViewModel: ObservableObject {
         databaseManager: DatabaseManager,
         pasteInjector: PasteInjector = PasteInjector(),
         appSettings: AppSettingsManager,
-        pasteboard: NSPasteboard = .general
+        pasteboard: NSPasteboard = .general,
+        selectionManager: BatchSelectionManager? = nil,
+        queueManager: PasteQueueManager? = nil,
+        searchCoordinator: SearchCoordinator? = nil
     ) {
         self.databaseManager = databaseManager
         self.pasteInjector = pasteInjector
         self.appSettings = appSettings
         self.pasteboard = pasteboard
+        self.selectionManager = selectionManager ?? BatchSelectionManager()
+        self.queueManager = queueManager ?? PasteQueueManager()
+        self.searchCoordinator = searchCoordinator ?? SearchCoordinator()
+
         checkAccessibilityPermissions()
         loadLists()
         loadClips()
@@ -148,10 +188,20 @@ public final class ClipboardViewModel: ObservableObject {
 
     deinit {
         copyFeedbackTask?.cancel()
-        clipLoadTask?.cancel()
         listLoadTask?.cancel()
         snippetLoadTask?.cancel()
         for task in pendingActions.values { task.cancel() }
+    }
+
+    private func syncSelectionFromManager() {
+        self.selectedClipIds = selectionManager.selectedClipIds
+        self.selectedIndex = selectionManager.selectedIndex
+    }
+
+    private func syncQueueFromManager() {
+        self.pasteQueue = queueManager.pasteQueue
+        self.isPasteQueueActive = queueManager.isPasteQueueActive
+        self.pasteQueueOrder = queueManager.pasteQueueOrder
     }
 
     private func performUIAction(_ operation: @escaping @MainActor () async -> Void) {
@@ -162,15 +212,14 @@ public final class ClipboardViewModel: ObservableObject {
         }
     }
 
-    /// Useful to callers that need a fully applied snapshot (including tests and previews).
     public func waitForPendingLoads() async {
         while true {
             let version = loadVersion
             for task in Array(pendingActions.values) { await task.value }
             await listLoadTask?.value
             await snippetLoadTask?.value
-            await clipLoadTask?.value
-            if pendingActions.isEmpty && version == loadVersion { return }
+            if pendingActions.isEmpty && version == loadVersion && !isLoadingClips { return }
+            try? await Task.sleep(nanoseconds: 10_000_000)
         }
     }
 
@@ -179,7 +228,7 @@ public final class ClipboardViewModel: ObservableObject {
     }
 
     public func openAccessibilitySettings() {
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+        let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
         _ = AXIsProcessTrustedWithOptions(options)
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
             NSWorkspace.shared.open(url)
@@ -188,7 +237,6 @@ public final class ClipboardViewModel: ObservableObject {
 
     public func clearHistory(preserveFavorites: Bool = true) {
         performUIAction { [self] in
-
             do {
                 let db = databaseManager
                 _ = try await Task.detached(priority: .utility) {
@@ -196,9 +244,9 @@ public final class ClipboardViewModel: ObservableObject {
                 }.value
                 loadClips()
             } catch {
-                print("[ConCopy] Failed to clear history: \(error)")
+                ConCopyLogger.storage.error("Failed to clear history: \(error.localizedDescription, privacy: .private)")
+                showToast("Failed to clear history")
             }
-
         }
     }
 
@@ -208,18 +256,18 @@ public final class ClipboardViewModel: ObservableObject {
 
     public func saveEditedText(for clipId: UUID, newText: String) {
         performUIAction { [self] in
-
             do {
                 let db = databaseManager
+                let expirationMinutes = AppSettingsManager.shared.sensitiveClipExpirationMinutes
                 try await Task.detached(priority: .utility) {
-                    try db.updateTextContent(clipId: clipId, newPlainText: newText)
+                    try db.updateTextContent(clipId: clipId, newPlainText: newText, expirationMinutes: expirationMinutes)
                 }.value
                 editingClip = nil
                 loadClips()
             } catch {
-                print("[ConCopy] Failed to update text content: \(error)")
+                ConCopyLogger.storage.error("Failed to update text content: \(error.localizedDescription, privacy: .private)")
+                showToast("Failed to save text")
             }
-
         }
     }
 
@@ -241,32 +289,14 @@ public final class ClipboardViewModel: ObservableObject {
     }
 
     private func reloadClips() {
-        clipLoadTask?.cancel()
         loadVersion &+= 1
         let version = loadVersion
-        let db = databaseManager
-        let query = searchQuery
-        let listID = selectedListId
-        let favorites = isFavoritesOnly
-        let typeFilter = selectedTypeFilter
-        let mode = currentSortMode
-        let limit = visibleLimit
         isLoadingClips = true
-        clipLoadTask = Task { [weak self] in
-            do {
-                if !query.isEmpty { try await Task.sleep(nanoseconds: 40_000_000) }
-                let result = try await Task.detached(priority: .userInitiated) {
-                    try db.searchClips(
-                        query: query,
-                        listId: listID,
-                        primaryTypes: typeFilter.matchingPrimaryTypes,
-                        favoritesOnly: favorites,
-                        sortMode: mode,
-                        limit: limit + 1
-                    )
-                }.value
-                guard !Task.isCancelled, let self, self.loadVersion == version else { return }
-                let fetched = Array(result.prefix(limit))
+
+        searchCoordinator.executeSearch(
+            databaseManager: databaseManager,
+            onSuccess: { [weak self] fetched, hasMore, _ in
+                guard let self, self.loadVersion == version else { return }
                 let previousSelection = self.selectedClipId
                 let isNewTop =
                     fetched.first.map { first in
@@ -274,21 +304,25 @@ public final class ClipboardViewModel: ObservableObject {
                     } ?? false
                 self.clips = fetched
                 self.appliedLoadVersion = version
-                self.hasMoreClips = result.count > limit
-                self.selectedClipIds.formIntersection(Set(fetched.map(\.id)))
-                if let anchor = self.selectionAnchorId, !fetched.contains(where: { $0.id == anchor }) {
-                    self.selectionAnchorId = nil
-                }
+                self.hasMoreClips = hasMore
+
+                self.selectionManager.pruneInvalidIds(existingIds: Set(fetched.map(\.id)))
+                self.syncSelectionFromManager()
+
                 self.lastTopClipId = fetched.first?.id
                 self.lastTopClipUpdatedAt = fetched.first?.updatedAt
                 if isNewTop && !self.isSelectionMode && self.pendingSelectionMoves.isEmpty {
                     self.selectedIndex = 0
-                    self.selectionAnchorId = nil
+                    self.selectionManager.selectedIndex = 0
+                    self.selectionManager.resetAnchor()
                     self.scrollTargetTopTrigger = UUID()
                 } else if let previousSelection, let index = fetched.firstIndex(where: { $0.id == previousSelection }) {
                     self.selectedIndex = index
+                    self.selectionManager.selectedIndex = index
                 } else {
-                    self.selectedIndex = max(0, min(self.selectedIndex, fetched.count - 1))
+                    let idx = max(0, min(self.selectedIndex, fetched.count - 1))
+                    self.selectedIndex = idx
+                    self.selectionManager.selectedIndex = idx
                 }
                 self.isLoadingClips = false
                 let moves = self.pendingSelectionMoves
@@ -296,18 +330,19 @@ public final class ClipboardViewModel: ObservableObject {
                 for move in moves {
                     self.moveSelection(by: move.offset, extendSelection: move.extendSelection)
                 }
-            } catch {
-                guard !Task.isCancelled, let self, self.loadVersion == version else { return }
+            },
+            onFailure: { [weak self] _, _ in
+                guard let self, self.loadVersion == version else { return }
                 self.isLoadingClips = false
                 self.pendingSelectionMoves.removeAll()
                 self.showToast("Could not load clipboard history")
             }
-        }
+        )
     }
 
     public func loadNextPage() {
         guard hasMoreClips, !isLoadingClips else { return }
-        visibleLimit += 100
+        searchCoordinator.visibleLimit += 100
         loadClips()
     }
 
@@ -316,8 +351,8 @@ public final class ClipboardViewModel: ObservableObject {
         guard !clips.isEmpty else { return }
         selectedClipId = filteredClips.first?.id
         if !isSelectionMode {
-            selectedClipIds.removeAll()
-            selectionAnchorId = nil
+            selectionManager.clearSelection()
+            syncSelectionFromManager()
         }
         scrollTargetTopTrigger = UUID()
     }
@@ -332,7 +367,7 @@ public final class ClipboardViewModel: ObservableObject {
     }
 
     public func selectAllClips() {
-        visibleLimit = 100
+        searchCoordinator.visibleLimit = 100
         clearSelection()
         selectedListId = nil
         isFavoritesOnly = false
@@ -344,13 +379,13 @@ public final class ClipboardViewModel: ObservableObject {
     public func selectTypeFilter(_ filter: ClipTypeFilter) {
         guard selectedTypeFilter != filter else { return }
         selectedTypeFilter = filter
-        visibleLimit = 100
+        searchCoordinator.visibleLimit = 100
         clearSelection()
         loadClips()
     }
 
     public func selectFavorites() {
-        visibleLimit = 100
+        searchCoordinator.visibleLimit = 100
         clearSelection()
         selectedListId = nil
         isFavoritesOnly = true
@@ -359,7 +394,7 @@ public final class ClipboardViewModel: ObservableObject {
     }
 
     public func selectSnippets() {
-        visibleLimit = 100
+        searchCoordinator.visibleLimit = 100
         clearSelection()
         selectedListId = nil
         isFavoritesOnly = false
@@ -368,7 +403,7 @@ public final class ClipboardViewModel: ObservableObject {
     }
 
     public func selectList(_ listId: UUID) {
-        visibleLimit = 100
+        searchCoordinator.visibleLimit = 100
         clearSelection()
         selectedListId = listId
         isFavoritesOnly = false
@@ -381,7 +416,6 @@ public final class ClipboardViewModel: ObservableObject {
 
     public func createNewList(name: String) {
         performUIAction { [self] in
-
             guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
             do {
                 let db = databaseManager
@@ -389,15 +423,14 @@ public final class ClipboardViewModel: ObservableObject {
                 loadLists()
                 selectList(list.id)
             } catch {
-                print("[ConCopy] Failed to create list: \(error)")
+                ConCopyLogger.storage.error("Failed to create list: \(error.localizedDescription, privacy: .private)")
+                showToast("Could not create list")
             }
-
         }
     }
 
     public func deleteList(_ listId: UUID, deleteContainedClips: Bool = false) {
         performUIAction { [self] in
-
             do {
                 let db = databaseManager
                 try await Task.detached(priority: .utility) {
@@ -408,15 +441,14 @@ public final class ClipboardViewModel: ObservableObject {
                     selectAllClips()
                 }
             } catch {
-                print("[ConCopy] Failed to delete list: \(error)")
+                ConCopyLogger.storage.error("Failed to delete list: \(error.localizedDescription, privacy: .private)")
+                showToast("Could not delete list")
             }
-
         }
     }
 
     public func toggleAutoStar(for listId: UUID) {
         performUIAction { [self] in
-
             do {
                 if let list = lists.first(where: { $0.id == listId }) {
                     let willActivate = !list.isAutoStarActive
@@ -430,17 +462,16 @@ public final class ClipboardViewModel: ObservableObject {
                 }
                 loadLists()
             } catch {
-                print("[ConCopy] Failed to set auto star list: \(error)")
+                ConCopyLogger.storage.error("Failed to set auto star list: \(error.localizedDescription, privacy: .private)")
+                showToast("Could not update Auto-Star")
             }
-
         }
     }
 
     public func selectSingle(clipId: UUID) {
         pendingSelectionMoves.removeAll()
-        selectedClipIds.removeAll()
-        selectedClipId = clipId
-        selectionAnchorId = clipId
+        selectionManager.selectSingle(clipId: clipId, in: clips)
+        syncSelectionFromManager()
     }
 
     public func toggleSelection(for clip: ClipRecord) {
@@ -449,13 +480,8 @@ public final class ClipboardViewModel: ObservableObject {
 
     public func toggleSelection(clipId: UUID) {
         pendingSelectionMoves.removeAll()
-        if selectedClipIds.contains(clipId) {
-            selectedClipIds.remove(clipId)
-        } else {
-            selectedClipIds.insert(clipId)
-        }
-        selectedClipId = clipId
-        selectionAnchorId = clipId
+        selectionManager.toggleSelection(clipId: clipId, in: clips)
+        syncSelectionFromManager()
     }
 
     public func selectRange(to clip: ClipRecord) {
@@ -468,29 +494,8 @@ public final class ClipboardViewModel: ObservableObject {
 
     public func selectRange(toClipId clipId: UUID) {
         pendingSelectionMoves.removeAll()
-        guard !clips.isEmpty else { return }
-
-        let anchorId = selectionAnchorId ?? selectedClipId
-        let startIndex: Int
-        if let anchorId = anchorId, let found = clips.firstIndex(where: { $0.id == anchorId }) {
-            startIndex = found
-        } else {
-            startIndex = 0
-        }
-
-        let endIndex = clips.firstIndex(where: { $0.id == clipId }) ?? 0
-        let range = min(startIndex, endIndex)...max(startIndex, endIndex)
-
-        var newSelection: Set<UUID> = []
-        for idx in range {
-            newSelection.insert(clips[idx].id)
-        }
-        selectedClipIds = newSelection
-        selectedClipId = clipId
-        // Keep selectionAnchorId intact for subsequent extensions/contractions
-        if selectionAnchorId == nil {
-            selectionAnchorId = clips[startIndex].id
-        }
+        selectionManager.selectRange(toClipId: clipId, in: clips)
+        syncSelectionFromManager()
     }
 
     public func moveSelection(by offset: Int, extendSelection: Bool) {
@@ -514,43 +519,44 @@ public final class ClipboardViewModel: ObservableObject {
         let proposedIndex = selectedIndex + offset
         if hasMoreClips && (proposedIndex >= clips.count || (proposedIndex < 0 && !extendSelection)) {
             pendingSelectionMoves.append(SelectionMove(offset: offset, extendSelection: extendSelection))
-            // Reaching the beginning backwards requires the actual end of the current query.
-            // Leave room for reloadClips' extra record used to detect another page.
-            visibleLimit = proposedIndex < 0 ? Int.max - 1 : visibleLimit + max(100, offset)
+            searchCoordinator.visibleLimit = proposedIndex < 0 ? Int.max - 1 : searchCoordinator.visibleLimit + max(100, offset)
             reloadClips()
             return
         }
 
         if !extendSelection {
-            selectedClipIds.removeAll()
+            selectionManager.selectedClipIds.removeAll()
             let newIndex = wrappedSelectionIndex(selectedIndex, offset: offset, count: clips.count)
             selectedIndex = newIndex
-            selectionAnchorId = selectedClipId
+            selectionManager.selectedIndex = newIndex
+            selectionManager.setAnchor(selectedClipId)
+            syncSelectionFromManager()
             return
         }
 
-        // Shift is held: extend or contract range with respect to selectionAnchorId
-        if selectionAnchorId == nil {
-            selectionAnchorId = selectedClipId
+        if selectionManager.selectionAnchorId == nil {
+            selectionManager.setAnchor(selectedClipId)
         }
 
         let anchorIndex: Int
-        if let anchorId = selectionAnchorId, let idx = clips.firstIndex(where: { $0.id == anchorId }) {
+        if let anchorId = selectionManager.selectionAnchorId, let idx = clips.firstIndex(where: { $0.id == anchorId }) {
             anchorIndex = idx
         } else {
             anchorIndex = selectedIndex
-            selectionAnchorId = selectedClipId
+            selectionManager.setAnchor(selectedClipId)
         }
 
         let targetIndex = max(0, min(clips.count - 1, selectedIndex + offset))
         selectedIndex = targetIndex
+        selectionManager.selectedIndex = targetIndex
 
         let range = min(anchorIndex, targetIndex)...max(anchorIndex, targetIndex)
         var newSelection: Set<UUID> = []
         for idx in range {
             newSelection.insert(clips[idx].id)
         }
-        selectedClipIds = newSelection
+        selectionManager.selectedClipIds = newSelection
+        syncSelectionFromManager()
     }
 
     private func wrappedSelectionIndex(_ index: Int, offset: Int, count: Int) -> Int {
@@ -568,8 +574,8 @@ public final class ClipboardViewModel: ObservableObject {
 
     public func clearSelection() {
         pendingSelectionMoves.removeAll()
-        selectedClipIds.removeAll()
-        selectionAnchorId = selectedClipId
+        selectionManager.clearSelection(currentClipId: selectedClipId)
+        syncSelectionFromManager()
     }
 
     public func showToast(_ message: String, duration: TimeInterval = 2.5) {
@@ -603,6 +609,7 @@ public final class ClipboardViewModel: ObservableObject {
         guard canActOnClips else { return }
         guard index >= 0 && index < clips.count else { return }
         selectedIndex = index
+        selectionManager.selectedIndex = index
         paste(clip: clips[index], optionHeld: optionHeld)
     }
 
@@ -626,9 +633,10 @@ public final class ClipboardViewModel: ObservableObject {
     ) {
         if shiftHeld {
             if selectedClipId == nil {
-                selectedClipIds.insert(clip.id)
-                selectedClipId = clip.id
-                selectionAnchorId = clip.id
+                selectionManager.selectedClipIds.insert(clip.id)
+                setSelectedClipIdDirect(clip.id)
+                selectionManager.setAnchor(clip.id)
+                syncSelectionFromManager()
             } else {
                 selectRange(toClipId: clip.id)
             }
@@ -640,17 +648,24 @@ public final class ClipboardViewModel: ObservableObject {
             return
         }
 
-        selectedClipId = clip.id
-        selectedClipIds.removeAll()
-        selectionAnchorId = clip.id
+        setSelectedClipIdDirect(clip.id)
+        selectionManager.selectedClipIds.removeAll()
+        selectionManager.setAnchor(clip.id)
+        syncSelectionFromManager()
 
         paste(clip: clip, optionHeld: optionHeld)
+    }
+
+    private func setSelectedClipIdDirect(_ id: UUID) {
+        if let idx = clips.firstIndex(where: { $0.id == id }) {
+            selectedIndex = idx
+            selectionManager.selectedIndex = idx
+        }
     }
 
     public func copyClipToPasteboardWithoutClosing(clip: ClipRecord, optionHeld: Bool = false) {
         guard canActOnClips else { return }
         performUIAction { [self] in
-
             let forcePlainText = optionHeld || isPlainTextModeEnabled
             let transformation = activeTransformation
             do {
@@ -680,9 +695,9 @@ public final class ClipboardViewModel: ObservableObject {
                 }
                 loadClips()
             } catch {
-                print("[ConCopy] Failed to copy clip: \(error)")
+                ConCopyLogger.paste.error("Failed to copy clip: \(error.localizedDescription, privacy: .private)")
+                showToast(error.localizedDescription)
             }
-
         }
     }
 
@@ -691,6 +706,7 @@ public final class ClipboardViewModel: ObservableObject {
         guard pastingClipId == nil else { return }
         if let index = clips.firstIndex(where: { $0.id == clip.id }) {
             selectedIndex = index
+            selectionManager.selectedIndex = index
         }
         self.pastingClipId = clip.id
         let effectiveTransformation = transformation ?? activeTransformation
@@ -714,7 +730,8 @@ public final class ClipboardViewModel: ObservableObject {
                     self.loadClips()
                 } catch {
                     self.pastingClipId = nil
-                    print("[ConCopy] Failed to copy clip: \(error)")
+                    ConCopyLogger.paste.error("Failed to copy clip: \(error.localizedDescription, privacy: .private)")
+                    self.showToast(error.localizedDescription)
                 }
             }
             return
@@ -783,10 +800,11 @@ public final class ClipboardViewModel: ObservableObject {
                         pasteboard: self.pasteboard
                     )
                     self.onClosePanel?()
-                    self.selectedClipIds.removeAll()
+                    self.clearSelection()
                     self.loadClips()
                 } catch {
-                    print("[ConCopy] Failed to batch copy clips: \(error)")
+                    ConCopyLogger.paste.error("Failed to batch copy clips: \(error.localizedDescription, privacy: .private)")
+                    self.showToast(error.localizedDescription)
                 }
             }
             return
@@ -795,9 +813,6 @@ public final class ClipboardViewModel: ObservableObject {
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                if !isTrusted {
-                    self.showToast("Text copied to clipboard! Press ⌘V to paste.")
-                }
                 try await self.pasteInjector.pasteBatch(
                     clips: orderedClips,
                     mode: mode,
@@ -818,6 +833,7 @@ public final class ClipboardViewModel: ObservableObject {
                     }
                 )
                 if isTrusted {
+                    self.clearSelection()
                     self.loadClips()
                 }
             } catch {
@@ -826,12 +842,10 @@ public final class ClipboardViewModel: ObservableObject {
         }
     }
 
-    // MARK: - Paste Queue / Stack Operations
-
+    // MARK: - Paste Queue Operations
     public func addToPasteQueue(clip: ClipRecord) {
-        if !pasteQueue.contains(where: { $0.id == clip.id }) {
-            pasteQueue.append(clip)
-            isPasteQueueActive = true
+        if queueManager.enqueue(clip) {
+            syncQueueFromManager()
             showToast("Added to Paste \(pasteQueueOrder == .fifo ? "Queue" : "Stack") (\(pasteQueue.count))")
         }
     }
@@ -846,40 +860,26 @@ public final class ClipboardViewModel: ObservableObject {
             return
         }
 
-        for item in items {
-            if !pasteQueue.contains(where: { $0.id == item.id }) {
-                pasteQueue.append(item)
-            }
-        }
-        if !pasteQueue.isEmpty {
-            isPasteQueueActive = true
+        let countAdded = queueManager.enqueue(contentsOf: items)
+        if countAdded > 0 || !queueManager.isEmpty {
+            syncQueueFromManager()
             showToast("\(items.count) item(s) added to Paste \(pasteQueueOrder == .fifo ? "Queue" : "Stack") (\(pasteQueue.count))")
-            selectedClipIds.removeAll()
+            clearSelection()
         }
     }
 
     public func clearPasteQueue() {
-        pasteQueue.removeAll()
-        isPasteQueueActive = false
+        queueManager.clear()
+        syncQueueFromManager()
         showToast("Paste Queue cleared")
     }
 
     public func pasteNextFromQueue() {
-        guard !pasteQueue.isEmpty else {
+        guard let nextClip = queueManager.dequeue() else {
             showToast("Paste Queue is empty")
             return
         }
-
-        let nextClip: ClipRecord
-        if pasteQueueOrder == .fifo {
-            nextClip = pasteQueue.removeFirst()
-        } else {
-            nextClip = pasteQueue.removeLast()
-        }
-
-        if pasteQueue.isEmpty {
-            isPasteQueueActive = false
-        }
+        syncQueueFromManager()
 
         let isTrusted = pasteInjector.eventPoster.isProcessTrusted()
         let target = pasteTargetProcessIdentifier?()
@@ -925,7 +925,6 @@ public final class ClipboardViewModel: ObservableObject {
     public func copySelectedToPasteboard() {
         guard isSnippetsOnly || canActOnClips else { return }
         performUIAction { [self] in
-
             if isSnippetsOnly {
                 if selectedSnippetIndex >= 0 && selectedSnippetIndex < filteredSnippets.count {
                     let snippet = filteredSnippets[selectedSnippetIndex]
@@ -953,7 +952,8 @@ public final class ClipboardViewModel: ObservableObject {
                         onClosePanel?()
                         loadClips()
                     } catch {
-                        print("[ConCopy] Failed to copy batch to pasteboard: \(error)")
+                        ConCopyLogger.paste.error("Failed to copy batch to pasteboard: \(error.localizedDescription, privacy: .private)")
+                        showToast(error.localizedDescription)
                     }
                     return
                 }
@@ -963,7 +963,6 @@ public final class ClipboardViewModel: ObservableObject {
                 let clip = clips[selectedIndex]
                 copyClipToPasteboard(clip: clip)
             }
-
         }
     }
 
@@ -972,7 +971,6 @@ public final class ClipboardViewModel: ObservableObject {
         let effectiveTransformation = transformation ?? activeTransformation
         let forcePlainText = isPlainTextModeEnabled || effectiveTransformation != .none
         performUIAction { [self] in
-
             do {
                 try await pasteInjector.copyToPasteboard(
                     clip: clip,
@@ -985,9 +983,9 @@ public final class ClipboardViewModel: ObservableObject {
                 onClosePanel?()
                 loadClips()
             } catch {
-                print("[ConCopy] Failed to copy clip to pasteboard: \(error)")
+                ConCopyLogger.paste.error("Failed to copy clip to pasteboard: \(error.localizedDescription, privacy: .private)")
+                showToast(error.localizedDescription)
             }
-
         }
     }
 
@@ -1030,21 +1028,19 @@ public final class ClipboardViewModel: ObservableObject {
 
     public func toggleFavorite(clip: ClipRecord) {
         performUIAction { [self] in
-
             do {
                 let db = databaseManager
                 _ = try await Task.detached(priority: .utility) { try db.toggleFavorite(clipId: clip.id) }.value
                 loadClips()
             } catch {
-                print("[ConCopy] Failed to toggle favorite: \(error)")
+                ConCopyLogger.storage.error("Failed to toggle favorite: \(error.localizedDescription, privacy: .private)")
+                showToast("Could not update favorite")
             }
-
         }
     }
 
     public func toggleFavoriteSelected() {
         performUIAction { [self] in
-
             if !selectedClipIds.isEmpty {
                 for clipId in selectedClipIds {
                     let db = databaseManager
@@ -1057,7 +1053,6 @@ public final class ClipboardViewModel: ObservableObject {
                 toggleFavorite(clip: clip)
                 showToast(clip.isFavorite ? "Removed from Favorites" : "Added to Favorites ★")
             }
-
         }
     }
 
@@ -1069,22 +1064,19 @@ public final class ClipboardViewModel: ObservableObject {
 
     public func assignClipToList(clip: ClipRecord, listId: UUID?) {
         performUIAction { [self] in
-
             do {
                 let db = databaseManager
-                _ = try await Task.detached(priority: .utility) { try db.assignClip(clipId: clip.id, toListId: listId) }
-                    .value
+                _ = try await Task.detached(priority: .utility) { try db.assignClip(clipId: clip.id, toListId: listId) }.value
                 loadClips()
             } catch {
-                print("[ConCopy] Failed to assign clip to list: \(error)")
+                ConCopyLogger.storage.error("Failed to assign clip to list: \(error.localizedDescription, privacy: .private)")
+                showToast("Could not move to list")
             }
-
         }
     }
 
     public func assignSelectedClipsToList(listId: UUID?) {
         performUIAction { [self] in
-
             for clipId in selectedClipIds {
                 do {
                     let db = databaseManager
@@ -1092,11 +1084,10 @@ public final class ClipboardViewModel: ObservableObject {
                         try db.assignClip(clipId: clipId, toListId: listId)
                     }.value
                 } catch {
-                    print("[ConCopy] Failed to assign clip \(clipId) to list: \(error)")
+                    ConCopyLogger.storage.error("Failed to assign clip \(clipId, privacy: .public) to list: \(error.localizedDescription, privacy: .private)")
                 }
             }
             loadClips()
-
         }
     }
 
@@ -1108,7 +1099,6 @@ public final class ClipboardViewModel: ObservableObject {
 
     public func assignMovingClipToAll() {
         performUIAction { [self] in
-
             guard let clip = movingClip else { return }
             if clip.isFavorite {
                 let db = databaseManager
@@ -1117,7 +1107,6 @@ public final class ClipboardViewModel: ObservableObject {
             assignClipToList(clip: clip, listId: nil)
             movingClip = nil
             showToast("Removed from all lists")
-
         }
     }
 
@@ -1143,16 +1132,16 @@ public final class ClipboardViewModel: ObservableObject {
 
     public func deleteClip(_ clip: ClipRecord) {
         performUIAction { [self] in
-
             do {
                 let db = databaseManager
                 try await Task.detached(priority: .utility) { try db.deleteClip(clipId: clip.id) }.value
-                selectedClipIds.remove(clip.id)
+                selectionManager.selectedClipIds.remove(clip.id)
+                syncSelectionFromManager()
                 loadClips()
             } catch {
-                print("[ConCopy] Failed to delete clip: \(error)")
+                ConCopyLogger.storage.error("Failed to delete clip: \(error.localizedDescription, privacy: .private)")
+                showToast("Could not delete clip")
             }
-
         }
     }
 
@@ -1184,9 +1173,7 @@ public final class ClipboardViewModel: ObservableObject {
     }
 
     @discardableResult
-    public func saveSnippet(shortcut: String, content: String, title: String? = nil, existingId: UUID? = nil) async
-        -> Bool
-    {
+    public func saveSnippet(shortcut: String, content: String, title: String? = nil, existingId: UUID? = nil) async -> Bool {
         snippetSaveError = nil
         let trimmedShortcut = shortcut.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedShortcut.isEmpty, !content.isEmpty else {
@@ -1208,7 +1195,7 @@ public final class ClipboardViewModel: ObservableObject {
             showToast("Snippet saved: \(snippet.shortcut)")
             return true
         } catch {
-            print("[ConCopy] Failed to save snippet: \(error)")
+            ConCopyLogger.storage.error("Failed to save snippet: \(error.localizedDescription, privacy: .private)")
             snippetSaveError = "Could not save. Check whether this shortcut is already in use."
             return false
         }
@@ -1216,16 +1203,15 @@ public final class ClipboardViewModel: ObservableObject {
 
     public func deleteSnippet(_ snippet: SnippetRecord) {
         performUIAction { [self] in
-
             do {
                 let db = databaseManager
                 try await Task.detached(priority: .utility) { try db.deleteSnippet(id: snippet.id) }.value
                 loadSnippets()
                 showToast("Snippet deleted")
             } catch {
-                print("[ConCopy] Failed to delete snippet: \(error)")
+                ConCopyLogger.storage.error("Failed to delete snippet: \(error.localizedDescription, privacy: .private)")
+                showToast("Could not delete snippet")
             }
-
         }
     }
 
@@ -1260,8 +1246,7 @@ public final class ClipboardViewModel: ObservableObject {
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                try await pasteInjector.pasteText(text, pasteboard: pasteboard,
-                    targetProcessIdentifier: target) { [weak self] willSend in
+                try await pasteInjector.pasteText(text, pasteboard: pasteboard, targetProcessIdentifier: target) { [weak self] willSend in
                     guard let self else { return }
                     if willSend { onClosePanel?() }
                     else {

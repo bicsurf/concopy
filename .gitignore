@@ -7,6 +7,12 @@ DerivedData/
 *.xcodeproj
 *.xcworkspace
 *.dmg
+*.zip
+SHA256SUMS.txt
+*.cep
+*.storedata
+*.sqlite-shm
+*.sqlite-wal
 
 # Local signing and Xcode configs
 *.xcconfig

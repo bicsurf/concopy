@@ -3,7 +3,15 @@ import Foundation
 
 public enum BlobStorageError: LocalizedError {
     case corruptedBlob
-    public var errorDescription: String? { "Stored clipboard data is damaged." }
+    case missingBlob(String)
+    public var errorDescription: String? {
+        switch self {
+        case .corruptedBlob:
+            return "Stored clipboard data is damaged."
+        case .missingBlob(let name):
+            return "Stored clipboard data is missing (\(name))."
+        }
+    }
 }
 
 public struct BlobStorageManager: Sendable {
@@ -42,6 +50,9 @@ public struct BlobStorageManager: Sendable {
 
     public func loadBlob(filename: String) throws -> Data {
         let fileURL = baseDirectoryURL.appendingPathComponent(filename)
+        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+            throw BlobStorageError.missingBlob(filename)
+        }
         return try autoreleasepool {
             let data = try Data(contentsOf: fileURL, options: .mappedIfSafe)
             guard CapturedClip.hash(data) + ".blob" == filename else { throw BlobStorageError.corruptedBlob }

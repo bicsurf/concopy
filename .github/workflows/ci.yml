@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-build:
+    name: Test & Build Universal App
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Show Swift and Xcode environment
+        run: |
+          echo "Xcode path: $(xcode-select -p)"
+          swift --version
+          xcodebuild -version
+
+      - name: Check Swift Concurrency
+        run: swift build -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors
+
+      - name: Test Release Scripts
+        run: bash scripts/tests/release-scripts-tests.sh
+
+      - name: Run test suite
+        run: swift test
+
+      - name: Build Universal App
+        run: |
+          chmod +x scripts/build-app.sh
+          ./scripts/build-app.sh
+
+      - name: Verify Universal Binary and Code Signature
+        run: |
+          APP_BIN="ConCopy.app/Contents/MacOS/ConCopy"
+          if [ ! -f "$APP_BIN" ]; then
+            echo "Error: App binary not found at $APP_BIN"
+            exit 1
+          fi
+
+          echo "==> Verifying architecture with lipo..."
+          LIPO_OUTPUT=$(lipo -info "$APP_BIN")
+          echo "$LIPO_OUTPUT"
+          echo "$LIPO_OUTPUT" | grep -q "arm64"
+          echo "$LIPO_OUTPUT" | grep -q "x86_64"
+
+          echo "==> Verifying ad-hoc code signature..."
+          codesign --verify --deep --strict --verbose=2 ConCopy.app

@@ -117,27 +117,62 @@ public actor CloudDriveSyncWorker {
     public let syncDirectoryURL: URL
     public let syncFileURL: URL
     public let legacySyncFileURL: URL
+    public let devicesDirectoryURL: URL
+    public let myDeviceFileURL: URL
+    public let deviceId: String
     private let databaseManager: DatabaseManager
-    private let deviceId: String
+    private let excludeSensitiveFromSyncProvider: @Sendable () -> Bool
     private let startDownload: @Sendable (URL) throws -> Void
     private var lastFingerprint: String?
 
-    private func fingerprint(in database: Database? = nil) throws -> String {
-        let attributes = try? FileManager.default.attributesOfItem(atPath: syncFileURL.path)
-        let modified = (attributes?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
-        let size = (attributes?[.size] as? NSNumber)?.int64Value ?? 0
+    private func fingerprint(remoteDigest: String, excludeSensitive: Bool, in database: Database? = nil) throws -> String {
         func journal(_ db: Database) throws -> String {
-            try String.fetchOne(
-                db,
-                sql:
-                    "SELECT group_concat(kind || id || printf('%.17g',modifiedAt) || deleted) FROM (SELECT * FROM sync_changes ORDER BY kind,id)"
-            ) ?? ""
+            try String.fetchOne(db, sql:
+                "SELECT group_concat(kind || id || printf('%.17g',modifiedAt) || deleted) FROM (SELECT * FROM sync_changes ORDER BY kind,id)") ?? ""
         }
         let changes = try database.map(journal) ?? databaseManager.dbWriter.read(journal)
-        return "\(modified):\(size):" + CapturedClip.hash(Data(changes.utf8))
+        let ownFileExists = FileManager.default.fileExists(atPath: myDeviceFileURL.path)
+        return "\(remoteDigest):\(excludeSensitive):\(ownFileExists):" + CapturedClip.hash(Data(changes.utf8))
     }
 
-    public init(databaseManager: DatabaseManager, customSyncDirectoryURL: URL? = nil, deviceId: String? = nil,
+    /// Include placeholder names so a peer that has not downloaded yet cannot be silently skipped.
+    private func remoteFileURLs() throws -> [URL] {
+        var urls = Set([syncFileURL, legacySyncFileURL])
+        for directory in [syncDirectoryURL, devicesDirectoryURL] {
+            guard FileManager.default.fileExists(atPath: directory.path) else { continue }
+            for entry in try FileManager.default.contentsOfDirectory(atPath: directory.path) {
+                let name = entry.hasPrefix(".") && entry.hasSuffix(".icloud")
+                    ? String(entry.dropFirst().dropLast(".icloud".count)) : entry
+                guard name.hasSuffix(".json"), !name.hasPrefix(".") else { continue }
+                if directory == syncDirectoryURL && !name.hasPrefix("sync-state-v2") { continue }
+                let url = directory.appendingPathComponent(name)
+                if url != myDeviceFileURL { urls.insert(url) }
+            }
+        }
+        return urls.sorted { $0.path < $1.path }
+    }
+
+    private static func removingClips(_ ids: Set<String>, from state: CloudSyncState) -> CloudSyncState {
+        var result = state
+        result.clips.removeAll { ids.contains(CloudSyncState.id($0.id)) }
+        result.payloads = result.payloads.filter { !ids.contains($0.key) }
+        result.usage = result.usage.filter { !ids.contains($0.key) }
+        result.metadataRevisions = result.metadataRevisions.filter { !ids.contains($0.key) }
+        result.revisions = result.revisions.filter { !ids.contains(String($0.key.dropFirst("clip:".count))) || !$0.key.hasPrefix("clip:") }
+        result.tombstones = result.tombstones.filter { !ids.contains($0.key) }
+        result.aliases = result.aliases.filter { !ids.contains($0.key) && !ids.contains($0.value) }
+        return result
+    }
+
+    public init(
+        databaseManager: DatabaseManager,
+        customSyncDirectoryURL: URL? = nil,
+        deviceId: String? = nil,
+        excludeSensitiveFromSync: @escaping @Sendable () -> Bool = {
+            UserDefaults.standard.object(forKey: ConCopySettingsKeys.excludeSensitiveFromSyncKey) != nil
+                ? UserDefaults.standard.bool(forKey: ConCopySettingsKeys.excludeSensitiveFromSyncKey)
+                : true
+        },
         startDownload: @escaping @Sendable (URL) throws -> Void = {
             try FileManager.default.startDownloadingUbiquitousItem(at: $0)
         }
@@ -149,7 +184,11 @@ public actor CloudDriveSyncWorker {
             .appendingPathComponent("Library/Mobile Documents/com~apple~CloudDocs/ConCopy", isDirectory: true)
         syncFileURL = syncDirectoryURL.appendingPathComponent("sync-state-v2.json")
         legacySyncFileURL = syncDirectoryURL.appendingPathComponent("sync-state-v1.json")
-        self.deviceId = deviceId ?? (Host.current().localizedName ?? UUID().uuidString)
+        let assignedDeviceId = deviceId ?? DeviceIdentifierProvider.currentDeviceId()
+        self.deviceId = assignedDeviceId
+        devicesDirectoryURL = syncDirectoryURL.appendingPathComponent("devices", isDirectory: true)
+        myDeviceFileURL = devicesDirectoryURL.appendingPathComponent("\(assignedDeviceId).json")
+        self.excludeSensitiveFromSyncProvider = excludeSensitiveFromSync
         self.startDownload = startDownload
     }
 
@@ -184,61 +223,96 @@ public actor CloudDriveSyncWorker {
         var rollbackBlobs: [String] = []
         do {
             try FileManager.default.createDirectory(at: syncDirectoryURL, withIntermediateDirectories: true)
-            if try isDownloadPending(syncFileURL) {
-                return (false, .syncing)
+            try FileManager.default.createDirectory(at: devicesDirectoryURL, withIntermediateDirectories: true)
+            let remoteURLs = try remoteFileURLs()
+            for url in remoteURLs + [myDeviceFileURL] where try isDownloadPending(url) { return (false, .syncing) }
+            // Hash the actual input bytes, including peers, rather than only our own file's attributes.
+            let inputs = try remoteURLs.compactMap { url -> (URL, Data)? in
+                guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+                return (url, try Data(contentsOf: url))
             }
-            if !FileManager.default.fileExists(atPath: syncFileURL.path), try isDownloadPending(legacySyncFileURL) {
-                return (false, .syncing)
-            }
-            let currentFingerprint = try fingerprint()
+            let remoteDigest = CapturedClip.hash(inputs.reduce(into: Data()) { bytes, input in
+                bytes.append(Data(input.0.path.utf8)); bytes.append(0)
+                bytes.append(Data(CapturedClip.hash(input.1).utf8)); bytes.append(0)
+            })
+            let excludeSensitive = excludeSensitiveFromSyncProvider()
+            let currentFingerprint = try fingerprint(remoteDigest: remoteDigest, excludeSensitive: excludeSensitive)
             if !force && currentFingerprint == lastFingerprint { return (false, .idle) }
             var coordinationError: NSError?
             var result: Result<Bool, Error> = .success(false)
             var obsoleteBlobs: [String] = []
             var publishedFingerprint: String?
-            NSFileCoordinator().coordinate(writingItemAt: syncFileURL, options: .forMerging, error: &coordinationError)
+            // Each device owns exactly one writable file. Legacy shared files are import-only.
+            NSFileCoordinator().coordinate(writingItemAt: myDeviceFileURL, options: .forMerging, error: &coordinationError)
             { url in
                 result = Result {
                     try Task.checkCancellation()
                     guard isAuthorized() else { throw CancellationError() }
                     let decoder = JSONDecoder()
                     decoder.dateDecodingStrategy = .iso8601
-                    var remote = CloudSyncState()
+                    var remote = CloudSyncState(updatedAt: .distantPast)
+                    for (inputURL, data) in inputs {
+                        do {
+                            remote = try Self.merge(remote, decoder.decode(CloudSyncState.self, from: data))
+                            for conflict in NSFileVersion.unresolvedConflictVersionsOfItem(at: inputURL) ?? [] {
+                                remote = try Self.merge(remote, decoder.decode(CloudSyncState.self, from: Data(contentsOf: conflict.url)))
+                            }
+                        } catch {
+                            if inputURL == self.syncFileURL || inputURL == self.legacySyncFileURL { throw error }
+                            ConCopyLogger.sync.error("Skipping invalid peer sync file: \(error.localizedDescription, privacy: .private)")
+                        }
+                    }
+
+                    // Recover validated bytes from our own snapshot without replaying its metadata.
+                    var recovery = remote
                     if FileManager.default.fileExists(atPath: url.path) {
-                        remote = try decoder.decode(CloudSyncState.self, from: Data(contentsOf: url))
-                    } else if FileManager.default.fileExists(atPath: legacySyncFileURL.path) {
-                        // Import v1 once, read-only. Old app versions must not overwrite the v2 protocol.
-                        remote = try decoder.decode(CloudSyncState.self, from: Data(contentsOf: legacySyncFileURL))
+                        do {
+                            let own = try decoder.decode(CloudSyncState.self, from: Data(contentsOf: url))
+                            for (id, payloads) in own.payloads {
+                                recovery.payloads[id, default: []].append(contentsOf: payloads)
+                            }
+                        } catch {
+                            ConCopyLogger.sync.error("Skipping invalid local cloud recovery snapshot: \(error.localizedDescription, privacy: .private)")
+                        }
                     }
-                    // Reconcile iCloud conflict versions before marking any version as resolved.
-                    let conflicts = NSFileVersion.unresolvedConflictVersionsOfItem(at: url) ?? []
-                    for conflict in conflicts {
-                        let state = try decoder.decode(CloudSyncState.self, from: Data(contentsOf: conflict.url))
-                        remote = try Self.merge(remote, state)
-                    }
+
                     var changed = false
                     // Keep the writer locked across snapshot + merge + apply; local edits cannot be overwritten by a stale snapshot.
                     try databaseManager.dbWriter.write { db in
-                        let (local, repaired) = try self.snapshot(db, repairingFrom: remote, isAuthorized: isAuthorized)
-                        let merged = try Self.merge(local, remote)
+                        let (local, repaired) = try self.snapshot(db, repairingFrom: recovery, isAuthorized: isAuthorized)
+                        // Local private clips must survive remote withdrawals and stale peer copies.
+                        let privateClips = excludeSensitive ? local.clips.filter(\.isSensitive) : []
+                        let privateHashes = Set(privateClips.map(\.contentHash))
+                        let privateIds = Set(privateClips.map { CloudSyncState.id($0.id) })
+                            .union(remote.clips.filter { privateHashes.contains($0.contentHash) }
+                                .map { CloudSyncState.id($0.id) })
+                        let protectedRemote = Self.removingClips(privateIds, from: remote)
+                        let merged = try Self.merge(local, protectedRemote)
                         try Task.checkCancellation()
                         guard isAuthorized() else { throw CancellationError() }
                         let applied = try self.apply(merged, in: db, obsoleteBlobs: &obsoleteBlobs, rollbackBlobs: &rollbackBlobs)
                         changed = repaired || applied
+
+                        let privatePublicationIds = excludeSensitive
+                            ? Set(merged.clips.filter(\.isSensitive).map { CloudSyncState.id($0.id) }) : []
+                        var publicationState = Self.removingClips(privatePublicationIds, from: merged)
+                        // Withdraw previously published content without deleting the protected local copy.
+                        for id in privatePublicationIds {
+                            publicationState.tombstones[id] = merged.revisions["clip:" + id]
+                                ?? merged.clips.first { CloudSyncState.id($0.id) == id }?.updatedAt ?? Date()
+                        }
+
                         let encoder = JSONEncoder()
                         encoder.dateEncodingStrategy = .iso8601
                         encoder.outputFormatting = [.sortedKeys]
-                        let encoded = try encoder.encode(merged)
-                        // Do not rewrite unchanged files: avoids a continuous sync echo between Macs.
-                        if (try? Data(contentsOf: url)) != encoded {
-                            try Task.checkCancellation()
-                            guard isAuthorized() else { throw CancellationError() }
-                            try encoded.write(to: url, options: .atomic)
-                        }
-                        // Checkpoint only the state published by this transaction, never a later queued mutation.
-                        publishedFingerprint = try self.fingerprint(in: db)
+                        let encoded = try encoder.encode(publicationState)
+
+                        // Write to devices/<deviceId>.json atomically
+                        try self.atomicWrite(data: encoded, to: self.myDeviceFileURL)
+
+                        // Checkpoint only the inputs consumed and the transaction just published.
+                        publishedFingerprint = try self.fingerprint(remoteDigest: remoteDigest, excludeSensitive: excludeSensitive, in: db)
                     }
-                    for conflict in conflicts { conflict.isResolved = true }
                     return changed
                 }
             }
@@ -253,6 +327,20 @@ public actor CloudDriveSyncWorker {
         } catch {
             try? databaseManager.removeUnreferencedBlobs(rollbackBlobs)
             return (false, .error)
+        }
+    }
+
+    private func atomicWrite(data: Data, to destinationURL: URL) throws {
+        let parentDir = destinationURL.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: parentDir, withIntermediateDirectories: true)
+        if (try? Data(contentsOf: destinationURL)) == data { return }
+        let tempURL = parentDir.appendingPathComponent(".\(destinationURL.lastPathComponent).tmp.\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+        try data.write(to: tempURL)
+        if FileManager.default.fileExists(atPath: destinationURL.path) {
+            _ = try FileManager.default.replaceItemAt(destinationURL, withItemAt: tempURL)
+        } else {
+            try FileManager.default.moveItem(at: tempURL, to: destinationURL)
         }
     }
 
@@ -307,11 +395,13 @@ public actor CloudDriveSyncWorker {
 
     private func snapshot(_ db: Database) throws -> CloudSyncState {
         let archive = try databaseManager.makeArchive(in: db)
+        let eligibleClips = archive.clips
+
         var state = CloudSyncState(
             lastModifiedDeviceId: deviceId, updatedAt: .distantPast,
-            clips: archive.clips.map { $0.record() }, lists: archive.lists, snippets: archive.snippets, usage: archive.usage,
+            clips: eligibleClips.map { $0.record() }, lists: archive.lists, snippets: archive.snippets, usage: archive.usage,
             snippetOrigins: archive.snippetOrigins)
-        for item in archive.clips { state.payloads[CloudSyncState.id(item.id)] = item.payloads }
+        for item in eligibleClips { state.payloads[CloudSyncState.id(item.id)] = item.payloads }
         for row in try Row.fetchAll(db, sql: "SELECT * FROM sync_changes") {
             let kind: String = row["kind"]
             if kind == "usage" || kind == "metadata" { continue }

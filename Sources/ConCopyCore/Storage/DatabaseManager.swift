@@ -272,17 +272,39 @@ public final class DatabaseManager: Sendable {
             }
         }
 
+        migrator.registerMigration("v9_sensitive_sync_and_expiration") { db in
+            try db.execute(sql: """
+                ALTER TABLE clips ADD COLUMN isSensitive INTEGER NOT NULL DEFAULT 0;
+                ALTER TABLE clips ADD COLUMN expiresAt DATETIME DEFAULT NULL;
+                CREATE INDEX IF NOT EXISTS index_clips_on_expiresAt ON clips(expiresAt);
+                """)
+        }
+
+        migrator.registerMigration("v10_classify_historical_secrets") { db in
+            try autoreleasepool {
+                let clips = try ClipRecord.filter(Column("isSensitive") == false).fetchAll(db)
+                for clip in clips where SensitiveDataDetector.isSensitive(clip.plainText) {
+                    try db.execute(sql: "UPDATE clips SET isSensitive = 1 WHERE id = ?",
+                        arguments: [clip.id.uuidString.lowercased()])
+                }
+            }
+        }
+
         return migrator
     }
 
     @discardableResult
-    public func ingestCapturedClip(_ captured: CapturedClip) throws -> ClipRecord {
+    public func ingestCapturedClip(_ captured: CapturedClip, expirationMinutes: Int = 0) throws -> ClipRecord {
         try autoreleasepool {
             let contentHash = captured.computeContentHash()
             var representations = captured.representations
             if let text = captured.plainText { representations["public.utf8-plain-text"] = Data(text.utf8) }
             let candidates = representations.values.filter { $0.count > 4096 }.map { CapturedClip.hash($0) + ".blob" }
             var obsoleteBlobs: [String] = []
+            let isSensitive = SensitiveDataDetector.isSensitive(captured.plainText)
+            let expiresAt: Date? = (isSensitive && expirationMinutes > 0)
+                ? Date().addingTimeInterval(Double(expirationMinutes) * 60.0)
+                : nil
             do {
                 let result = try dbWriter.write { db in
                     let activeAutoStarList = try ClipListRecord.filter(Column("isAutoStarActive") == true).fetchOne(db)
@@ -295,6 +317,10 @@ public final class DatabaseManager: Sendable {
                         obsoleteBlobs = try self.replacePayloads(clipId: existing.id, representations: representations, db: db)
                         existing.primaryType = captured.primaryType
                         existing.plainText = captured.plainText
+                        existing.isSensitive = isSensitive
+                        if expiresAt != nil {
+                            existing.expiresAt = expiresAt
+                        }
                         try existing.update(db)
                         try self.recordContentCapture(clipId: existing.id, contentHash: contentHash, db: db)
                         return existing
@@ -313,7 +339,9 @@ public final class DatabaseManager: Sendable {
                         pasteCount: 0,
                         manualSortIndex: 0,
                         createdAt: Date(),
-                        updatedAt: Date()
+                        updatedAt: Date(),
+                        isSensitive: isSensitive,
+                        expiresAt: expiresAt
                     )
                     try newClip.insert(db)
 
@@ -491,7 +519,7 @@ public final class DatabaseManager: Sendable {
         }
     }
 
-    public func updateTextContent(clipId: UUID, newPlainText: String) throws {
+    public func updateTextContent(clipId: UUID, newPlainText: String, expirationMinutes: Int = 0) throws {
         let idString = clipId.uuidString.lowercased()
         let newHash = CapturedClip(plainText: newPlainText).computeContentHash()
         var oldBlobs: [String] = []
@@ -501,6 +529,7 @@ public final class DatabaseManager: Sendable {
                     throw DatabaseError(message: "Clip not found")
                 }
                 clip.plainText = newPlainText
+                Self.reclassifySensitivity(&clip, text: newPlainText, expirationMinutes: expirationMinutes)
                 clip.contentHash = newHash
                 clip.primaryType = .text
                 clip.updatedAt = Date()
@@ -519,7 +548,17 @@ public final class DatabaseManager: Sendable {
         }
     }
 
-    public func updateOCRText(clipId: UUID, ocrText: String) throws {
+    private static func reclassifySensitivity(_ clip: inout ClipRecord, text: String, expirationMinutes: Int) {
+        clip.isSensitive = SensitiveDataDetector.isSensitive(text)
+        if !clip.isSensitive {
+            clip.expiresAt = nil
+        } else if expirationMinutes > 0 {
+            let expiration = Date().addingTimeInterval(Double(expirationMinutes) * 60)
+            clip.expiresAt = clip.expiresAt.map { min($0, expiration) } ?? expiration
+        }
+    }
+
+    public func updateOCRText(clipId: UUID, ocrText: String, expirationMinutes: Int = 0) throws {
         let idString = clipId.uuidString.lowercased()
         let trimmed = ocrText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -543,6 +582,8 @@ public final class DatabaseManager: Sendable {
                 }
 
                 clip.plainText = updatedText
+                Self.reclassifySensitivity(&clip, text: updatedText, expirationMinutes: expirationMinutes)
+                clip.updatedAt = Date()
                 try clip.update(db)
             }
         }
@@ -850,6 +891,21 @@ public final class DatabaseManager: Sendable {
                 }
             }
             return try deleteClips(clipsToDelete, in: db, preserveSaved: true)
+        }
+        try removeUnreferencedBlobs(result.blobs)
+        return result.count
+    }
+
+    @discardableResult
+    public func cleanupExpiredClips(now: Date = Date()) throws -> Int {
+        let result = try dbWriter.write { db in
+            let allClips = try ClipRecord.fetchAll(db)
+            let expired = allClips.filter { clip in
+                guard let exp = clip.expiresAt else { return false }
+                return exp <= now
+            }
+            guard !expired.isEmpty else { return (count: 0, blobs: [String]()) }
+            return try deleteClips(expired.map(\.id), in: db, preserveSaved: false)
         }
         try removeUnreferencedBlobs(result.blobs)
         return result.count

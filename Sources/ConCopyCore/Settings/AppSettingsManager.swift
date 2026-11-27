@@ -20,6 +20,8 @@ public final class AppSettingsManager: ObservableObject {
     public static let showMenuBarIconKey = "ConCopy.Settings.showMenuBarIcon"
     public static let maskSensitiveDataKey = "ConCopy.Settings.maskSensitiveData"
     public static let panelPositionModeKey = "ConCopy.Settings.panelPositionMode"
+    public static let excludeSensitiveFromSyncKey = ConCopySettingsKeys.excludeSensitiveFromSyncKey
+    public static let sensitiveClipExpirationMinutesKey = ConCopySettingsKeys.sensitiveClipExpirationMinutesKey
 
     public static let defaultExcludedAppBundleIds: [String] = [
         "com.agilebits.onepassword",
@@ -119,6 +121,18 @@ public final class AppSettingsManager: ObservableObject {
         }
     }
 
+    @Published public var excludeSensitiveFromSync: Bool {
+        didSet {
+            defaults.set(excludeSensitiveFromSync, forKey: Self.excludeSensitiveFromSyncKey)
+        }
+    }
+
+    @Published public var sensitiveClipExpirationMinutes: Int {
+        didSet {
+            defaults.set(sensitiveClipExpirationMinutes, forKey: Self.sensitiveClipExpirationMinutesKey)
+        }
+    }
+
     public init(userDefaults: UserDefaults = .standard) {
         self.defaults = userDefaults
 
@@ -193,6 +207,14 @@ public final class AppSettingsManager: ObservableObject {
         } else {
             self.panelPositionMode = .nearMouse
         }
+
+        if userDefaults.object(forKey: Self.excludeSensitiveFromSyncKey) != nil {
+            self.excludeSensitiveFromSync = userDefaults.bool(forKey: Self.excludeSensitiveFromSyncKey)
+        } else {
+            self.excludeSensitiveFromSync = true
+        }
+
+        self.sensitiveClipExpirationMinutes = userDefaults.integer(forKey: Self.sensitiveClipExpirationMinutesKey)
     }
 
     public var shouldCaptureScreenshots: Bool {

@@ -251,8 +251,10 @@ final class AuditUIAndLifecycleTests: XCTestCase {
     func testFloatingPanelPositionNearCaretSafelyHandlesNonConformingAX() throws {
         let panel = FloatingPanel(
             viewModel: ClipboardViewModel(databaseManager: try database(), appSettings: try settings()))
-        let result = panel.positionNearCaret()
-        XCTAssertFalse(result)
+        let originalFrame = panel.frame
+        XCTAssertFalse(panel.positionNearCaret(focusedElementValue: nil))
+        XCTAssertFalse(panel.positionNearCaret(focusedElementValue: "Invalid AX element" as NSString))
+        XCTAssertEqual(panel.frame, originalFrame)
     }
 
     func testSensitiveDataDetectorAWSAndSSHKeyDetection() {

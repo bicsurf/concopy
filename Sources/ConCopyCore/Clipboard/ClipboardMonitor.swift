@@ -1,11 +1,27 @@
 import AppKit
 import Foundation
 
+// Timer invalidation is thread-safe; the lock also protects teardown outside MainActor.
+private final class ClipboardPollingTimer: @unchecked Sendable {
+    private let lock = NSLock()
+    private var timer: Timer?
+
+    func replace(with newTimer: Timer?) {
+        lock.lock()
+        let previous = timer
+        timer = newTimer
+        lock.unlock()
+        previous?.invalidate()
+    }
+
+    deinit { timer?.invalidate() }
+}
+
 @MainActor
 public final class ClipboardMonitor {
     private let pasteboard: NSPasteboard
     private var lastChangeCount: Int
-    private var timer: Timer?
+    private let pollingTimer = ClipboardPollingTimer()
     private var isRunning: Bool = false
 
     private let itemContinuation: AsyncStream<ClipboardItem>.Continuation
@@ -61,7 +77,7 @@ public final class ClipboardMonitor {
     }
 
     deinit {
-        timer?.invalidate()
+        pollingTimer.replace(with: nil)
         itemContinuation.finish()
         clipContinuation.finish()
     }
@@ -69,20 +85,18 @@ public final class ClipboardMonitor {
     public func start(pollingInterval: TimeInterval = 0.25) {
         guard !isRunning else { return }
         isRunning = true
-        timer = Timer.scheduledTimer(withTimeInterval: pollingInterval, repeats: true) { [weak self] _ in
+        let timer = Timer.scheduledTimer(withTimeInterval: pollingInterval, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 self?.checkForChanges()
             }
         }
-        if let timer {
-            RunLoop.main.add(timer, forMode: .common)
-        }
+        pollingTimer.replace(with: timer)
+        RunLoop.main.add(timer, forMode: .common)
     }
 
     public func stop() {
         isRunning = false
-        timer?.invalidate()
-        timer = nil
+        pollingTimer.replace(with: nil)
     }
 
     @discardableResult

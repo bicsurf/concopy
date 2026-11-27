@@ -1,7 +1,9 @@
 import Foundation
 import GRDB
 
-public final class CloudKitSyncCoordinator: NSObject, @unchecked Sendable {
+public typealias CloudKitSyncCoordinator = CloudDriveSyncCoordinator
+
+public final class CloudDriveSyncCoordinator: NSObject, @unchecked Sendable {
     public let databaseManager: DatabaseManager
     public var onRemoteChangesImported: (@MainActor () -> Void)?
     public var onStatusChanged: (@MainActor (CloudSyncStatus) -> Void)?

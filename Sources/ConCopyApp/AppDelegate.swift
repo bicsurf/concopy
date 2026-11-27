@@ -11,7 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItemController: StatusItemController?
     private var clipboardMonitor: ClipboardMonitor?
     private var screenshotWatcher: ScreenshotWatcher?
-    private var syncCoordinator: CloudKitSyncCoordinator?
+    private var syncCoordinator: CloudDriveSyncCoordinator?
     private var databaseManager: DatabaseManager?
     private var viewModel: ClipboardViewModel?
     private var settingsObservers = Set<AnyCancellable>()
@@ -32,8 +32,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             do {
                 let startup = try await Task.detached(priority: .userInitiated) { try Self.setupDatabase() }.value
                 self?.configure(database: startup.database, isTemporary: startup.isTemporary)
-                if let reason = startup.failureDescription { print("[ConCopy] Temporary history: \(reason)") }
-            } catch { print("[ConCopy] Failed to initialize database: \(error)") }
+                if let reason = startup.failureDescription { ConCopyLogger.storage.error("Temporary history: \(reason, privacy: .private)") }
+            } catch { ConCopyLogger.storage.error("Failed to initialize database: \(error, privacy: .private)") }
         }
     }
 
@@ -87,21 +87,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let sync = self.syncCoordinator
             let vm = self.viewModel
 
+            let expirationMinutes = AppSettingsManager.shared.sensitiveClipExpirationMinutes
             Task.detached(priority: .utility) {
                 do {
-                    let saved = try db?.ingestCapturedClip(captured)
+                    let saved = try db?.ingestCapturedClip(captured.recognizingImageText(), expirationMinutes: expirationMinutes)
                     if let clip = saved {
                         sync?.queueUpload(for: clip)
-                        if clip.primaryType == .image {
-                            self.processImageOCR(clipId: clip.id, representations: captured.representations, databaseManager: db, viewModel: vm)
-                        }
                     }
                     await MainActor.run {
                         vm?.loadClips()
                         self.scheduleCleanup()
                     }
                 } catch {
-                    print("[ConCopy] Error ingesting captured clip: \(error)")
+                    ConCopyLogger.storage.error("Error ingesting captured clip: \(error.localizedDescription, privacy: .private)")
                 }
             }
         }
@@ -118,19 +116,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let sync = self.syncCoordinator
                 let vm = self.viewModel
 
+                let expirationMinutes = AppSettingsManager.shared.sensitiveClipExpirationMinutes
                 Task.detached(priority: .utility) {
                     do {
-                        let saved = try db?.ingestCapturedClip(clip)
+                        let saved = try db?.ingestCapturedClip(clip.recognizingImageText(), expirationMinutes: expirationMinutes)
                         if let savedClip = saved {
                             sync?.queueUpload(for: savedClip)
-                            self.processImageOCR(clipId: savedClip.id, representations: clip.representations, databaseManager: db, viewModel: vm)
                         }
                         await MainActor.run {
                             vm?.loadClips()
                             self.scheduleCleanup()
                         }
                     } catch {
-                        print("[ConCopy] Error ingesting screenshot: \(error)")
+                        ConCopyLogger.storage.error("Error ingesting screenshot: \(error.localizedDescription, privacy: .private)")
                     }
                 }
             }
@@ -147,7 +145,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }.store(in: &settingsObservers)
 
         // Setup iCloud Drive Sync Coordinator
-        let sync = CloudKitSyncCoordinator(databaseManager: db)
+        let sync = CloudDriveSyncCoordinator(databaseManager: db)
         sync.onRemoteChangesImported = { [weak vm] in
             vm?.loadLists()
             vm?.loadClips()
@@ -160,11 +158,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }.store(in: &settingsObservers)
         self.syncCoordinator = sync
 
-        // Retention runs at launch, after captures, periodically, and when policy changes.
-        settings.$autoCleanupEnabled.combineLatest(settings.$retentionDays, settings.$maxHistoryCount)
+        // Retention and expired sensitive clips cleanup runs at launch, after captures, periodically, and when policy changes.
+        settings.$autoCleanupEnabled.combineLatest(settings.$retentionDays, settings.$maxHistoryCount, settings.$sensitiveClipExpirationMinutes)
             .receive(on: DispatchQueue.main).sink { [weak self] _ in self?.scheduleCleanup() }
             .store(in: &settingsObservers)
-        cleanupTimer = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in
+        cleanupTimer = Timer.scheduledTimer(withTimeInterval: 120, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.scheduleCleanup() }
         }
         scheduleCleanup()
@@ -179,9 +177,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         cleanupTask = Task { [weak self] in
             do {
                 try await Task.sleep(nanoseconds: 500_000_000)
-                let count = try await Task.detached(priority: .utility) { try policy.apply(to: db) }.value
-                if count > 0 { self?.viewModel?.loadClips() }
-            } catch is CancellationError {} catch { print("[ConCopy] Cleanup failed: \(error)") }
+                let expiredCount = try await Task.detached(priority: .utility) { try db.cleanupExpiredClips() }.value
+                let retentionCount = try await Task.detached(priority: .utility) { try policy.apply(to: db) }.value
+                if expiredCount > 0 || retentionCount > 0 { self?.viewModel?.loadClips() }
+            } catch is CancellationError {} catch { ConCopyLogger.storage.error("Cleanup failed: \(error, privacy: .private)") }
         }
     }
 
@@ -198,32 +197,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @discardableResult
     private func checkAccessibilityPermissions(prompt: Bool = true) -> Bool {
-        let checkOptionPrompt = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as NSString
+        let checkOptionPrompt = "AXTrustedCheckOptionPrompt" as NSString
         let options = [checkOptionPrompt: prompt] as CFDictionary
         return AXIsProcessTrustedWithOptions(options)
-    }
-
-    nonisolated private func processImageOCR(clipId: UUID, representations: [String: Data], databaseManager: DatabaseManager?, viewModel: ClipboardViewModel?) {
-        guard let imageData = representations["public.png"] ?? representations["public.tiff"] else {
-            return
-        }
-        let db = databaseManager
-        let vm = viewModel
-        Task.detached(priority: .utility) {
-            autoreleasepool {
-                guard let ocrText = ImageTextRecognizer.recognizeText(from: imageData) else {
-                    return
-                }
-                do {
-                    try db?.updateOCRText(clipId: clipId, ocrText: ocrText)
-                    Task { @MainActor in
-                        vm?.loadClips()
-                    }
-                } catch {
-                    print("[ConCopy] Failed to update OCR text: \(error)")
-                }
-            }
-        }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {

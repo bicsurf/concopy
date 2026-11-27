@@ -136,14 +136,16 @@ final class ReauditStorageTests: XCTestCase {
         let bytes = Data(repeating: 1, count: 5000), blob = try blobs.storeBlob(data: bytes)
         let image = ClipRecord(contentHash: CapturedClip(plainText: "Image 2x2").computeContentHash(),
             plainText: "Image 2x2", primaryType: .image, isFavorite: true)
-        try q.write { d in
-            for record in [file, duplicate] {
-                try record.insert(d)
-                try ClipPayloadRecord(clipId: record.id, utiType: "public.file-url",
-                    inlineData: Data(url.absoluteString.utf8), byteSize: url.absoluteString.utf8.count).insert(d)
+        try ClipRecord.$omitV9ColumnsDuringLegacyInsert.withValue(true) {
+            try q.write { d in
+                for record in [file, duplicate] {
+                    try record.insert(d)
+                    try ClipPayloadRecord(clipId: record.id, utiType: "public.file-url",
+                        inlineData: Data(url.absoluteString.utf8), byteSize: url.absoluteString.utf8.count).insert(d)
+                }
+                try image.insert(d)
+                try ClipPayloadRecord(clipId: image.id, utiType: "public.png", blobFilename: blob, byteSize: bytes.count).insert(d)
             }
-            try image.insert(d)
-            try ClipPayloadRecord(clipId: image.id, utiType: "public.png", blobFilename: blob, byteSize: bytes.count).insert(d)
         }
         return (file.id.uuidString < duplicate.id.uuidString ? file.id : duplicate.id, image.id, bytes)
     }

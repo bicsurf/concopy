@@ -8,6 +8,17 @@ Notable changes to ConCopy are documented in this file by version, with a dedica
 
 ### Added
 
+- **Consolidation & Reliability (Phases 1–4)**:
+  - Copy 'Em `.cep` native bundle importer hardening with dynamic table detection and recursive extraction.
+  - Per-device iCloud Drive sync directory structure (`devices/<device-id>.json`) with deterministic tombstone precedence and offline CRDT usage convergence.
+  - Database schema migration v9 with sensitive clip auto-expiration TTL (1m, 5m, 1h, 1d) and runtime cleanup timers.
+  - Decomposed `ClipboardViewModel` into modular coordinators: `BatchSelectionManager`, `PasteQueueManager`, and `SearchCoordinator`.
+  - Extracted modular UI subviews into `Sources/ConCopyUI/Views/List/` (`ClipRowView`, `ClipBatchBarView`, `ClipContextMenu`, `MoveToListSheetView`, `SnippetsViews`, `NavigationComponents`).
+  - Structured logging with `os.Logger` via `ConCopyLogger` (Storage, Sync, Paste, Lifecycle) without logging sensitive content.
+  - Context menu shortcut hints for primary actions (`Return`, `⌥Return`, `Space`, `⌘D`, `⌘M`, `⌫`).
+  - Seamless `ESC` focus handling across sheets and popovers without abrupt HUD termination.
+  - Dedicated regression test suites (`DecomposedComponentsTests`, `Phase3ReliabilityAndChaosTests`, `AuditCorrectionsRegressionTests`), bringing test suite coverage to **250 tests: 249 passed, 1 skipped, 0 failures**.
+  - GitHub Actions CI (`.github/workflows/ci.yml`) and automated Draft Release workflow (`.github/workflows/release.yml`) producing universal `.dmg`, `.zip`, and `SHA256SUMS.txt`.
 - **Quick Content-Type Filters & Developer Text Transformations**:
   - Filter clips instantly by type: text, code, links, images, and colors.
   - Built-in developer transformations: JSON format/minify, URL encode/decode, Base64 encode/decode, case conversion (camelCase, snake_case, PascalCase, kebab-case), and Markdown-to-HTML conversion.
@@ -46,6 +57,12 @@ Notable changes to ConCopy are documented in this file by version, with a dedica
 - Updated documentation and work tracking to English; removed obsolete Homebrew Cask references from active workflows.
 
 ### Fixed
+
+- **Consolidation Audit Corrections**:
+  - Reapply sensitive-content classification and expiration after text edits and OCR, preserving an earlier expiration deadline.
+  - Withdraw private clips and payloads from device snapshots when exclusion is enabled, protecting local private records from remote aliases.
+  - Publish per-device snapshots, import legacy state read-only, detect changes by content digest, wait for pending downloads, and validate SHA-256 bytes during cloud blob recovery.
+  - Persist manual sorting, keep diagnostic errors private, resolve strict concurrency warnings, and validate release tags before shell execution.
 
 - **Production Audits D01–D10**:
   - Paste operations share a serialized queue per pasteboard, preventing race conditions during concurrent pastes.

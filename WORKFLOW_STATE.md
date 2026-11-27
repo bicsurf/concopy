@@ -5,7 +5,7 @@ Note November 24, 2026 — multi-image batch paste resolved on branch `fix/batch
 2. **Compatibility**: Enables simultaneous multi-image pasting into Finder, chat apps (Telegram, Slack, Messages), Keynote, Pages, Word, etc. Text concatenation is preserved when the selection contains text or mixed types.
 3. **Verification & Tests**: Added unit test `testBatchPasteMultipleImagesWritesFileObjects` in `Phase4Tests`. Verifications: `swift build` ok, `swift build -c release` ok (zero warnings), `swift test` 228 tests / 1 skipped / 0 failures.
 
-Updated on **November 25, 2026**. This file summarizes the verified working tree state for developers continuing development. Architectural constraints remain in [AGENTS.md](AGENTS.md); version history is maintained in [CHANGELOG.md](CHANGELOG.md).
+Updated on **November 27, 2026**. This file summarizes the verified working tree state for developers continuing development. Architectural constraints remain in [AGENTS.md](AGENTS.md); version history is maintained in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -13,14 +13,14 @@ Updated on **November 25, 2026**. This file summarizes the verified working tree
 
 | Item | Status |
 | --- | --- |
-| Active Branch | `chore/repo-prep-license-funding-readme` |
-| Git Base | `719dced`; latest local tag `v1.3.2`. |
-| Working Tree | Clean pre-release documentation & packaging improvements ready for review. |
+| Active Branch | `FIX_performance_and_align` |
+| Git Base | `3db04e6`. |
+| Working Tree | Existing consolidation changes and audit corrections remain uncommitted. |
 | Functional Work | Full Sprint 1–4 capabilities implemented (quick filters, developer text transforms, Vision OCR & color swatches, paste stack & queue, dynamic snippet variables, privacy shield masking, contextual panel positioning, quick actions & rich link previews, multi-image batch paste). |
 | Keyboard Shortcuts | Default mapping uses ⌘⌥ for quick paste and ⌘ for navigation; ⌥Enter retains plain text paste, and ⌘A returns to All Clips. Swap option available in Settings. |
 | Licensing | GPLv3 text in `LICENSE`, `CONTRIBUTING.md` CLA established, references updated. |
-| Cleanup | Temporary test logs, manual QA reports, and artifacts removed. Full regression test suite retained. |
-| Publication | v1.3.2 released; next minor/patch release in preparation. |
+| Cleanup | Verification logs retained under `/tmp/concopy-fix-*.log`; full regression suite retained. |
+| Publication | No release, commit, or push performed during the audit corrections. |
 
 Verify repository state with `git status --short` and `git log -1 --oneline --decorate` before starting work.
 
@@ -30,7 +30,7 @@ Verify repository state with `git status --short` and `git log -1 --oneline --de
 
 | Area | Implementation |
 | --- | --- |
-| Verified Runtime | macOS 14+, Swift 6.4.2 arm64 (Swift 5.9 supported). |
+| Verified Runtime | macOS 14+ deployment target; verified with Swift 6.4.2 arm64. Swift 5.9 is the declared minimum, not verified in this run. |
 | Manifest | Swift Package Manager, `swift-tools-version: 5.9`. |
 | Dependencies | GRDB 7.5.0 with Swift 6+ (GRDB 6.29.3 on Swift 5.9); KeyboardShortcuts in `ConCopyUI`. |
 | `ConCopyCore` | Pasteboard monitoring, SQLite/FTS5, blobs, importers, backup, screenshots, synthetic paste events, and iCloud Drive sync. No SwiftUI or AppKit view imports. |
@@ -45,7 +45,7 @@ Production storage paths:
 ```text
 ~/Library/Application Support/ConCopy/concopy.sqlite
 ~/Library/Application Support/ConCopy/blobs/
-~/Library/Mobile Documents/com~apple~CloudDocs/ConCopy/sync-state-v2.json
+~/Library/Mobile Documents/com~apple~CloudDocs/ConCopy/devices/<device-id>.json
 ```
 
 ---
@@ -60,6 +60,7 @@ Audit results summarize verified cases from previous review passes. Historic pas
 | Cycle 2 | B01–B20 resolved; 24 regression tests added. |
 | Cycle 3 | C01–C11 resolved; 17 regression tests added. |
 | Production Audit | D01–D10 resolved; 25 regression tests added (concurrency, Unicode, fallback, transactions, cloud recovery, badges). |
+| Consolidation Audit | Privacy, OCR expiration, per-device sync, blob recovery, sorting, concurrency, and release-script corrections; eight additional Swift regression tests and shell regression checks. |
 
 ### Key Invariants to Preserve
 
@@ -90,8 +91,9 @@ Regression tests are located in `Tests/ConCopyCoreTests/` under `Audit*Tests.swi
 | v6 | Binary identity consolidation and migration. |
 | v7 | Independent metadata revision clocks. |
 | v8 | Restored snippet provenance and orphaned blob cleanup queue. |
+| v9 | Sensitive clip detection flag (`isSensitive`) and auto-expiration TTL (`expiresAt`). |
 
-Sync writes format **v2** and reads legacy v1 state for migrations. Fields `usage`, `metadataRevisions`, and `snippetOrigins` are optional during decoding; all syncing Macs should run updated builds to maintain these fields. Legacy v1/v2 backups remain readable.
+Sync writes format **v2** using per-device files under `devices/<device-id>.json` and reads legacy v1/v2 states for migrations. Fields `usage`, `metadataRevisions`, and `snippetOrigins` are optional during decoding; all syncing Macs should run updated builds to maintain these fields. Legacy v1/v2 backups remain readable.
 
 ---
 
@@ -108,6 +110,16 @@ Maccy and Copy ’Em importers are integrated in Settings:
 
 ---
 
+## 4-Phase Consolidation Status
+
+Consolidation program completed:
+- **Phase 1**: Copy 'Em `.cep` native importer hardening, per-device iCloud sync engine (`CloudDriveSyncEngine`), database schema v9 for sensitive clip TTL and periodic runtime cleanup.
+- **Phase 2**: Decomposed monolithic `ClipboardViewModel` into specialized coordinators (`BatchSelectionManager`, `PasteQueueManager`, `SearchCoordinator`) and modularized SwiftUI list views into `Sources/ConCopyUI/Views/List/`.
+- **Phase 3**: Structured logging via `ConCopyLogger`, missing blob resilience (`BlobStorageError.missingBlob`), context menu shortcut hints, nested sheet `ESC` focus transitions, and multi-peer sync chaos tests.
+- **Phase 4**: Automated GitHub Actions CI workflow (`.github/workflows/ci.yml`), draft release workflow with Universal DMG and ZIP artifacts (`.github/workflows/release.yml`), documentation alignment, and repository hygiene.
+
+---
+
 ## Verification Checklist
 
 Run before committing any changes:
@@ -118,15 +130,17 @@ swift build -c release
 swift test
 ```
 
-Release compilation must pass with **zero warnings**. The test suite currently contains **228 tests**, including one optional test.
+Release compilation must pass with **zero warnings**. The test suite currently contains **250 tests**, including one optional test.
 
-Latest verification run (November 25, 2026):
+Latest verification run (November 27, 2026):
 
 | Check | Result |
 | --- | --- |
 | `swift build` | Passed, zero warnings. |
 | `swift build -c release` | Passed, zero warnings. |
-| `swift test` | 228 tests, 227 passed, 1 skipped, 0 failures. |
+| `swift test` | 250 tests, 249 passed, 1 skipped, 0 failures. |
+| `swift build -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors` | Passed. |
+| Shell syntax checks and `bash scripts/tests/release-scripts-tests.sh` | Passed. |
 
 The optional test `ExternalImportTests.testRealUserExportIfPresent` requires `CONCOPY_TEST_CEP_PATH` set to a valid Copy ’Em `.cep` export file. Skipping this test is expected in environments without local fixtures.
 

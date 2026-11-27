@@ -7,7 +7,8 @@ public enum SensitiveDataDetector: Sendable {
     // Credit card: continuous digits or separated by space / hyphen (e.g. 4532 1123 4567 8910 or 4532112345678910)
     private static let creditCardPattern = #"\b(?:4[0-9]{3}[ -]?[0-9]{4}[ -]?[0-9]{4}[ -]?[0-9]{4}|5[1-5][0-9]{2}[ -]?[0-9]{4}[ -]?[0-9]{4}[ -]?[0-9]{4}|3[47][0-9]{2}[ -]?[0-9]{6}[ -]?[0-9]{5}|6(?:011|5[0-9]{2})[ -]?[0-9]{4}[ -]?[0-9]{4}[ -]?[0-9]{4})\b"#
     private static let genericSecretPattern = #"(?i)\b(?:password|secret|apikey|api_key|token|access_token|private_key)\s*[:=]\s*([^\s]{8,})"#
-    private static let privateKeyHeaderPattern = #"-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----"#
+    private static let privateKeyHeaderPattern = #"-----BEGIN (?:RSA |EC |OPENSSH |DSA |ENCRYPTED )?PRIVATE KEY-----"#
+    private static let privateKeyBlockPattern = #"-----BEGIN ((?:RSA |EC |OPENSSH |DSA |ENCRYPTED )?PRIVATE KEY)-----[\s\S]*?(?:-----END \1-----|\z)"#
 
     public static func isSensitive(_ text: String?) -> Bool {
         guard let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -32,6 +33,16 @@ public enum SensitiveDataDetector: Sendable {
         guard isSensitive(text) else { return text }
 
         var result = text
+
+        // Remove the whole key before other replacements can alter its markers or body.
+        // A truncated key remains sensitive through the end of the copied text.
+        if let keyRegex = try? NSRegularExpression(pattern: privateKeyBlockPattern) {
+            let matches = keyRegex.matches(in: result, range: NSRange(result.startIndex..., in: result))
+            for match in matches.reversed() {
+                result = (result as NSString).replacingCharacters(
+                    in: match.range, with: "-----BEGIN PRIVATE KEY [HIDDEN]-----")
+            }
+        }
 
         // 1. Mask credit cards: preserve first 4 and last 4
         if let cardRegex = try? NSRegularExpression(pattern: creditCardPattern, options: []) {
@@ -72,16 +83,6 @@ public enum SensitiveDataDetector: Sendable {
                     let masked = "••••••••"
                     result = (result as NSString).replacingCharacters(in: secretRange, with: masked)
                 }
-            }
-        }
-
-        // 4. Mask private keys
-        if let keyRegex = try? NSRegularExpression(pattern: privateKeyHeaderPattern, options: []) {
-            let nsStr = result as NSString
-            let matches = keyRegex.matches(in: result, options: [], range: NSRange(location: 0, length: nsStr.length))
-            for match in matches.reversed() {
-                let masked = "-----BEGIN PRIVATE KEY [HIDDEN]-----"
-                result = (result as NSString).replacingCharacters(in: match.range, with: masked)
             }
         }
 

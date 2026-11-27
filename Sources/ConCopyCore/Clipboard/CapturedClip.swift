@@ -19,6 +19,19 @@ public struct CapturedClip: Sendable, Equatable {
         self.representations = representations
     }
 
+    /// Run on a background executor before persistence so OCR secrets cannot reach sync unclassified.
+    public func recognizingImageText(
+        using recognize: (Data) -> String? = ImageTextRecognizer.recognizeText(from:)
+    ) -> CapturedClip {
+        guard primaryType == .image,
+              let data = representations["public.png"] ?? representations["public.tiff"],
+              let text = autoreleasepool(invoking: { recognize(data) }), !text.isEmpty else { return self }
+        let existing = plainText ?? ""
+        let combined = existing.contains(text) ? existing : (existing.isEmpty ? text : existing + "\n" + text)
+        return CapturedClip(plainText: combined, primaryType: primaryType,
+                            sourceAppBundleId: sourceAppBundleId, representations: representations)
+    }
+
     public static func hash(_ data: Data) -> String {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }

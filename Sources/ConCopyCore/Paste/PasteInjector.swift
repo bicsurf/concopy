@@ -29,20 +29,20 @@ public struct SystemCGEventPoster: CGEventPosting {
 
     public func postCommandV() -> Bool {
         guard isProcessTrusted() else {
-            print("[ConCopy] Accessibility permissions not granted for CGEvent injection")
+            ConCopyLogger.paste.error("Accessibility permissions not granted for CGEvent injection")
             return false
         }
 
         let keyCode: CGKeyCode = 0x09  // kVK_ANSI_V
         guard let source = CGEventSource(stateID: .combinedSessionState) else {
-            print("[ConCopy] Failed to create CGEventSource")
+            ConCopyLogger.paste.error("Failed to create CGEventSource")
             return false
         }
 
         guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true),
             let keyUp = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false)
         else {
-            print("[ConCopy] Failed to create CGEvent")
+            ConCopyLogger.paste.error("Failed to create CGEvent")
             return false
         }
 
@@ -56,7 +56,7 @@ public struct SystemCGEventPoster: CGEventPosting {
 
     public func postTab() -> Bool {
         guard isProcessTrusted() else {
-            print("[ConCopy] Accessibility permissions not granted for CGEvent injection")
+            ConCopyLogger.paste.error("Accessibility permissions not granted for CGEvent injection")
             return false
         }
 
